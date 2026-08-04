@@ -50,14 +50,14 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  theme: 'dark',
+  theme: 'light',
   language: 'en',
   currentProject: null,
   sessions: [],
   currentSessionId: null,
   messages: {},
   modules: [],
-  rightPanelOpen: true,
+  rightPanelOpen: false,
   activeRightTab: 'files',
   selectedFile: null,
   previewContent: null,

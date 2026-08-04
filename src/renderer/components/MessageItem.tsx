@@ -24,11 +24,11 @@ export default function MessageItem({ message }: MessageItemProps) {
   return (
     <div className="msg-in flex gap-3">
       {isSystem ? (
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-red-500/15 text-red-300">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-red-500/12 text-red-500 dark:text-red-300">
           <AlertTriangle size={13} />
         </div>
       ) : (
-        <div className="brand-gradient flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[13px] font-bold text-ink-950 shadow-sm shadow-indigo-500/20">
+        <div className="brand-gradient flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[13px] font-bold text-white shadow-sm shadow-indigo-500/20">
           π
         </div>
       )}
@@ -36,7 +36,7 @@ export default function MessageItem({ message }: MessageItemProps) {
         {message.toolCall ? (
           <ToolCallCard toolCall={message.toolCall} />
         ) : isSystem ? (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/[0.08] px-3.5 py-2.5 text-sm leading-6 text-red-200">
+          <div className="rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3.5 py-2.5 text-sm leading-6 text-red-600 dark:text-red-200">
             {message.content}
           </div>
         ) : (

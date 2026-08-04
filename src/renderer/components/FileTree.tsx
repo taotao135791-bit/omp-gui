@@ -78,7 +78,7 @@ export default function FileTree() {
         <div
           onClick={() => toggleNode(node, parentList, setParentList)}
           className={`flex cursor-pointer items-center gap-1.5 py-1 pr-2 font-mono text-xs transition ${
-            isSelected ? 'bg-accent/10 text-accent' : 'text-cream-dim hover:bg-white/[0.04] hover:text-cream'
+            isSelected ? 'bg-accent/10 text-accent' : 'text-cream-dim hover:bg-overlay hover:text-cream'
           }`}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >

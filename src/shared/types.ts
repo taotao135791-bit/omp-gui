@@ -57,7 +57,7 @@ export type ReadFileResult =
   | { ok: false; error: string }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  theme: 'dark',
+  theme: 'light',
   language: 'en',
   windowWidth: 1280,
   windowHeight: 800,

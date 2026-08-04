@@ -33,7 +33,7 @@ export default function CustomizePage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.06] px-6">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-line px-6">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
             <Puzzle size={17} />
@@ -45,7 +45,7 @@ export default function CustomizePage() {
         </div>
         <button
           onClick={() => window.electronAPI.scanModules(currentProject || undefined).then(setModules)}
-          className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] px-3 py-1.5 text-xs font-medium text-cream-dim transition hover:bg-white/[0.06] hover:text-cream"
+          className="flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs font-medium text-cream-dim transition hover:bg-overlay-strong hover:text-cream"
         >
           <RotateCcw size={12} />
           {t('customize.refresh')}
@@ -54,11 +54,11 @@ export default function CustomizePage() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* Available modules */}
-        <div className="flex w-1/2 flex-col border-r border-white/[0.06]">
-          <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-3">
+        <div className="flex w-1/2 flex-col border-r border-line">
+          <div className="flex items-center gap-2 border-b border-line px-4 py-3">
             <Package size={15} className="text-cream-dim" />
             <span className="text-sm font-medium text-cream">{t('customize.available')}</span>
-            <span className="ml-auto rounded-full bg-white/[0.07] px-2 py-0.5 font-mono text-[10px] text-cream-dim">
+            <span className="ml-auto rounded-full bg-overlay-strong px-2 py-0.5 font-mono text-[10px] text-cream-dim">
               {availableModules.length}
             </span>
           </div>
@@ -69,11 +69,11 @@ export default function CustomizePage() {
                 value={installUrl}
                 onChange={(e) => setInstallUrl(e.target.value)}
                 placeholder={t('customize.installPlaceholder')}
-                className="flex-1 rounded-lg border border-white/[0.08] bg-ink-950 px-3 py-2 font-mono text-xs text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/40"
+                className="flex-1 rounded-lg border border-line bg-ink-950 px-3 py-2 font-mono text-xs text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/40"
               />
               <button
                 onClick={handleInstall}
-                className="flex items-center gap-1.5 rounded-lg bg-cream px-3 py-2 text-xs font-medium text-ink-950 transition hover:bg-white"
+                className="flex items-center gap-1.5 rounded-lg bg-cream px-3 py-2 text-xs font-medium text-ink-950 transition hover:opacity-90"
               >
                 <Plus size={12} />
                 {t('customize.install')}
@@ -84,7 +84,7 @@ export default function CustomizePage() {
                 <ModuleCard key={mod.id} mod={mod} onToggle={() => handleToggle(mod)} />
               ))}
               {availableModules.length === 0 && (
-                <div className="rounded-xl border border-dashed border-white/[0.08] p-6 text-center text-xs text-cream-faint">
+                <div className="rounded-xl border border-dashed border-line p-6 text-center text-xs text-cream-faint">
                   {t('customize.allEnabled')}
                 </div>
               )}
@@ -94,7 +94,7 @@ export default function CustomizePage() {
 
         {/* Assembled Pi */}
         <div className="flex w-1/2 flex-col bg-ink-900/40">
-          <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-3">
+          <div className="flex items-center gap-2 border-b border-line px-4 py-3">
             <Layers size={15} className="text-cream-dim" />
             <span className="text-sm font-medium text-cream">{t('customize.assembled')}</span>
             <span className="ml-auto rounded-full bg-accent/15 px-2 py-0.5 font-mono text-[10px] text-accent">
@@ -147,12 +147,12 @@ export default function CustomizePage() {
 function ModuleCard({ mod, onToggle }: { mod: ModuleInfo; onToggle: () => void }) {
   const t = useT()
   return (
-    <div className="flex items-start justify-between rounded-xl border border-white/[0.06] bg-ink-900 p-3 transition hover:border-white/[0.12]">
+    <div className="flex items-start justify-between rounded-xl border border-line bg-ink-900 p-3 transition hover:border-ink-600">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-cream">{mod.name}</span>
           {mod.version && (
-            <span className="rounded-full bg-white/[0.07] px-1.5 py-0.5 font-mono text-[10px] text-cream-dim">
+            <span className="rounded-full bg-overlay-strong px-1.5 py-0.5 font-mono text-[10px] text-cream-dim">
               {mod.version}
             </span>
           )}

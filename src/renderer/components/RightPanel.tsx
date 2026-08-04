@@ -29,15 +29,15 @@ export default function RightPanel() {
   }, [selectedFile, activeRightTab, setPreviewContent])
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-l border-white/[0.06] bg-ink-900">
-      <div className="flex h-11 items-center justify-between border-b border-white/[0.06] px-3">
+    <aside className="flex w-72 shrink-0 flex-col border-l border-line bg-ink-900">
+      <div className="flex h-11 items-center justify-between border-b border-line px-3">
         <div className="flex gap-1">
           <button
             onClick={() => setActiveRightTab('files')}
             className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
               activeRightTab === 'files'
-                ? 'bg-white/[0.08] text-cream'
-                : 'text-cream-dim hover:bg-white/[0.04]'
+                ? 'bg-overlay-strong text-cream'
+                : 'text-cream-dim hover:bg-overlay'
             }`}
           >
             <FileText size={12} />
@@ -47,8 +47,8 @@ export default function RightPanel() {
             onClick={() => setActiveRightTab('preview')}
             className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
               activeRightTab === 'preview'
-                ? 'bg-white/[0.08] text-cream'
-                : 'text-cream-dim hover:bg-white/[0.04]'
+                ? 'bg-overlay-strong text-cream'
+                : 'text-cream-dim hover:bg-overlay'
             }`}
           >
             <Eye size={12} />
@@ -57,7 +57,7 @@ export default function RightPanel() {
         </div>
         <button
           onClick={() => setRightPanelOpen(false)}
-          className="rounded-md p-1 text-cream-faint transition hover:bg-white/[0.06] hover:text-cream"
+          className="rounded-md p-1 text-cream-faint transition hover:bg-overlay-strong hover:text-cream"
         >
           <X size={14} />
         </button>

@@ -84,7 +84,7 @@ export default function SetupWizard() {
 
   return (
     <div className="flex h-full flex-col items-center justify-center bg-ink-950 p-8">
-      <div className="w-full max-w-xl rounded-2xl border border-white/[0.06] bg-ink-900 p-8">
+      <div className="w-full max-w-xl rounded-2xl border border-line bg-ink-900 p-8">
         <div className="mb-6 flex items-center gap-3">
           <div className="brand-gradient flex h-10 w-10 items-center justify-center rounded-xl text-lg font-bold text-ink-950 shadow-md shadow-indigo-500/25">
             π
@@ -106,7 +106,7 @@ export default function SetupWizard() {
           <button
             onClick={handleAutoInstall}
             disabled={isInstalling}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-cream px-4 py-3 text-sm font-medium text-ink-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-cream px-4 py-3 text-sm font-medium text-ink-950 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isInstalling ? (
               <Loader2 size={18} className="animate-spin" />
@@ -118,7 +118,7 @@ export default function SetupWizard() {
 
           {installStatus.type === 'downloading' && (
             <div className="space-y-2">
-              <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
+              <div className="h-1.5 overflow-hidden rounded-full bg-overlay-strong">
                 <div
                   className="h-full bg-accent transition-all"
                   style={{ width: `${installStatus.progress}%` }}
@@ -129,7 +129,7 @@ export default function SetupWizard() {
           )}
 
           {(installStatus.type === 'installing' || installStatus.type === 'success') && (
-            <div className="rounded-xl bg-ink-950/70 p-3 text-xs text-cream-dim">
+            <div className="rounded-xl bg-ink-800 p-3 text-xs text-cream-dim">
               <div className="mb-1 flex items-center gap-1.5 text-cream-faint">
                 <Terminal size={12} />
                 {t('setup.installLog')}
@@ -153,9 +153,9 @@ export default function SetupWizard() {
           )}
 
           <div className="relative flex items-center py-2">
-            <div className="flex-1 border-t border-white/[0.06]" />
+            <div className="flex-1 border-t border-line" />
             <span className="px-3 text-xs text-cream-faint">{t('setup.orManual')}</span>
-            <div className="flex-1 border-t border-white/[0.06]" />
+            <div className="flex-1 border-t border-line" />
           </div>
 
           <div className="space-y-2">
@@ -164,18 +164,18 @@ export default function SetupWizard() {
               <input
                 readOnly
                 value={manualCommand}
-                className="flex-1 rounded-lg border border-white/[0.08] bg-ink-950 px-3 py-2 font-mono text-xs text-cream-dim outline-none"
+                className="flex-1 rounded-lg border border-line bg-ink-950 px-3 py-2 font-mono text-xs text-cream-dim outline-none"
               />
               <button
                 onClick={handleCopy}
-                className="rounded-lg border border-white/[0.08] px-3 py-2 text-xs text-cream-dim transition hover:bg-white/[0.06] hover:text-cream"
+                className="rounded-lg border border-line px-3 py-2 text-xs text-cream-dim transition hover:bg-overlay-strong hover:text-cream"
               >
                 {copied ? t('setup.copied') : t('setup.copy')}
               </button>
             </div>
             <button
               onClick={handleManualDone}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/[0.08] px-4 py-2 text-sm text-cream-dim transition hover:bg-white/[0.06] hover:text-cream"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-line px-4 py-2 text-sm text-cream-dim transition hover:bg-overlay-strong hover:text-cream"
             >
               {t('setup.installed')}
               <ArrowRight size={14} />

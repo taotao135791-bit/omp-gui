@@ -38,7 +38,7 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
   return (
     <div className="p-4 pt-2">
       <div className="mx-auto max-w-3xl">
-        <div className="rounded-[20px] border border-white/[0.09] bg-ink-850 p-2 shadow-[0_8px_32px_rgba(0,0,0,0.35)] transition focus-within:border-accent/35 focus-within:shadow-[0_8px_32px_rgba(56,189,248,0.08)]">
+        <div className="rounded-[22px] border border-line bg-ink-850 p-2 shadow-[0_2px_16px_rgba(0,0,0,0.06)] transition focus-within:border-ink-600 dark:shadow-[0_8px_32px_rgba(0,0,0,0.35)]">
           <textarea
             ref={textareaRef}
             value={text}
@@ -52,17 +52,17 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
           />
           <div className="flex items-center justify-between px-1.5 pb-0.5 pt-1">
             <div className="flex items-center gap-0.5">
-              <button className="rounded-lg p-1.5 text-cream-faint transition hover:bg-white/[0.06] hover:text-cream">
+              <button className="rounded-lg p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream">
                 <Paperclip size={15} />
               </button>
-              <button className="rounded-lg p-1.5 text-cream-faint transition hover:bg-white/[0.06] hover:text-cream">
+              <button className="rounded-lg p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream">
                 <Image size={15} />
               </button>
             </div>
             <button
               onClick={handleSend}
               disabled={disabled || !text.trim()}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-cream text-ink-950 shadow-sm transition hover:bg-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-25"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-cream text-ink-950 shadow-sm transition hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-25"
             >
               <ArrowUp size={16} strokeWidth={2.5} />
             </button>

@@ -8,24 +8,30 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // Neutral cool dark with clear layer separation
+        // Semantic palette backed by CSS variables (see index.css).
+        // Light theme by default, flipped under `.dark`.
         ink: {
-          950: '#0b0b10',
-          900: '#101016',
-          850: '#14141c',
-          800: '#191922',
-          700: '#22222e',
-          600: '#2e2e3e'
+          950: 'rgb(var(--bg-app) / <alpha-value>)',
+          900: 'rgb(var(--bg-sidebar) / <alpha-value>)',
+          850: 'rgb(var(--bg-elev) / <alpha-value>)',
+          800: 'rgb(var(--bg-sunken) / <alpha-value>)',
+          700: 'rgb(var(--bubble) / <alpha-value>)',
+          600: 'var(--line-strong)'
         },
         cream: {
-          DEFAULT: '#ececf1',
-          dim: '#a0a0ae',
-          faint: '#62626e'
+          DEFAULT: 'rgb(var(--text) / <alpha-value>)',
+          dim: 'rgb(var(--text-dim) / <alpha-value>)',
+          faint: 'rgb(var(--text-faint) / <alpha-value>)'
         },
         accent: {
-          DEFAULT: '#7dd3fc',
-          bright: '#bae6fd',
-          deep: '#38bdf8'
+          DEFAULT: 'rgb(var(--accent) / <alpha-value>)',
+          bright: 'rgb(var(--accent-bright) / <alpha-value>)',
+          deep: 'rgb(var(--accent-deep) / <alpha-value>)'
+        },
+        line: 'var(--line)',
+        overlay: {
+          DEFAULT: 'var(--overlay)',
+          strong: 'var(--overlay-strong)'
         }
       },
       fontFamily: {

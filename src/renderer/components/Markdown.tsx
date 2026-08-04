@@ -28,14 +28,14 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-ink-950">
-      <div className="flex items-center justify-between border-b border-white/[0.06] bg-white/[0.02] px-3 py-1.5">
+    <div className="overflow-hidden rounded-xl border border-line bg-ink-800">
+      <div className="flex items-center justify-between border-b border-line bg-overlay px-3 py-1.5">
         <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-cream-faint">
           {lang || 'code'}
         </span>
         <button
           onClick={copy}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-cream-faint transition hover:bg-white/[0.06] hover:text-cream"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-cream-faint transition hover:bg-overlay-strong hover:text-cream"
         >
           {copied ? <Check size={11} className="text-green-400" /> : <Copy size={11} />}
           {copied ? t('code.copied') : t('code.copy')}
