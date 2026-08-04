@@ -28,7 +28,7 @@ const api: ElectronAPI = {
   sendMessage: (sessionId: string, text: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SEND_MESSAGE, sessionId, text),
   killSession: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.OMP_KILL_SESSION, sessionId),
-  onSessionEvent: (callback: (event: SessionEvent) => void) => () => {
+  onSessionEvent: (callback: (event: SessionEvent) => void) => {
     const handler = (_event: IpcRendererEvent, ev: SessionEvent) => callback(ev)
     ipcRenderer.on(IPC_CHANNELS.OMP_SESSION_EVENT, handler)
     return () => {
@@ -36,7 +36,7 @@ const api: ElectronAPI = {
     }
   },
   installOmp: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_INSTALL),
-  onInstallStatus: (callback: (status: InstallStatus) => void) => () => {
+  onInstallStatus: (callback: (status: InstallStatus) => void) => {
     const handler = (_event: IpcRendererEvent, status: InstallStatus) => callback(status)
     ipcRenderer.on(IPC_CHANNELS.OMP_INSTALL_STATUS, handler)
     return () => {
