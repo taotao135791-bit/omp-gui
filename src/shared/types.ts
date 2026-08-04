@@ -23,15 +23,32 @@ export type SessionEvent =
   | { type: 'error'; sessionId: string; message: string }
   | { type: 'closed'; sessionId: string }
 
-export interface ModuleInfo {
-  id: string
+/** pi package source flavor, derived from the source string in settings.json */
+export type PackageSourceKind = 'npm' | 'git' | 'local'
+
+export interface PackageResource {
+  type: 'extension' | 'skill' | 'prompt' | 'theme'
   name: string
-  description: string
+}
+
+export interface PackageInfo {
+  /** Verbatim source string as stored in settings.json — used for remove/update. */
+  source: string
+  kind: PackageSourceKind
+  name: string
+  description?: string
   version?: string
-  author?: string
-  source: 'builtin' | 'global' | 'local'
-  path: string
   enabled: boolean
+  /** Resolved install location (dir or single file); undefined if not found on disk. */
+  path?: string
+  resources: PackageResource[]
+  /** Versioned npm specs and git refs are pinned; `pi update` skips them. */
+  pinned: boolean
+}
+
+export interface PackageActionResult {
+  ok: boolean
+  log: string
 }
 
 export type Language = 'zh' | 'en'
@@ -41,7 +58,6 @@ export interface AppSettings {
   language: Language
   windowWidth: number
   windowHeight: number
-  enabledModules: string[]
   recentProjects: string[]
   setupComplete: boolean
 }
@@ -62,7 +78,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   language: 'en',
   windowWidth: 1280,
   windowHeight: 800,
-  enabledModules: [],
   recentProjects: [],
   setupComplete: false
 }

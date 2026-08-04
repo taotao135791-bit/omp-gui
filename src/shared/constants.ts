@@ -13,11 +13,16 @@ export const IPC_CHANNELS = {
   FS_LIST_DIR: 'fs:list-dir',
   FS_READ_FILE: 'fs:read-file',
   FS_SET_ROOT: 'fs:set-root',
-  MODULES_SCAN: 'modules:scan',
-  MODULES_SET_ENABLED: 'modules:set-enabled',
+  PACKAGES_LIST: 'packages:list',
+  PACKAGES_INSTALL: 'packages:install',
+  PACKAGES_REMOVE: 'packages:remove',
+  PACKAGES_UPDATE: 'packages:update',
+  PACKAGES_SET_ENABLED: 'packages:set-enabled',
   STORE_GET: 'store:get',
   STORE_SET: 'store:set',
-  DIALOG_SELECT_FOLDER: 'dialog:select-folder'
+  DIALOG_SELECT_FOLDER: 'dialog:select-folder',
+  DIALOG_SELECT_FILE: 'dialog:select-file',
+  SHELL_SHOW_CLI_SETTINGS: 'shell:show-cli-settings'
 } as const
 
 export const OMP_GLOBAL_DIR = '.omp'

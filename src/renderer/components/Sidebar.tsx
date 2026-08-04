@@ -138,11 +138,11 @@ export default function Sidebar() {
           {t('sidebar.chat')}
         </button>
         <button
-          onClick={() => navigate('/customize')}
-          className={navRow(location.pathname === '/customize')}
+          onClick={() => navigate('/plugins')}
+          className={navRow(location.pathname === '/plugins')}
         >
           <Puzzle size={14} className="shrink-0" />
-          {t('sidebar.customize')}
+          {t('sidebar.plugins')}
         </button>
         <button onClick={() => setRightPanelOpen(!rightPanelOpen)} className={navRow(rightPanelOpen)}>
           <PanelRight size={14} className="shrink-0" />

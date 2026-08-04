@@ -5,7 +5,7 @@ import { useT } from './i18n'
 import { createSessionForCurrentProject } from './lib/session'
 import Layout from './components/Layout'
 import ChatPage from './pages/ChatPage'
-import CustomizePage from './pages/CustomizePage'
+import PackagesPage from './pages/PackagesPage'
 import SettingsPage from './pages/SettingsPage'
 import SetupWizard from './pages/SetupWizard'
 
@@ -33,6 +33,9 @@ function App() {
     })
     window.electronAPI.detectCli().then((info) => {
       setCliAvailable(info.available)
+    })
+    window.electronAPI.listPackages().then((packages) => {
+      useAppStore.getState().setPackages(packages)
     })
 
     const unsubscribe = window.electronAPI.onSessionEvent((event) => {
@@ -75,7 +78,7 @@ function App() {
     <Layout>
       <Routes>
         <Route path="/" element={<ChatPage />} />
-        <Route path="/customize" element={<CustomizePage />} />
+        <Route path="/plugins" element={<PackagesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Layout>

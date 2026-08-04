@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Languages, Moon, RefreshCw, Sun, Trash2 } from 'lucide-react'
+import { Check, FolderCog, Languages, Moon, RefreshCw, Sun, Trash2 } from 'lucide-react'
 import { CliInfo } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
@@ -122,6 +122,15 @@ export default function SettingsPage() {
               >
                 <RefreshCw size={11} className={detecting ? 'animate-spin' : ''} />
                 {detecting ? t('settings.detecting') : t('settings.redetect')}
+              </button>
+            </Row>
+            <Row label={t('settings.cliSettingsFile')}>
+              <button
+                onClick={() => window.electronAPI.showCliSettings()}
+                className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-xs text-cream-dim transition hover:border-ink-600 hover:text-cream"
+              >
+                <FolderCog size={11} />
+                {t('settings.showInFinder')}
               </button>
             </Row>
           </Section>

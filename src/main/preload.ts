@@ -1,6 +1,15 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
 import { IPC_CHANNELS } from '../shared/constants'
-import { CliInfo, Session, SessionEvent, ModuleInfo, AppSettings, InstallStatus, ReadFileResult } from '../shared/types'
+import {
+  CliInfo,
+  Session,
+  SessionEvent,
+  PackageInfo,
+  PackageActionResult,
+  AppSettings,
+  InstallStatus,
+  ReadFileResult
+} from '../shared/types'
 
 export interface ElectronAPI {
   detectCli: (force?: boolean) => Promise<CliInfo>
@@ -15,11 +24,16 @@ export interface ElectronAPI {
   setFsRoot: (root: string) => Promise<boolean>
   listDir: (dirPath: string) => Promise<{ name: string; isDirectory: boolean; path: string }[]>
   readFile: (filePath: string) => Promise<ReadFileResult>
-  scanModules: (cwd?: string) => Promise<ModuleInfo[]>
-  setModuleEnabled: (moduleId: string, enabled: boolean) => Promise<string[]>
+  listPackages: () => Promise<PackageInfo[]>
+  installPackage: (source: string) => Promise<PackageActionResult>
+  removePackage: (source: string) => Promise<PackageActionResult>
+  updatePackage: (source: string) => Promise<PackageActionResult>
+  setPackageEnabled: (source: string, enabled: boolean) => Promise<PackageActionResult>
   getStore: <K extends keyof AppSettings>(key: K) => Promise<AppSettings[K]>
   setStore: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => Promise<boolean>
   selectFolder: () => Promise<string | null>
+  selectFile: () => Promise<string | null>
+  showCliSettings: () => Promise<boolean>
 }
 
 const api: ElectronAPI = {
@@ -49,13 +63,18 @@ const api: ElectronAPI = {
   setFsRoot: (root: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_SET_ROOT, root),
   listDir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_DIR, dirPath),
   readFile: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_READ_FILE, filePath),
-  scanModules: (cwd?: string) => ipcRenderer.invoke(IPC_CHANNELS.MODULES_SCAN, cwd),
-  setModuleEnabled: (moduleId: string, enabled: boolean) =>
-    ipcRenderer.invoke(IPC_CHANNELS.MODULES_SET_ENABLED, moduleId, enabled),
+  listPackages: () => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_LIST),
+  installPackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_INSTALL, source),
+  removePackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_REMOVE, source),
+  updatePackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_UPDATE, source),
+  setPackageEnabled: (source: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SET_ENABLED, source, enabled),
   getStore: (key: keyof AppSettings) => ipcRenderer.invoke(IPC_CHANNELS.STORE_GET, key),
   setStore: (key: keyof AppSettings, value: unknown) =>
     ipcRenderer.invoke(IPC_CHANNELS.STORE_SET, key, value),
-  selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FOLDER)
+  selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FOLDER),
+  selectFile: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FILE),
+  showCliSettings: () => ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_CLI_SETTINGS)
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)

@@ -4,7 +4,6 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { CliInfo, Session, SessionEvent } from '../shared/types'
 import { getStore, setStore } from './store'
-import { scanModules } from './modules'
 import { parseRpcLine, drainLines, extensionUiCancel } from './protocol'
 
 const sessions = new Map<string, { process: ChildProcess; session: Session }>()
@@ -36,7 +35,7 @@ export function invalidateCliCache(): void {
  * GUI apps on macOS/Linux are launched with a minimal PATH that usually
  * excludes package-manager bin dirs, so check well-known locations too.
  */
-function executableSearchDirs(): string[] {
+export function executableSearchDirs(): string[] {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean)
   const home = homedir()
   dirs.push(
@@ -90,18 +89,9 @@ export function createSession(
     }
   }
 
-  const enabledIds = getStore('enabledModules')
-  const extensionArgs: string[] = []
-  if (enabledIds.length > 0) {
-    const modules = scanModules(cwd)
-    for (const mod of modules) {
-      if (mod.enabled && mod.source !== 'builtin' && mod.path) {
-        extensionArgs.push('-e', mod.path)
-      }
-    }
-  }
-
-  const args = ['--mode', 'rpc', ...extensionArgs]
+  // pi loads installed packages (settings.json) and auto-discovered extension
+  // dirs itself on startup; the GUI manages them through the Packages page.
+  const args = ['--mode', 'rpc']
   const proc = spawn(cli.path ?? cli.command, args, {
     cwd,
     env: {

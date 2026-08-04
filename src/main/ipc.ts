@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import { ipcMain, dialog, shell, BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import path from 'node:path'
 import { IPC_CHANNELS } from '../shared/constants'
 import { SessionEvent, AppSettings, InstallStatus, ReadFileResult } from '../shared/types'
@@ -11,7 +11,14 @@ import {
   abortSession,
   listSessions
 } from './omp'
-import { scanModules } from './modules'
+import {
+  listPackages,
+  installPackage,
+  removePackage,
+  updatePackage,
+  setPackageEnabled,
+  defaultPiAgentDir
+} from './packages'
 import { getStore, setStore } from './store'
 import { installOmp } from './installer'
 import { FsGuard } from './fsGuard'
@@ -139,21 +146,48 @@ export function registerIpc() {
     }
   )
 
-  ipcMain.handle(IPC_CHANNELS.MODULES_SCAN, async (_event, cwd?: string) => {
-    return scanModules(cwd)
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_LIST, async () => {
+    return listPackages()
+  })
+
+  /** Package sources become CLI argv — reject anything flag-shaped. */
+  function validSource(source: unknown): source is string {
+    return (
+      typeof source === 'string' &&
+      source.trim().length > 0 &&
+      source.trim().length < 500 &&
+      !source.trim().startsWith('-')
+    )
+  }
+
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_INSTALL, async (_event, source: string) => {
+    if (!validSource(source)) return { ok: false, log: 'invalid package source' }
+    return installPackage(source.trim())
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_REMOVE, async (_event, source: string) => {
+    if (!validSource(source)) return { ok: false, log: 'invalid package source' }
+    return removePackage(source.trim())
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_UPDATE, async (_event, source: string) => {
+    if (!validSource(source)) return { ok: false, log: 'invalid package source' }
+    return updatePackage(source.trim())
   })
 
   ipcMain.handle(
-    IPC_CHANNELS.MODULES_SET_ENABLED,
-    async (_event, moduleId: string, enabled: boolean) => {
-      const current = getStore('enabledModules')
-      const next = enabled
-        ? Array.from(new Set([...current, moduleId]))
-        : current.filter((id) => id !== moduleId)
-      setStore('enabledModules', next)
-      return next
+    IPC_CHANNELS.PACKAGES_SET_ENABLED,
+    async (_event, source: string, enabled: boolean) => {
+      if (!validSource(source)) return { ok: false, log: 'invalid package source' }
+      return setPackageEnabled(source.trim(), Boolean(enabled))
     }
   )
+
+  ipcMain.handle(IPC_CHANNELS.SHELL_SHOW_CLI_SETTINGS, async () => {
+    const settingsFile = path.join(defaultPiAgentDir(), 'settings.json')
+    shell.showItemInFolder(settingsFile)
+    return true
+  })
 
   ipcMain.handle(IPC_CHANNELS.STORE_GET, async (_event, key: keyof AppSettings) => {
     return getStore(key)
@@ -167,6 +201,14 @@ export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_FOLDER, async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory']
+    })
+    return result.canceled ? null : result.filePaths[0]
+  })
+
+  ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_FILE, async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Extensions', extensions: ['ts', 'js'] }]
     })
     return result.canceled ? null : result.filePaths[0]
   })

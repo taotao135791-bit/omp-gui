@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, ModuleInfo, InstallStatus, Language } from '@shared/types'
+import { Session, SessionEvent, PackageInfo, InstallStatus, Language } from '@shared/types'
 
 export interface MessageLike {
   id: string
@@ -20,7 +20,7 @@ interface AppState {
   sessions: Session[]
   currentSessionId: string | null
   messages: Record<string, MessageLike[]>
-  modules: ModuleInfo[]
+  packages: PackageInfo[]
   rightPanelOpen: boolean
   activeRightTab: 'files' | 'preview'
   selectedFile: string | null
@@ -39,8 +39,8 @@ interface AppState {
   setCurrentSessionId: (id: string | null) => void
   addMessage: (sessionId: string, message: MessageLike) => void
   appendMessageContent: (sessionId: string, content: string) => void
-  setModules: (modules: ModuleInfo[]) => void
-  updateModuleEnabled: (id: string, enabled: boolean) => void
+  setPackages: (packages: PackageInfo[]) => void
+  updatePackageEnabled: (source: string, enabled: boolean) => void
   setRightPanelOpen: (open: boolean) => void
   setActiveRightTab: (tab: 'files' | 'preview') => void
   setSelectedFile: (path: string | null) => void
@@ -59,7 +59,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessions: [],
   currentSessionId: null,
   messages: {},
-  modules: [],
+  packages: [],
   rightPanelOpen: false,
   activeRightTab: 'files',
   selectedFile: null,
@@ -114,9 +114,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     updated[updated.length - 1] = { ...last, content: last.content + content }
     return { messages: { ...state.messages, [sessionId]: updated } }
   }),
-  setModules: (modules) => set({ modules }),
-  updateModuleEnabled: (id, enabled) => set((state) => ({
-    modules: state.modules.map((m) => (m.id === id ? { ...m, enabled } : m))
+  setPackages: (packages) => set({ packages }),
+  updatePackageEnabled: (source, enabled) => set((state) => ({
+    packages: state.packages.map((p) => (p.source === source ? { ...p, enabled } : p))
   })),
   setRightPanelOpen: (rightPanelOpen) => set({ rightPanelOpen }),
   setActiveRightTab: (activeRightTab) => set({ activeRightTab }),

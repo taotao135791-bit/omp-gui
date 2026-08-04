@@ -5,6 +5,7 @@
   "directories": {
     "output": "release"
   },
+  "afterPack": "build/afterPack.cjs",
   "files": [
     "dist-electron",
     "resources"

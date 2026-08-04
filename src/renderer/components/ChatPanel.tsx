@@ -26,7 +26,7 @@ export default function ChatPanel() {
     currentProject,
     sessions,
     messages,
-    modules,
+    packages,
     cliAvailable,
     busy,
     setCurrentProject
@@ -70,7 +70,7 @@ export default function ChatPanel() {
     }
   }
 
-  const enabledCount = modules.filter((m) => m.enabled).length
+  const enabledCount = packages.filter((p) => p.enabled).length
   const showHero = sessionMessages.length === 0
   const showThinking =
     isBusy && sessionMessages.length > 0 && sessionMessages[sessionMessages.length - 1].role === 'user'
