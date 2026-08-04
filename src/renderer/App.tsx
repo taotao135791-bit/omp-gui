@@ -1,10 +1,12 @@
 import { useEffect } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useNavigate } from 'react-router-dom'
 import { useAppStore } from './store'
 import { useT } from './i18n'
+import { createSessionForCurrentProject } from './lib/session'
 import Layout from './components/Layout'
 import ChatPage from './pages/ChatPage'
 import CustomizePage from './pages/CustomizePage'
+import SettingsPage from './pages/SettingsPage'
 import SetupWizard from './pages/SetupWizard'
 
 function App() {
@@ -17,6 +19,7 @@ function App() {
     applySessionEvent
   } = useAppStore()
   const t = useT()
+  const navigate = useNavigate()
 
   useEffect(() => {
     window.electronAPI.getStore('theme').then((theme) => {
@@ -41,6 +44,20 @@ function App() {
     }
   }, [setTheme, setLanguage, setCliAvailable, setSetupComplete, applySessionEvent])
 
+  // ⌘N starts a new chat from anywhere
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault()
+        createSessionForCurrentProject().then((id) => {
+          if (id) navigate('/')
+        })
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [navigate])
+
   if (setupComplete === null) {
     // Settings not loaded yet — avoid flashing the setup wizard
     return (
@@ -59,6 +76,7 @@ function App() {
       <Routes>
         <Route path="/" element={<ChatPage />} />
         <Route path="/customize" element={<CustomizePage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Layout>
   )

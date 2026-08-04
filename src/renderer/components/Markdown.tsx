@@ -28,7 +28,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-ink-800">
+    <div className="overflow-hidden rounded-lg border border-line bg-ink-800">
       <div className="flex items-center justify-between border-b border-line bg-overlay px-3 py-1.5">
         <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-cream-faint">
           {lang || 'code'}

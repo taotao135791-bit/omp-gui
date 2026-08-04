@@ -17,6 +17,9 @@ const en = {
   'sidebar.language': 'Language',
   'sidebar.project': 'Project',
   'sidebar.theme': 'Toggle theme',
+  'sidebar.settings': 'Settings',
+  'sidebar.searchSessions': 'Search sessions…',
+  'sidebar.noMatch': 'No sessions match your search.',
 
   // Chat panel
   'chat.noActiveSession': 'No active session',
@@ -25,6 +28,7 @@ const en = {
   'chat.welcome.title': 'Start a conversation',
   'chat.welcome.body': 'Select a project folder and click "New Chat" to start coding with Oh My Pi.',
   'chat.hero.title': 'What shall we build today?',
+  'chat.working': 'Working…',
   'chat.selectProject': 'Select project',
   'chat.suggest.explore': 'Explore and understand code',
   'chat.suggest.explore.prompt': 'Explore this project and explain its overall architecture and key modules to me.',
@@ -37,9 +41,34 @@ const en = {
 
   // Composer
   'composer.placeholder': 'Ask anything…  (Enter to send, Shift+Enter for newline)',
-  'composer.placeholderDisabled': 'Select a session to start chatting…',
+  'composer.placeholderDisabled': 'Install the omp/pi CLI to start chatting…',
   'composer.send': 'Send',
+  'composer.stop': 'Stop generating',
   'composer.disclaimer': 'Oh My Pi can make mistakes. Review important code before running it.',
+
+  // Message actions
+  'msg.copy': 'Copy',
+  'msg.copied': 'Copied',
+
+  // Settings page
+  'settings.title': 'Settings',
+  'settings.appearance': 'Appearance',
+  'settings.theme': 'Theme',
+  'settings.themeLight': 'Light',
+  'settings.themeDark': 'Dark',
+  'settings.language': 'Language',
+  'settings.cliStatus': 'Status',
+  'settings.cliAvailable': 'Available',
+  'settings.cliMissing': 'Not found',
+  'settings.cliPath': 'Path',
+  'settings.redetect': 'Re-detect',
+  'settings.detecting': 'Detecting…',
+  'settings.data': 'Data',
+  'settings.clearRecent': 'Recent projects',
+  'settings.clear': 'Clear',
+  'settings.cleared': 'Cleared',
+  'settings.about': 'About',
+  'settings.version': 'Version',
 
   // Tool call card
   'tool.input': 'Input',
@@ -108,6 +137,9 @@ const zh: Record<I18nKey, string> = {
   'sidebar.language': '语言',
   'sidebar.project': '项目',
   'sidebar.theme': '切换主题',
+  'sidebar.settings': '设置',
+  'sidebar.searchSessions': '搜索会话…',
+  'sidebar.noMatch': '没有匹配的会话。',
 
   'chat.noActiveSession': '没有活动会话',
   'chat.noProject': '未选择项目',
@@ -115,6 +147,7 @@ const zh: Record<I18nKey, string> = {
   'chat.welcome.title': '开始一段对话',
   'chat.welcome.body': '选择项目文件夹，然后点击"新建对话"，让 Oh My Pi 帮你写代码。',
   'chat.hero.title': '今天想构建什么？',
+  'chat.working': '正在工作…',
   'chat.selectProject': '选择项目',
   'chat.suggest.explore': '探索并理解代码',
   'chat.suggest.explore.prompt': '通读这个项目，向我解释它的整体架构和关键模块。',
@@ -126,9 +159,34 @@ const zh: Record<I18nKey, string> = {
   'chat.suggest.fix.prompt': '找出这个项目里最可能出问题的地方，并给出修复方案。',
 
   'composer.placeholder': '想问什么？（Enter 发送，Shift+Enter 换行）',
-  'composer.placeholderDisabled': '先选择一个会话…',
+  'composer.placeholderDisabled': '安装 omp/pi CLI 后开始对话…',
   'composer.send': '发送',
+  'composer.stop': '停止生成',
   'composer.disclaimer': 'Oh My Pi 可能会犯错，重要代码运行前请人工检查。',
+
+  // Message actions
+  'msg.copy': '复制',
+  'msg.copied': '已复制',
+
+  // Settings page
+  'settings.title': '设置',
+  'settings.appearance': '外观',
+  'settings.theme': '主题',
+  'settings.themeLight': '浅色',
+  'settings.themeDark': '深色',
+  'settings.language': '语言',
+  'settings.cliStatus': '状态',
+  'settings.cliAvailable': '可用',
+  'settings.cliMissing': '未找到',
+  'settings.cliPath': '路径',
+  'settings.redetect': '重新检测',
+  'settings.detecting': '检测中…',
+  'settings.data': '数据',
+  'settings.clearRecent': '最近项目',
+  'settings.clear': '清除',
+  'settings.cleared': '已清除',
+  'settings.about': '关于',
+  'settings.version': '版本',
 
   'tool.input': '输入',
   'tool.output': '输出',

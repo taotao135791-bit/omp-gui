@@ -8,6 +8,7 @@ import {
   createSession,
   sendMessage,
   killSession,
+  abortSession,
   listSessions
 } from './omp'
 import { scanModules } from './modules'
@@ -29,7 +30,10 @@ function broadcastSessionEvent(event: SessionEvent): void {
 }
 
 export function registerIpc() {
-  ipcMain.handle(IPC_CHANNELS.OMP_DETECT, async () => detectCli())
+  ipcMain.handle(IPC_CHANNELS.OMP_DETECT, async (_event: IpcMainInvokeEvent, force?: boolean) => {
+    if (force) invalidateCliCache()
+    return detectCli()
+  })
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_LIST_SESSIONS,
@@ -59,6 +63,13 @@ export function registerIpc() {
     IPC_CHANNELS.OMP_KILL_SESSION,
     async (_event: IpcMainInvokeEvent, sessionId: string) => {
       return killSession(sessionId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_ABORT_SESSION,
+    async (_event: IpcMainInvokeEvent, sessionId: string) => {
+      return abortSession(sessionId)
     }
   )
 

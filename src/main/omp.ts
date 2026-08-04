@@ -130,6 +130,10 @@ export function createSession(
       const result = parseRpcLine(line, id)
       if (result.kind === 'event') {
         onEvent(result.event)
+        // A failed command response ends the turn even without agent_end
+        if (result.event.type === 'error') {
+          onEvent({ type: 'status', sessionId: id, status: 'idle' })
+        }
       } else if (result.kind === 'extension_ui') {
         // Interactive extension dialogs can't be answered from the GUI yet —
         // cancel them so the agent doesn't hang waiting for a response.
@@ -195,5 +199,13 @@ export function killSession(sessionId: string): boolean {
   if (!entry) return false
   entry.process.kill()
   sessions.delete(sessionId)
+  return true
+}
+
+export function abortSession(sessionId: string): boolean {
+  const entry = sessions.get(sessionId)
+  if (!entry) return false
+  const payload = JSON.stringify({ id: crypto.randomUUID(), type: 'abort' }) + '\n'
+  entry.process.stdin?.write(payload)
   return true
 }

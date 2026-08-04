@@ -96,8 +96,19 @@ describe('parseRpcLine', () => {
     expect(parseRpcLine(line, 's1')).toEqual({ kind: 'extension_ui', id: 'x2', method: 'confirm' })
   })
 
-  it('ignores agent lifecycle events', () => {
-    for (const type of ['agent_start', 'agent_end', 'turn_start', 'turn_end', 'queue_update']) {
+  it('maps agent lifecycle events to working status', () => {
+    expect(parseRpcLine(JSON.stringify({ type: 'agent_start' }), 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'status', sessionId: 's1', status: 'working' }
+    })
+    expect(parseRpcLine(JSON.stringify({ type: 'agent_end' }), 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'status', sessionId: 's1', status: 'idle' }
+    })
+  })
+
+  it('ignores turn and queue events', () => {
+    for (const type of ['turn_start', 'turn_end', 'queue_update']) {
       expect(parseRpcLine(JSON.stringify({ type }), 's1')).toEqual({ kind: 'none' })
     }
   })

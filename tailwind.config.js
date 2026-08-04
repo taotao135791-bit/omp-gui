@@ -39,6 +39,9 @@ module.exports = {
           'Geist', '-apple-system', 'BlinkMacSystemFont', 'SF Pro Text',
           'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'sans-serif'
         ],
+        serif: [
+          'New York', 'ui-serif', 'Georgia', 'Songti SC', 'STSong', 'serif'
+        ],
         mono: [
           'JetBrains Mono', 'SF Mono', 'Menlo', 'Consolas',
           'PingFang SC', 'Microsoft YaHei', 'monospace'

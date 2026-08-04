@@ -107,8 +107,20 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
         }
       }
 
+    case 'agent_start':
+      return {
+        kind: 'event',
+        event: { type: 'status', sessionId, status: 'working' }
+      }
+
+    case 'agent_end':
+      return {
+        kind: 'event',
+        event: { type: 'status', sessionId, status: 'idle' }
+      }
+
     default:
-      // agent_start/agent_end/turn_*/queue_update/compaction_*/… — not surfaced
+      // turn_*/queue_update/compaction_*/… — not surfaced
       return { kind: 'none' }
   }
 }

@@ -5,6 +5,7 @@ export const IPC_CHANNELS = {
   OMP_CREATE_SESSION: 'omp:create-session',
   OMP_SEND_MESSAGE: 'omp:send-message',
   OMP_KILL_SESSION: 'omp:kill-session',
+  OMP_ABORT_SESSION: 'omp:abort-session',
   OMP_SESSION_EVENT: 'omp:session-event',
   OMP_LIST_SESSIONS: 'omp:list-sessions',
   OMP_INSTALL: 'omp:install',

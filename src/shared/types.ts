@@ -19,6 +19,7 @@ export type SessionEvent =
   | { type: 'message'; sessionId: string; role: 'user' | 'assistant' | 'system'; content: string }
   | { type: 'tool_call'; sessionId: string; tool: string; input: unknown; output?: unknown }
   | { type: 'tool_result'; sessionId: string; tool: string; output: unknown; isError: boolean }
+  | { type: 'status'; sessionId: string; status: 'working' | 'idle' }
   | { type: 'error'; sessionId: string; message: string }
   | { type: 'closed'; sessionId: string }
 

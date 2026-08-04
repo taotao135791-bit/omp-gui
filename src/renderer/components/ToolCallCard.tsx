@@ -16,7 +16,7 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const t = useT()
 
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-overlay font-mono text-xs">
+    <div className="overflow-hidden rounded-lg border border-line bg-overlay font-mono text-xs">
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-overlay"

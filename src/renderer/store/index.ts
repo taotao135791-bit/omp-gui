@@ -29,6 +29,8 @@ interface AppState {
   /** null = not yet loaded from disk */
   setupComplete: boolean | null
   installStatus: InstallStatus
+  /** sessionId -> whether the agent is currently generating */
+  busy: Record<string, boolean>
   setTheme: (theme: 'dark' | 'light') => void
   setLanguage: (language: Language) => void
   setCurrentProject: (path: string | null) => void
@@ -44,6 +46,7 @@ interface AppState {
   setSelectedFile: (path: string | null) => void
   setPreviewContent: (content: string | null) => void
   setCliAvailable: (available: boolean) => void
+  setBusy: (sessionId: string, busy: boolean) => void
   setSetupComplete: (complete: boolean) => void
   setInstallStatus: (status: InstallStatus) => void
   applySessionEvent: (event: SessionEvent) => void
@@ -64,6 +67,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   cliAvailable: null,
   setupComplete: null,
   installStatus: { type: 'idle' },
+  busy: {},
 
   setTheme: (theme) => {
     set({ theme })
@@ -119,6 +123,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSelectedFile: (selectedFile) => set({ selectedFile }),
   setPreviewContent: (previewContent) => set({ previewContent }),
   setCliAvailable: (cliAvailable) => set({ cliAvailable }),
+  setBusy: (sessionId, busy) =>
+    set((state) => ({ busy: { ...state.busy, [sessionId]: busy } })),
   setSetupComplete: (setupComplete) => {
     set({ setupComplete })
     window.electronAPI.setStore('setupComplete', setupComplete)
@@ -170,12 +176,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
         set((state) => ({ messages: { ...state.messages, [event.sessionId]: updated } }))
       }
+    } else if (event.type === 'status') {
+      set((state) => ({ busy: { ...state.busy, [event.sessionId]: event.status === 'working' } }))
     } else if (event.type === 'error') {
       get().addMessage(event.sessionId, {
         id: crypto.randomUUID(),
         role: 'system',
         content: `Error: ${event.message}`
       })
+    } else if (event.type === 'closed') {
+      set((state) => ({ busy: { ...state.busy, [event.sessionId]: false } }))
     }
   }
 }))

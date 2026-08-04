@@ -4,40 +4,40 @@
 
 @layer base {
   :root {
-    /* Light theme (default) — clean macOS surface, Codex-style */
-    --bg-app: 255 255 255;
-    --bg-sidebar: 246 246 247;
+    /* Light theme — warm paper, editorial neutrals, single warm accent */
+    --bg-app: 250 250 248;
+    --bg-sidebar: 242 242 239;
     --bg-elev: 255 255 255;
-    --bg-sunken: 245 245 246;
-    --bubble: 240 240 242;
-    --text: 28 28 33;
-    --text-dim: 99 99 107;
-    --text-faint: 158 158 166;
-    --line: rgba(28, 28, 33, 0.09);
-    --line-strong: rgba(28, 28, 33, 0.16);
-    --overlay: rgba(28, 28, 33, 0.05);
-    --overlay-strong: rgba(28, 28, 33, 0.09);
-    --accent: 79 70 229;
-    --accent-bright: 99 102 241;
-    --accent-deep: 67 56 202;
+    --bg-sunken: 244 244 241;
+    --bubble: 236 236 232;
+    --text: 26 26 24;
+    --text-dim: 98 98 92;
+    --text-faint: 158 158 150;
+    --line: rgba(26, 26, 24, 0.09);
+    --line-strong: rgba(26, 26, 24, 0.16);
+    --overlay: rgba(26, 26, 24, 0.045);
+    --overlay-strong: rgba(26, 26, 24, 0.085);
+    --accent: 194 65 12;
+    --accent-bright: 234 88 12;
+    --accent-deep: 154 52 18;
   }
 
   .dark {
-    --bg-app: 11 11 16;
-    --bg-sidebar: 16 16 22;
-    --bg-elev: 20 20 28;
-    --bg-sunken: 13 13 19;
-    --bubble: 34 34 46;
-    --text: 236 236 241;
-    --text-dim: 160 160 174;
-    --text-faint: 98 98 110;
+    --bg-app: 19 19 18;
+    --bg-sidebar: 23 23 21;
+    --bg-elev: 28 28 26;
+    --bg-sunken: 15 15 14;
+    --bubble: 40 40 36;
+    --text: 230 228 224;
+    --text-dim: 156 154 147;
+    --text-faint: 106 104 98;
     --line: rgba(255, 255, 255, 0.08);
     --line-strong: rgba(255, 255, 255, 0.16);
     --overlay: rgba(255, 255, 255, 0.05);
     --overlay-strong: rgba(255, 255, 255, 0.09);
-    --accent: 125 211 252;
-    --accent-bright: 186 230 253;
-    --accent-deep: 56 189 248;
+    --accent: 224 129 95;
+    --accent-bright: 236 153 122;
+    --accent-deep: 208 108 73;
   }
 
   html, body, #root {
@@ -56,7 +56,7 @@
   }
 
   ::selection {
-    @apply bg-accent/25 text-cream;
+    @apply bg-accent/20 text-cream;
   }
 
   ::-webkit-scrollbar {
@@ -98,7 +98,7 @@
     @apply text-accent underline decoration-accent/40 underline-offset-2 transition hover:decoration-accent;
   }
   .md code {
-    @apply rounded-md bg-overlay px-1.5 py-0.5 font-mono text-[0.82em] text-accent-deep;
+    @apply rounded bg-overlay px-1.5 py-0.5 font-mono text-[0.82em] text-accent-deep;
   }
   .md pre code {
     @apply bg-transparent p-0 text-cream/90;
@@ -133,15 +133,10 @@
     -webkit-app-region: no-drag;
   }
 
-  /* Brand gradient: cyan -> indigo, used for the π mark and hero glow */
-  .brand-gradient {
-    background-image: linear-gradient(135deg, #22d3ee 0%, #818cf8 100%);
-  }
-  .brand-glow {
-    background-image: radial-gradient(closest-side, rgba(56, 189, 248, 0.16), rgba(129, 140, 248, 0.08), transparent);
-  }
-  .dark .brand-glow {
-    background-image: radial-gradient(closest-side, rgba(56, 189, 248, 0.16), rgba(129, 140, 248, 0.08), transparent);
+  /* Solid brand mark — near-black square in light, near-white in dark */
+  .brand-mark {
+    background: rgb(var(--text));
+    color: rgb(var(--bg-app));
   }
 
   .msg-in {
@@ -164,5 +159,16 @@
   @keyframes fade-in {
     from { opacity: 0; }
     to { opacity: 1; }
+  }
+
+  /* "working" indicator — three pulsing dots */
+  .think-dot {
+    animation: think-pulse 1.2s ease-in-out infinite;
+  }
+  .think-dot:nth-child(2) { animation-delay: 0.15s; }
+  .think-dot:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes think-pulse {
+    0%, 60%, 100% { opacity: 0.25; }
+    30% { opacity: 1; }
   }
 }

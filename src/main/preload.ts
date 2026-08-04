@@ -3,11 +3,12 @@ import { IPC_CHANNELS } from '../shared/constants'
 import { CliInfo, Session, SessionEvent, ModuleInfo, AppSettings, InstallStatus, ReadFileResult } from '../shared/types'
 
 export interface ElectronAPI {
-  detectCli: () => Promise<CliInfo>
+  detectCli: (force?: boolean) => Promise<CliInfo>
   listSessions: () => Promise<Session[]>
   createSession: (cwd: string) => Promise<Session>
   sendMessage: (sessionId: string, text: string) => Promise<boolean>
   killSession: (sessionId: string) => Promise<boolean>
+  abortSession: (sessionId: string) => Promise<boolean>
   onSessionEvent: (callback: (event: SessionEvent) => void) => () => void
   installOmp: () => Promise<boolean>
   onInstallStatus: (callback: (status: InstallStatus) => void) => () => void
@@ -22,12 +23,14 @@ export interface ElectronAPI {
 }
 
 const api: ElectronAPI = {
-  detectCli: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_DETECT),
+  detectCli: (force?: boolean) => ipcRenderer.invoke(IPC_CHANNELS.OMP_DETECT, force),
   listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_SESSIONS),
   createSession: (cwd: string) => ipcRenderer.invoke(IPC_CHANNELS.OMP_CREATE_SESSION, cwd),
   sendMessage: (sessionId: string, text: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SEND_MESSAGE, sessionId, text),
   killSession: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.OMP_KILL_SESSION, sessionId),
+  abortSession: (sessionId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_ABORT_SESSION, sessionId),
   onSessionEvent: (callback: (event: SessionEvent) => void) => {
     const handler = (_event: IpcRendererEvent, ev: SessionEvent) => callback(ev)
     ipcRenderer.on(IPC_CHANNELS.OMP_SESSION_EVENT, handler)
