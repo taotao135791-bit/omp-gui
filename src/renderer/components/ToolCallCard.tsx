@@ -7,6 +7,7 @@ interface ToolCallCardProps {
     tool: string
     input: unknown
     output?: unknown
+    isError?: boolean
   }
 }
 
@@ -15,22 +16,33 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const t = useT()
 
   return (
-    <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-ink-900/60 font-mono text-xs">
+    <div className="overflow-hidden rounded-xl border border-white/[0.07] bg-white/[0.02] font-mono text-xs">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-cream-dim transition hover:bg-white/[0.03] hover:text-cream"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-white/[0.04]"
       >
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        <Terminal size={12} className="text-accent" />
-        <span className="font-medium">{toolCall.tool}</span>
+        <span
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+            toolCall.isError
+              ? 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.7)]'
+              : toolCall.output === undefined
+                ? 'animate-pulse bg-yellow-400'
+                : 'bg-green-400 shadow-[0_0_6px_rgba(74,222,128,0.7)]'
+          }`}
+        />
+        <Terminal size={12} className="shrink-0 text-accent" />
+        <span className="font-medium text-cream">{toolCall.tool}</span>
+        <span className="ml-auto text-cream-faint">
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </span>
       </button>
       {expanded && (
-        <div className="space-y-2 border-t border-white/[0.06] px-3 py-2.5">
+        <div className="space-y-2.5 border-t border-white/[0.06] px-3 py-2.5">
           <div>
             <div className="mb-1 text-[10px] uppercase tracking-[0.15em] text-cream-faint">
               {t('tool.input')}
             </div>
-            <pre className="max-h-48 overflow-auto rounded-lg bg-ink-950/80 p-2 text-cream/80">
+            <pre className="max-h-48 overflow-auto rounded-lg bg-ink-950/80 p-2.5 leading-5 text-cream/80">
               {JSON.stringify(toolCall.input, null, 2)}
             </pre>
           </div>
@@ -39,7 +51,7 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
               <div className="mb-1 text-[10px] uppercase tracking-[0.15em] text-cream-faint">
                 {t('tool.output')}
               </div>
-              <pre className="max-h-48 overflow-auto rounded-lg bg-ink-950/80 p-2 text-cream/80">
+              <pre className="max-h-48 overflow-auto rounded-lg bg-ink-950/80 p-2.5 leading-5 text-cream/80">
                 {JSON.stringify(toolCall.output, null, 2)}
               </pre>
             </div>

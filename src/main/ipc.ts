@@ -20,7 +20,8 @@ const fsGuard = new FsGuard()
 const MAX_READ_FILE_BYTES = 2 * 1024 * 1024
 
 function broadcastSessionEvent(event: SessionEvent): void {
-  for (const win of BrowserWindow.getAllWindows()) {
+  const wins = BrowserWindow.getAllWindows()
+  for (const win of wins) {
     if (!win.isDestroyed()) {
       win.webContents.send(IPC_CHANNELS.OMP_SESSION_EVENT, event)
     }

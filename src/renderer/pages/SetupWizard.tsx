@@ -86,7 +86,7 @@ export default function SetupWizard() {
     <div className="flex h-full flex-col items-center justify-center bg-ink-950 p-8">
       <div className="w-full max-w-xl rounded-2xl border border-white/[0.06] bg-ink-900 p-8">
         <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cream text-lg font-bold text-ink-950">
+          <div className="brand-gradient flex h-10 w-10 items-center justify-center rounded-xl text-lg font-bold text-ink-950 shadow-md shadow-indigo-500/25">
             π
           </div>
           <div>

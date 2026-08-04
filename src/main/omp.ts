@@ -5,7 +5,7 @@ import path from 'node:path'
 import { CliInfo, Session, SessionEvent } from '../shared/types'
 import { getStore, setStore } from './store'
 import { scanModules } from './modules'
-import { parseRpcLine, drainLines } from './protocol'
+import { parseRpcLine, drainLines, extensionUiCancel } from './protocol'
 
 const sessions = new Map<string, { process: ChildProcess; session: Session }>()
 
@@ -127,7 +127,14 @@ export function createSession(
     const { lines, rest } = drainLines(buffer, chunk.toString('utf-8'))
     buffer = rest
     for (const line of lines) {
-      onEvent(parseRpcLine(line, id))
+      const result = parseRpcLine(line, id)
+      if (result.kind === 'event') {
+        onEvent(result.event)
+      } else if (result.kind === 'extension_ui') {
+        // Interactive extension dialogs can't be answered from the GUI yet —
+        // cancel them so the agent doesn't hang waiting for a response.
+        proc.stdin?.write(extensionUiCancel(result.id))
+      }
     }
   })
 
@@ -177,7 +184,8 @@ export function createSession(
 export function sendMessage(sessionId: string, text: string): boolean {
   const entry = sessions.get(sessionId)
   if (!entry) return false
-  const payload = JSON.stringify({ type: 'prompt', content: text }) + '\n'
+  const payload =
+    JSON.stringify({ id: crypto.randomUUID(), type: 'prompt', message: text }) + '\n'
   entry.process.stdin?.write(payload)
   return true
 }

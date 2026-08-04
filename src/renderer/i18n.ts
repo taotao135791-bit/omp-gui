@@ -33,6 +33,10 @@ const en = {
   'tool.input': 'Input',
   'tool.output': 'Output',
 
+  // Code block
+  'code.copy': 'Copy',
+  'code.copied': 'Copied',
+
   // Right panel
   'panel.files': 'Files',
   'panel.preview': 'Preview',
@@ -104,6 +108,9 @@ const zh: Record<I18nKey, string> = {
 
   'tool.input': '输入',
   'tool.output': '输出',
+
+  'code.copy': '复制',
+  'code.copied': '已复制',
 
   'panel.files': '文件',
   'panel.preview': '预览',

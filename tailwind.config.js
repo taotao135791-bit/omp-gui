@@ -8,23 +8,23 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // omp.sh palette: deep plum-black ink + warm cream
+        // Neutral cool dark with clear layer separation
         ink: {
-          950: '#0f0a14',
-          900: '#151020',
-          850: '#1a1428',
-          800: '#201a30',
-          700: '#2b2340',
-          600: '#3b3153'
+          950: '#0b0b10',
+          900: '#101016',
+          850: '#14141c',
+          800: '#191922',
+          700: '#22222e',
+          600: '#2e2e3e'
         },
         cream: {
-          DEFAULT: '#f5f0ea',
-          dim: '#b3abc0',
-          faint: '#6f6683'
+          DEFAULT: '#ececf1',
+          dim: '#a0a0ae',
+          faint: '#62626e'
         },
         accent: {
           DEFAULT: '#7dd3fc',
-          bright: '#a5f3fc',
+          bright: '#bae6fd',
           deep: '#38bdf8'
         }
       },

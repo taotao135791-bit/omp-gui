@@ -103,7 +103,7 @@ export default function CustomizePage() {
           </div>
           <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto p-6">
             <div className="relative flex flex-col items-center gap-5">
-              <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-accent/20 bg-accent/10 text-accent">
+              <div className="brand-gradient flex h-20 w-20 items-center justify-center rounded-[24px] text-ink-950 shadow-xl shadow-indigo-500/25">
                 <Cpu size={34} />
               </div>
               <div className="text-center">

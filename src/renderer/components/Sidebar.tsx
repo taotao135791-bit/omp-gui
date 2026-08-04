@@ -73,50 +73,56 @@ export default function Sidebar() {
   const timeLocale = language === 'zh' ? 'zh-CN' : 'en-US'
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-white/[0.06] bg-ink-900">
-      <div className="flex items-center gap-2.5 px-4 pb-2 pt-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cream font-bold text-ink-950">
+    <aside className="flex w-60 shrink-0 flex-col border-r border-white/[0.07] bg-ink-900">
+      {/* drag spacer — clears the macOS traffic lights */}
+      <div className="app-drag h-10 shrink-0" />
+
+      <div className="app-drag flex items-center gap-2.5 px-4 pb-4">
+        <div className="brand-gradient flex h-8 w-8 items-center justify-center rounded-xl text-base font-bold text-ink-950 shadow-md shadow-indigo-500/25">
           π
         </div>
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold tracking-tight text-cream">OMP GUI</div>
-          <div className="font-mono text-[10px] text-cream-faint">oh my pi · harness</div>
+          <div className="truncate text-[15px] font-semibold tracking-tight text-cream">OMP GUI</div>
+          <div className="font-mono text-[10px] tracking-wide text-cream-faint">oh my pi · harness</div>
         </div>
       </div>
 
-      <div className="px-3 pb-2 pt-2">
+      <div className="px-3 pb-3">
         <button
           onClick={handleNewChat}
           disabled={cliAvailable === false}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-cream px-3 py-2 text-sm font-medium text-ink-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-9 w-full items-center justify-center gap-1.5 rounded-xl bg-cream text-sm font-medium text-ink-950 shadow-sm transition hover:bg-white active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <Plus size={16} />
+          <Plus size={15} />
           {t('sidebar.newChat')}
         </button>
         {cliAvailable === false && (
-          <div className="mt-2 flex items-start gap-2 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-2 text-xs text-yellow-200/90">
+          <div className="mt-2 flex items-start gap-2 rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-2 text-xs leading-5 text-yellow-200/90">
             <AlertCircle size={14} className="mt-0.5 shrink-0" />
             <span>{t('sidebar.cliMissing')}</span>
           </div>
         )}
       </div>
 
-      <div className="px-3 py-1">
+      <div className="px-3 pb-2">
         <button
           onClick={handleSelectProject}
-          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-cream-dim transition hover:bg-white/[0.06] hover:text-cream"
+          className="flex w-full items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2 text-left text-xs text-cream-dim transition hover:border-white/[0.1] hover:bg-white/[0.05] hover:text-cream"
         >
-          <FolderOpen size={14} className="shrink-0" />
+          <FolderOpen size={13} className="shrink-0 text-cream-faint" />
           <span className="truncate font-mono">{currentProject || t('sidebar.selectProject')}</span>
         </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 py-2">
-        <div className="mb-2 px-1 text-[10px] font-medium uppercase tracking-[0.2em] text-cream-faint">
-          {t('sidebar.sessions')}
+        <div className="mb-2 flex items-center gap-2 px-1">
+          <span className="text-[10px] font-medium uppercase tracking-[0.2em] text-cream-faint">
+            {t('sidebar.sessions')}
+          </span>
+          <span className="h-px flex-1 bg-white/[0.06]" />
         </div>
         {sessions.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-white/[0.08] p-3 text-xs text-cream-faint">
+          <div className="rounded-xl border border-dashed border-white/[0.08] p-3.5 text-xs leading-5 text-cream-faint">
             {t('sidebar.noSessions')}
           </div>
         ) : (
@@ -125,15 +131,17 @@ export default function Sidebar() {
               <div
                 key={session.id}
                 onClick={() => setCurrentSessionId(session.id)}
-                className={`group flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm transition ${
+                className={`group flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 transition ${
                   currentSessionId === session.id
-                    ? 'bg-white/[0.08] text-cream'
-                    : 'text-cream-dim hover:bg-white/[0.04] hover:text-cream'
+                    ? 'bg-white/[0.07] ring-1 ring-white/[0.06]'
+                    : 'hover:bg-white/[0.04]'
                 }`}
               >
                 <div className="min-w-0">
-                  <div className="truncate font-medium">{session.title}</div>
-                  <div className="truncate font-mono text-[10px] text-cream-faint">
+                  <div className={`truncate text-[13px] font-medium ${currentSessionId === session.id ? 'text-cream' : 'text-cream-dim'}`}>
+                    {session.title}
+                  </div>
+                  <div className="mt-0.5 truncate font-mono text-[10px] text-cream-faint">
                     {new Date(session.createdAt).toLocaleTimeString(timeLocale, {
                       hour: '2-digit',
                       minute: '2-digit'
@@ -145,9 +153,9 @@ export default function Sidebar() {
                     e.stopPropagation()
                     handleDeleteSession(session.id)
                   }}
-                  className="ml-2 shrink-0 rounded p-1 text-cream-faint opacity-0 transition hover:bg-red-500/15 hover:text-red-300 group-hover:opacity-100"
+                  className="ml-2 shrink-0 rounded-md p-1 text-cream-faint opacity-0 transition hover:bg-red-500/15 hover:text-red-300 group-hover:opacity-100"
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={13} />
                 </button>
               </div>
             ))}
@@ -155,18 +163,18 @@ export default function Sidebar() {
         )}
       </div>
 
-      <div className="border-t border-white/[0.06] p-2">
+      <div className="border-t border-white/[0.07] p-2">
         <div className="mb-1 flex items-center gap-2 rounded-lg px-2 py-1.5">
-          <Languages size={14} className="shrink-0 text-cream-faint" />
+          <Languages size={13} className="shrink-0 text-cream-faint" />
           <span className="text-xs text-cream-faint">{t('sidebar.language')}</span>
-          <div className="ml-auto flex rounded-md bg-white/[0.06] p-0.5">
+          <div className="ml-auto flex rounded-lg bg-white/[0.06] p-0.5">
             {(['zh', 'en'] as const).map((lang) => (
               <button
                 key={lang}
                 onClick={() => setLanguage(lang)}
-                className={`rounded px-2 py-0.5 text-[11px] font-medium transition ${
+                className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition ${
                   language === lang
-                    ? 'bg-cream text-ink-950'
+                    ? 'bg-cream text-ink-950 shadow-sm'
                     : 'text-cream-dim hover:text-cream'
                 }`}
               >
@@ -177,8 +185,8 @@ export default function Sidebar() {
         </div>
         <button
           onClick={() => setRightPanelOpen(!rightPanelOpen)}
-          className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
-            rightPanelOpen ? 'bg-white/[0.08] text-cream' : 'text-cream-dim hover:bg-white/[0.04]'
+          className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition ${
+            rightPanelOpen ? 'bg-white/[0.07] text-cream' : 'text-cream-dim hover:bg-white/[0.04] hover:text-cream'
           }`}
         >
           <PanelRight size={15} />
@@ -186,10 +194,10 @@ export default function Sidebar() {
         </button>
         <button
           onClick={() => navigate('/')}
-          className={`mt-0.5 flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
+          className={`mt-0.5 flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition ${
             location.pathname === '/'
-              ? 'bg-white/[0.08] text-cream'
-              : 'text-cream-dim hover:bg-white/[0.04]'
+              ? 'bg-white/[0.07] text-cream'
+              : 'text-cream-dim hover:bg-white/[0.04] hover:text-cream'
           }`}
         >
           <MessageSquare size={15} />
@@ -197,10 +205,10 @@ export default function Sidebar() {
         </button>
         <button
           onClick={() => navigate('/customize')}
-          className={`mt-0.5 flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
+          className={`mt-0.5 flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] transition ${
             location.pathname === '/customize'
-              ? 'bg-white/[0.08] text-cream'
-              : 'text-cream-dim hover:bg-white/[0.04]'
+              ? 'bg-white/[0.07] text-cream'
+              : 'text-cream-dim hover:bg-white/[0.04] hover:text-cream'
           }`}
         >
           <Puzzle size={15} />

@@ -36,9 +36,9 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
   }
 
   return (
-    <div className="border-t border-white/[0.06] bg-ink-950/80 p-4">
+    <div className="p-4 pt-2">
       <div className="mx-auto max-w-3xl">
-        <div className="rounded-2xl border border-white/[0.08] bg-ink-900 p-2 transition focus-within:border-accent/40">
+        <div className="rounded-[20px] border border-white/[0.09] bg-ink-850 p-2 shadow-[0_8px_32px_rgba(0,0,0,0.35)] transition focus-within:border-accent/35 focus-within:shadow-[0_8px_32px_rgba(56,189,248,0.08)]">
           <textarea
             ref={textareaRef}
             value={text}
@@ -48,7 +48,7 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
             disabled={disabled}
             placeholder={disabled ? t('composer.placeholderDisabled') : t('composer.placeholder')}
             rows={1}
-            className="max-h-40 w-full resize-none bg-transparent px-2.5 py-2 text-sm leading-6 text-cream placeholder-cream-faint outline-none"
+            className="max-h-40 w-full resize-none bg-transparent px-3 py-2 text-[15px] leading-6 text-cream placeholder-cream-faint outline-none"
           />
           <div className="flex items-center justify-between px-1.5 pb-0.5 pt-1">
             <div className="flex items-center gap-0.5">
@@ -62,9 +62,9 @@ export default function Composer({ onSend, disabled }: ComposerProps) {
             <button
               onClick={handleSend}
               disabled={disabled || !text.trim()}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-cream text-ink-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-cream text-ink-950 shadow-sm transition hover:bg-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-25"
             >
-              <ArrowUp size={16} />
+              <ArrowUp size={16} strokeWidth={2.5} />
             </button>
           </div>
         </div>

@@ -9,6 +9,7 @@ export interface MessageLike {
     tool: string
     input: unknown
     output?: unknown
+    isError?: boolean
   }
 }
 
@@ -146,6 +147,29 @@ export const useAppStore = create<AppState>((set, get) => ({
           output: event.output
         }
       })
+    } else if (event.type === 'tool_result') {
+      // Merge the result into the last pending tool call of this session
+      const list = get().messages[event.sessionId] || []
+      const idx = [...list]
+        .reverse()
+        .findIndex((m) => m.toolCall && m.toolCall.output === undefined && m.toolCall.tool === event.tool)
+      if (idx === -1) {
+        get().addMessage(event.sessionId, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: '',
+          toolCall: { tool: event.tool, input: undefined, output: event.output, isError: event.isError }
+        })
+      } else {
+        const realIdx = list.length - 1 - idx
+        const target = list[realIdx]
+        const updated = [...list]
+        updated[realIdx] = {
+          ...target,
+          toolCall: { ...target.toolCall!, output: event.output, isError: event.isError }
+        }
+        set((state) => ({ messages: { ...state.messages, [event.sessionId]: updated } }))
+      }
     } else if (event.type === 'error') {
       get().addMessage(event.sessionId, {
         id: crypto.randomUUID(),

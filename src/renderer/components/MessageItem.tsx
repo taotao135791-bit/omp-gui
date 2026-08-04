@@ -1,7 +1,6 @@
 import { AlertTriangle } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { MessageLike } from '../store'
+import Markdown from './Markdown'
 import ToolCallCard from './ToolCallCard'
 
 interface MessageItemProps {
@@ -14,8 +13,8 @@ export default function MessageItem({ message }: MessageItemProps) {
 
   if (isUser) {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-white/[0.08] px-4 py-2.5 text-sm leading-7 text-cream">
+      <div className="msg-in flex justify-end">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-ink-700 px-4 py-2.5 text-[15px] leading-7 text-cream">
           {message.content}
         </div>
       </div>
@@ -23,27 +22,25 @@ export default function MessageItem({ message }: MessageItemProps) {
   }
 
   return (
-    <div className="flex gap-3">
-      <div
-        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-bold ${
-          isSystem ? 'bg-red-500/15 text-red-300' : 'bg-accent/15 text-accent'
-        }`}
-      >
-        {isSystem ? <AlertTriangle size={12} /> : 'π'}
-      </div>
+    <div className="msg-in flex gap-3">
+      {isSystem ? (
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-red-500/15 text-red-300">
+          <AlertTriangle size={13} />
+        </div>
+      ) : (
+        <div className="brand-gradient flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[13px] font-bold text-ink-950 shadow-sm shadow-indigo-500/20">
+          π
+        </div>
+      )}
       <div className="min-w-0 flex-1 pt-0.5">
         {message.toolCall ? (
           <ToolCallCard toolCall={message.toolCall} />
         ) : isSystem ? (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/[0.08] px-3.5 py-2.5 text-sm text-red-200">
+          <div className="rounded-xl border border-red-500/20 bg-red-500/[0.08] px-3.5 py-2.5 text-sm leading-6 text-red-200">
             {message.content}
           </div>
         ) : (
-          <div className="md">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {message.content}
-            </ReactMarkdown>
-          </div>
+          <Markdown content={message.content} />
         )}
       </div>
     </div>
