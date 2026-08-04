@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { FileText, X, Eye } from 'lucide-react'
 import { useAppStore } from '../store'
+import { useT, translate } from '../i18n'
 import FileTree from './FileTree'
 import CodePreview from './CodePreview'
 
@@ -13,41 +14,50 @@ export default function RightPanel() {
     setRightPanelOpen,
     setPreviewContent
   } = useAppStore()
+  const t = useT()
 
   useEffect(() => {
     if (selectedFile && activeRightTab === 'preview') {
       window.electronAPI.readFile(selectedFile).then((result) => {
-        setPreviewContent(result.ok ? result.content : `Cannot preview: ${result.error}`)
+        setPreviewContent(
+          result.ok
+            ? result.content
+            : translate(useAppStore.getState().language, 'panel.cannotPreview', { error: result.error })
+        )
       })
     }
   }, [selectedFile, activeRightTab, setPreviewContent])
 
   return (
-    <aside className="flex w-72 flex-col border-l border-surface-700 bg-surface-800">
-      <div className="flex h-10 items-center justify-between border-b border-surface-700 px-3">
+    <aside className="flex w-72 shrink-0 flex-col border-l border-white/[0.06] bg-ink-900">
+      <div className="flex h-11 items-center justify-between border-b border-white/[0.06] px-3">
         <div className="flex gap-1">
           <button
             onClick={() => setActiveRightTab('files')}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium ${
-              activeRightTab === 'files' ? 'bg-surface-700 text-white' : 'text-gray-400 hover:bg-surface-700'
+            className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
+              activeRightTab === 'files'
+                ? 'bg-white/[0.08] text-cream'
+                : 'text-cream-dim hover:bg-white/[0.04]'
             }`}
           >
             <FileText size={12} />
-            Files
+            {t('panel.files')}
           </button>
           <button
             onClick={() => setActiveRightTab('preview')}
-            className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium ${
-              activeRightTab === 'preview' ? 'bg-surface-700 text-white' : 'text-gray-400 hover:bg-surface-700'
+            className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
+              activeRightTab === 'preview'
+                ? 'bg-white/[0.08] text-cream'
+                : 'text-cream-dim hover:bg-white/[0.04]'
             }`}
           >
             <Eye size={12} />
-            Preview
+            {t('panel.preview')}
           </button>
         </div>
         <button
           onClick={() => setRightPanelOpen(false)}
-          className="rounded p-1 text-gray-500 hover:bg-surface-700 hover:text-gray-300"
+          className="rounded-md p-1 text-cream-faint transition hover:bg-white/[0.06] hover:text-cream"
         >
           <X size={14} />
         </button>

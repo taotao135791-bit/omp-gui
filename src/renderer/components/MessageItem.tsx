@@ -1,4 +1,4 @@
-import { User, Bot, AlertTriangle } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { MessageLike } from '../store'
@@ -12,32 +12,34 @@ export default function MessageItem({ message }: MessageItemProps) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
 
-  return (
-    <div className={`flex gap-4 ${isUser ? 'flex-row-reverse' : ''}`}>
-      <div
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-          isUser
-            ? 'bg-brand'
-            : isSystem
-              ? 'bg-red-900/50 text-red-400'
-              : 'bg-surface-700'
-        }`}
-      >
-        {isUser ? <User size={16} /> : isSystem ? <AlertTriangle size={16} /> : <Bot size={16} />}
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-white/[0.08] px-4 py-2.5 text-sm leading-7 text-cream">
+          {message.content}
+        </div>
       </div>
+    )
+  }
+
+  return (
+    <div className="flex gap-3">
       <div
-        className={`max-w-[80%] overflow-hidden rounded-2xl px-4 py-3 text-sm ${
-          isUser
-            ? 'bg-brand text-white'
-            : isSystem
-              ? 'border border-red-900/50 bg-red-900/20 text-red-200'
-              : 'bg-surface-800 text-gray-100'
+        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-bold ${
+          isSystem ? 'bg-red-500/15 text-red-300' : 'bg-accent/15 text-accent'
         }`}
       >
+        {isSystem ? <AlertTriangle size={12} /> : 'π'}
+      </div>
+      <div className="min-w-0 flex-1 pt-0.5">
         {message.toolCall ? (
           <ToolCallCard toolCall={message.toolCall} />
+        ) : isSystem ? (
+          <div className="rounded-xl border border-red-500/20 bg-red-500/[0.08] px-3.5 py-2.5 text-sm text-red-200">
+            {message.content}
+          </div>
         ) : (
-          <div className="prose prose-invert prose-sm max-w-none">
+          <div className="md">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {message.content}
             </ReactMarkdown>

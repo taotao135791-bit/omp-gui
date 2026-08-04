@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ChevronRight, ChevronDown, Folder, File } from 'lucide-react'
 import { useAppStore } from '../store'
+import { useT } from '../i18n'
 
 interface TreeNode {
   name: string
@@ -13,6 +14,7 @@ interface TreeNode {
 export default function FileTree() {
   const { currentProject, selectedFile, setSelectedFile, setActiveRightTab } = useAppStore()
   const [tree, setTree] = useState<TreeNode[]>([])
+  const t = useT()
 
   useEffect(() => {
     if (!currentProject) {
@@ -75,8 +77,8 @@ export default function FileTree() {
       <div key={node.path}>
         <div
           onClick={() => toggleNode(node, parentList, setParentList)}
-          className={`flex cursor-pointer items-center gap-1 py-1 pr-2 text-xs ${
-            isSelected ? 'bg-brand/20 text-brand-light' : 'text-gray-400 hover:bg-surface-700 hover:text-gray-200'
+          className={`flex cursor-pointer items-center gap-1.5 py-1 pr-2 font-mono text-xs transition ${
+            isSelected ? 'bg-accent/10 text-accent' : 'text-cream-dim hover:bg-white/[0.04] hover:text-cream'
           }`}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
@@ -86,9 +88,9 @@ export default function FileTree() {
             <span className="w-3" />
           )}
           {node.isDirectory ? (
-            <Folder size={12} className="text-yellow-600" />
+            <Folder size={12} className="text-accent/70" />
           ) : (
-            <File size={12} className="text-blue-400" />
+            <File size={12} className="text-cream-faint" />
           )}
           <span className="truncate">{node.name}</span>
         </div>
@@ -110,7 +112,7 @@ export default function FileTree() {
 
   if (!currentProject) {
     return (
-      <div className="p-4 text-xs text-gray-500">Select a project to browse files.</div>
+      <div className="p-4 text-xs text-cream-faint">{t('panel.selectProject')}</div>
     )
   }
 

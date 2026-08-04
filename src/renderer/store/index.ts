@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, ModuleInfo, InstallStatus } from '@shared/types'
+import { Session, SessionEvent, ModuleInfo, InstallStatus, Language } from '@shared/types'
 
 export interface MessageLike {
   id: string
@@ -14,6 +14,7 @@ export interface MessageLike {
 
 interface AppState {
   theme: 'dark' | 'light'
+  language: Language
   currentProject: string | null
   sessions: Session[]
   currentSessionId: string | null
@@ -28,6 +29,7 @@ interface AppState {
   setupComplete: boolean | null
   installStatus: InstallStatus
   setTheme: (theme: 'dark' | 'light') => void
+  setLanguage: (language: Language) => void
   setCurrentProject: (path: string | null) => void
   setSessions: (sessions: Session[]) => void
   addSession: (session: Session) => void
@@ -48,6 +50,7 @@ interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
   theme: 'dark',
+  language: 'en',
   currentProject: null,
   sessions: [],
   currentSessionId: null,
@@ -64,6 +67,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   setTheme: (theme) => {
     set({ theme })
     document.documentElement.classList.toggle('dark', theme === 'dark')
+  },
+  setLanguage: (language) => {
+    set({ language })
+    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'
+    window.electronAPI.setStore('language', language)
   },
   setCurrentProject: (currentProject) => set({ currentProject }),
   setSessions: (sessions) => set({ sessions }),

@@ -8,8 +8,17 @@
   }
 
   body {
-    @apply bg-surface-900 text-gray-100 antialiased;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    @apply bg-ink-950 text-cream antialiased;
+    font-feature-settings: 'ss01', 'cv11';
+  }
+
+  /* CJK readability: slightly looser line height, no letter spacing tricks */
+  html[lang^='zh'] body {
+    line-height: 1.7;
+  }
+
+  ::selection {
+    @apply bg-accent/25 text-cream;
   }
 
   ::-webkit-scrollbar {
@@ -22,11 +31,58 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-surface-600 rounded-full;
+    @apply rounded-full bg-white/10;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    @apply bg-surface-500;
+    @apply bg-white/20;
+  }
+}
+
+@layer components {
+  /* Markdown body — @tailwindcss/typography is not installed, style by hand */
+  .md {
+    @apply text-sm leading-7 text-cream/90;
+  }
+  .md > * + * {
+    @apply mt-3;
+  }
+  .md h1, .md h2, .md h3, .md h4 {
+    @apply font-semibold text-cream;
+  }
+  .md h1 { @apply text-lg; }
+  .md h2 { @apply text-base; }
+  .md h3, .md h4 { @apply text-sm; }
+  .md p { @apply leading-7; }
+  .md ul { @apply list-disc pl-5; }
+  .md ol { @apply list-decimal pl-5; }
+  .md li + li { @apply mt-1; }
+  .md a {
+    @apply text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent;
+  }
+  .md code {
+    @apply rounded-md bg-white/[0.07] px-1.5 py-0.5 font-mono text-[0.85em] text-accent-bright;
+  }
+  .md pre {
+    @apply overflow-x-auto rounded-xl border border-white/[0.06] bg-ink-950 p-3;
+  }
+  .md pre code {
+    @apply bg-transparent p-0 text-cream/90;
+  }
+  .md blockquote {
+    @apply border-l-2 border-accent/40 pl-3 text-cream-dim;
+  }
+  .md table {
+    @apply w-full border-collapse text-[0.9em];
+  }
+  .md th, .md td {
+    @apply border border-white/10 px-2 py-1 text-left;
+  }
+  .md th {
+    @apply bg-white/[0.04] font-medium;
+  }
+  .md hr {
+    @apply border-white/10;
   }
 }
 

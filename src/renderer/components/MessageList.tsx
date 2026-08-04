@@ -7,7 +7,7 @@ interface MessageListProps {
 
 export default function MessageList({ messages }: MessageListProps) {
   return (
-    <div className="flex flex-col gap-6 p-4">
+    <div className="flex flex-col gap-5 px-4 py-6">
       {messages.map((message) => (
         <MessageItem key={message.id} message={message} />
       ))}

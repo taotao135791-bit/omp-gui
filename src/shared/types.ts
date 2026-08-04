@@ -32,8 +32,11 @@ export interface ModuleInfo {
   enabled: boolean
 }
 
+export type Language = 'zh' | 'en'
+
 export interface AppSettings {
   theme: 'dark' | 'light'
+  language: Language
   windowWidth: number
   windowHeight: number
   enabledModules: string[]
@@ -54,6 +57,7 @@ export type ReadFileResult =
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
+  language: 'en',
   windowWidth: 1280,
   windowHeight: 800,
   enabledModules: [],

@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Download, CheckCircle, AlertCircle, Loader2, Terminal, ArrowRight } from 'lucide-react'
 import { useAppStore } from '../store'
+import { useT } from '../i18n'
 
 export default function SetupWizard() {
   const {
@@ -10,8 +11,10 @@ export default function SetupWizard() {
     setSetupComplete,
     setInstallStatus
   } = useAppStore()
+  const t = useT()
 
   const manualCommand = 'curl -fsSL https://omp.sh/install | sh'
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     window.electronAPI.detectCli().then((info) => {
@@ -39,10 +42,8 @@ export default function SetupWizard() {
 
   const handleAutoInstall = async () => {
     setInstallStatus({ type: 'downloading', progress: 0, message: 'Starting download...' })
-    const success = await window.electronAPI.installOmp()
-    if (!success) {
-      // error status is already set by the installer events
-    }
+    await window.electronAPI.installOmp()
+    // error status is delivered by installer events
   }
 
   const handleManualDone = async () => {
@@ -53,21 +54,27 @@ export default function SetupWizard() {
     }
   }
 
+  const handleCopy = () => {
+    navigator.clipboard.writeText(manualCommand)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
   if (cliAvailable === null) {
     return (
-      <div className="flex h-full flex-col items-center justify-center bg-surface-900 text-gray-100">
-        <Loader2 className="mb-4 animate-spin text-brand" size={32} />
-        <div className="text-sm text-gray-400">Detecting environment...</div>
+      <div className="flex h-full flex-col items-center justify-center bg-ink-950">
+        <Loader2 className="mb-4 animate-spin text-accent" size={30} />
+        <div className="text-sm text-cream-dim">{t('setup.detecting')}</div>
       </div>
     )
   }
 
   if (cliAvailable) {
     return (
-      <div className="flex h-full flex-col items-center justify-center bg-surface-900 text-gray-100">
-        <CheckCircle className="mb-4 text-brand" size={48} />
-        <div className="text-xl font-semibold">Oh My Pi is ready</div>
-        <div className="mt-2 text-sm text-gray-400">Launching main interface...</div>
+      <div className="flex h-full flex-col items-center justify-center bg-ink-950">
+        <CheckCircle className="mb-4 text-accent" size={44} />
+        <div className="text-xl font-semibold tracking-tight text-cream">{t('setup.ready.title')}</div>
+        <div className="mt-2 text-sm text-cream-dim">{t('setup.ready.subtitle')}</div>
       </div>
     )
   }
@@ -76,24 +83,22 @@ export default function SetupWizard() {
   const isError = installStatus.type === 'error'
 
   return (
-    <div className="flex h-full flex-col items-center justify-center bg-surface-900 p-8 text-gray-100">
-      <div className="w-full max-w-xl rounded-2xl border border-surface-700 bg-surface-800 p-8 shadow-xl">
+    <div className="flex h-full flex-col items-center justify-center bg-ink-950 p-8">
+      <div className="w-full max-w-xl rounded-2xl border border-white/[0.06] bg-ink-900 p-8">
         <div className="mb-6 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand font-bold text-white">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cream text-lg font-bold text-ink-950">
             π
           </div>
           <div>
-            <h1 className="text-xl font-semibold">Welcome to OMP GUI</h1>
-            <p className="text-sm text-gray-400">A Codex-style desktop interface for Oh My Pi</p>
+            <h1 className="text-xl font-semibold tracking-tight text-cream">{t('setup.welcome.title')}</h1>
+            <p className="text-sm text-cream-dim">{t('setup.welcome.subtitle')}</p>
           </div>
         </div>
 
-        <div className="mb-6 rounded-lg border border-yellow-900/50 bg-yellow-900/20 p-4">
+        <div className="mb-6 rounded-xl border border-yellow-500/20 bg-yellow-500/[0.08] p-4">
           <div className="flex items-start gap-3">
-            <AlertCircle className="mt-0.5 shrink-0 text-yellow-500" size={18} />
-            <div className="text-sm text-yellow-200">
-              Oh My Pi (omp) was not found on this Mac. OMP GUI needs it to run the AI coding agent.
-            </div>
+            <AlertCircle className="mt-0.5 shrink-0 text-yellow-400" size={18} />
+            <div className="text-sm leading-6 text-yellow-200/90">{t('setup.missing')}</div>
           </div>
         </div>
 
@@ -101,78 +106,78 @@ export default function SetupWizard() {
           <button
             onClick={handleAutoInstall}
             disabled={isInstalling}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-3 text-sm font-medium text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-cream px-4 py-3 text-sm font-medium text-ink-950 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isInstalling ? (
               <Loader2 size={18} className="animate-spin" />
             ) : (
               <Download size={18} />
             )}
-            {isInstalling ? 'Installing...' : 'Auto-install Oh My Pi'}
+            {isInstalling ? t('setup.installing') : t('setup.autoInstall')}
           </button>
 
           {installStatus.type === 'downloading' && (
             <div className="space-y-2">
-              <div className="h-2 overflow-hidden rounded-full bg-surface-700">
+              <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
                 <div
-                  className="h-full bg-brand transition-all"
+                  className="h-full bg-accent transition-all"
                   style={{ width: `${installStatus.progress}%` }}
                 />
               </div>
-              <div className="text-xs text-gray-400">{installStatus.message}</div>
+              <div className="font-mono text-xs text-cream-dim">{installStatus.message}</div>
             </div>
           )}
 
           {(installStatus.type === 'installing' || installStatus.type === 'success') && (
-            <div className="rounded-lg bg-surface-900/50 p-3 text-xs text-gray-300">
-              <div className="mb-1 flex items-center gap-1.5 text-gray-500">
+            <div className="rounded-xl bg-ink-950/70 p-3 text-xs text-cream-dim">
+              <div className="mb-1 flex items-center gap-1.5 text-cream-faint">
                 <Terminal size={12} />
-                Install log
+                {t('setup.installLog')}
               </div>
               <div className="font-mono">
                 {installStatus.type === 'installing'
                   ? installStatus.message
-                  : 'Install complete.'}
+                  : t('setup.installComplete')}
               </div>
             </div>
           )}
 
           {isError && (
-            <div className="rounded-lg border border-red-900/50 bg-red-900/20 p-3 text-xs text-red-200">
+            <div className="rounded-xl border border-red-500/20 bg-red-500/[0.08] p-3 text-xs text-red-200">
               <div className="mb-1 flex items-center gap-1.5 font-medium">
                 <AlertCircle size={12} />
-                Installation failed
+                {t('setup.installFailed')}
               </div>
               <pre className="whitespace-pre-wrap font-mono">{installStatus.message}</pre>
             </div>
           )}
 
           <div className="relative flex items-center py-2">
-            <div className="flex-1 border-t border-surface-700" />
-            <span className="px-3 text-xs text-gray-500">or install manually</span>
-            <div className="flex-1 border-t border-surface-700" />
+            <div className="flex-1 border-t border-white/[0.06]" />
+            <span className="px-3 text-xs text-cream-faint">{t('setup.orManual')}</span>
+            <div className="flex-1 border-t border-white/[0.06]" />
           </div>
 
           <div className="space-y-2">
-            <label className="text-xs text-gray-500">Terminal command</label>
+            <label className="text-xs text-cream-faint">{t('setup.terminalCommand')}</label>
             <div className="flex gap-2">
               <input
                 readOnly
                 value={manualCommand}
-                className="flex-1 rounded-lg border border-surface-600 bg-surface-900 px-3 py-2 font-mono text-xs text-gray-300 outline-none"
+                className="flex-1 rounded-lg border border-white/[0.08] bg-ink-950 px-3 py-2 font-mono text-xs text-cream-dim outline-none"
               />
               <button
-                onClick={() => navigator.clipboard.writeText(manualCommand)}
-                className="rounded-lg border border-surface-600 px-3 py-2 text-xs text-gray-300 hover:bg-surface-700"
+                onClick={handleCopy}
+                className="rounded-lg border border-white/[0.08] px-3 py-2 text-xs text-cream-dim transition hover:bg-white/[0.06] hover:text-cream"
               >
-                Copy
+                {copied ? t('setup.copied') : t('setup.copy')}
               </button>
             </div>
             <button
               onClick={handleManualDone}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-surface-600 px-4 py-2 text-sm text-gray-300 transition hover:bg-surface-700"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/[0.08] px-4 py-2 text-sm text-cream-dim transition hover:bg-white/[0.06] hover:text-cream"
             >
-              I've installed it
+              {t('setup.installed')}
               <ArrowRight size={14} />
             </button>
           </div>
