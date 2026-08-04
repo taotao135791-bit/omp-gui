@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron'
 import { IPC_CHANNELS } from '../shared/constants'
 import {
   CliInfo,
@@ -34,6 +34,8 @@ export interface ElectronAPI {
   selectFolder: () => Promise<string | null>
   selectFile: () => Promise<string | null>
   showCliSettings: () => Promise<boolean>
+  /** Real filesystem path for a File dropped from Finder (contextIsolation-safe). */
+  getPathForFile: (file: File) => string
 }
 
 const api: ElectronAPI = {
@@ -74,7 +76,8 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.STORE_SET, key, value),
   selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FOLDER),
   selectFile: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FILE),
-  showCliSettings: () => ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_CLI_SETTINGS)
+  showCliSettings: () => ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_CLI_SETTINGS),
+  getPathForFile: (file: File) => webUtils.getPathForFile(file)
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)
