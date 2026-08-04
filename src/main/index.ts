@@ -6,8 +6,9 @@ import { registerIpc } from './ipc'
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
 function createWindow() {
-  const width = getStore('windowWidth')
-  const height = getStore('windowHeight')
+  // Clamp persisted sizes in case the store holds corrupt values
+  const width = Math.max(900, Math.min(getStore('windowWidth') || 1280, 5120))
+  const height = Math.max(600, Math.min(getStore('windowHeight') || 800, 5120))
 
   const win = new BrowserWindow({
     width,
@@ -19,11 +20,12 @@ function createWindow() {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   })
 
-  win.on('resized', () => {
+  // 'resize' fires on all platforms; 'resized' is Windows-only
+  win.on('resize', () => {
     const [w, h] = win.getSize()
     setStore('windowWidth', w)
     setStore('windowHeight', h)

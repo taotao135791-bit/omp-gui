@@ -1,5 +1,7 @@
 export interface CliInfo {
   command: string
+  /** Resolved absolute path to the executable, when found. */
+  path?: string
   version?: string
   available: boolean
 }
@@ -45,6 +47,10 @@ export type InstallStatus =
   | { type: 'installing'; message: string }
   | { type: 'success' }
   | { type: 'error'; message: string }
+
+export type ReadFileResult =
+  | { ok: true; content: string }
+  | { ok: false; error: string }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',

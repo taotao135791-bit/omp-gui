@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Download, CheckCircle, AlertCircle, Loader2, Terminal, ArrowRight } from 'lucide-react'
 import { useAppStore } from '../store'
 
@@ -11,7 +11,7 @@ export default function SetupWizard() {
     setInstallStatus
   } = useAppStore()
 
-  const [manualCommand, setManualCommand] = useState('curl -fsSL https://omp.sh/install | sh')
+  const manualCommand = 'curl -fsSL https://omp.sh/install | sh'
 
   useEffect(() => {
     window.electronAPI.detectCli().then((info) => {
@@ -129,7 +129,11 @@ export default function SetupWizard() {
                 <Terminal size={12} />
                 Install log
               </div>
-              <div className="font-mono">{installStatus.message}</div>
+              <div className="font-mono">
+                {installStatus.type === 'installing'
+                  ? installStatus.message
+                  : 'Install complete.'}
+              </div>
             </div>
           )}
 

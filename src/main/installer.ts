@@ -88,13 +88,37 @@ export async function installOmp(
 function downloadFile(
   url: string,
   dest: string,
-  onProgress: (progress: number) => void
+  onProgress: (progress: number) => void,
+  redirectsLeft = 5
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest)
     https
-      .get(url, { redirect: 'follow' as any }, (response) => {
+      .get(url, (response) => {
+        // Follow redirects manually — https.get does not follow them
+        if (
+          response.statusCode &&
+          response.statusCode >= 300 &&
+          response.statusCode < 400 &&
+          response.headers.location
+        ) {
+          response.resume()
+          file.close()
+          fs.unlinkSync(dest)
+          if (redirectsLeft <= 0) {
+            reject(new Error('Too many redirects'))
+            return
+          }
+          resolve(
+            downloadFile(response.headers.location, dest, onProgress, redirectsLeft - 1)
+          )
+          return
+        }
+
         if (response.statusCode !== 200) {
+          response.resume()
+          file.close()
+          fs.unlinkSync(dest)
           reject(new Error(`HTTP ${response.statusCode}`))
           return
         }

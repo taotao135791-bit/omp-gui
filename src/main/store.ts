@@ -13,14 +13,3 @@ export function getStore<K extends keyof AppSettings>(key: K): AppSettings[K] {
 export function setStore<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void {
   store.set(key, value)
 }
-
-export function getAllSettings(): AppSettings {
-  return {
-    theme: store.get('theme'),
-    windowWidth: store.get('windowWidth'),
-    windowHeight: store.get('windowHeight'),
-    enabledModules: store.get('enabledModules'),
-    recentProjects: store.get('recentProjects'),
-    setupComplete: store.get('setupComplete')
-  }
-}

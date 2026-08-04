@@ -24,7 +24,8 @@ interface AppState {
   selectedFile: string | null
   previewContent: string | null
   cliAvailable: boolean | null
-  setupComplete: boolean
+  /** null = not yet loaded from disk */
+  setupComplete: boolean | null
   installStatus: InstallStatus
   setTheme: (theme: 'dark' | 'light') => void
   setCurrentProject: (path: string | null) => void
@@ -57,7 +58,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedFile: null,
   previewContent: null,
   cliAvailable: null,
-  setupComplete: false,
+  setupComplete: null,
   installStatus: { type: 'idle' },
 
   setTheme: (theme) => {

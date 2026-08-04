@@ -1,12 +1,16 @@
 import { spawn, ChildProcess } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { CliInfo, Session, SessionEvent } from '../shared/types'
 import { getStore, setStore } from './store'
+import { scanModules } from './modules'
+import { parseRpcLine, drainLines } from './protocol'
 
 const sessions = new Map<string, { process: ChildProcess; session: Session }>()
 
+// Only successful detections are cached; a negative result is re-checked
+// every time so the app picks up a CLI installed after launch.
 let cliInfoCache: CliInfo | null = null
 
 export function detectCli(): CliInfo {
@@ -15,20 +19,46 @@ export function detectCli(): CliInfo {
   for (const cmd of ['omp', 'pi']) {
     const candidate = findExecutable(cmd)
     if (candidate) {
-      cliInfoCache = { command: cmd, available: true }
+      cliInfoCache = { command: cmd, path: candidate, available: true }
       return cliInfoCache
     }
   }
 
-  cliInfoCache = { command: 'omp', available: false }
-  return cliInfoCache
+  return { command: 'omp', available: false }
+}
+
+/** Clear the cached CLI info (e.g. after a successful install). */
+export function invalidateCliCache(): void {
+  cliInfoCache = null
+}
+
+/**
+ * GUI apps on macOS/Linux are launched with a minimal PATH that usually
+ * excludes package-manager bin dirs, so check well-known locations too.
+ */
+function executableSearchDirs(): string[] {
+  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean)
+  const home = homedir()
+  dirs.push(
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.npm-global', 'bin'),
+    path.join(home, 'bin')
+  )
+  return Array.from(new Set(dirs))
 }
 
 function findExecutable(cmd: string): string | null {
-  const paths = (process.env.PATH || '').split(path.delimiter)
-  for (const p of paths) {
-    const full = path.join(p, cmd)
-    if (existsSync(full)) return full
+  for (const dir of executableSearchDirs()) {
+    const full = path.join(dir, cmd)
+    try {
+      if (!existsSync(full) || !statSync(full).isFile()) continue
+      accessSync(full, constants.X_OK)
+      return full
+    } catch {
+      continue
+    }
   }
   return null
 }
@@ -63,7 +93,6 @@ export function createSession(
   const enabledIds = getStore('enabledModules')
   const extensionArgs: string[] = []
   if (enabledIds.length > 0) {
-    const { scanModules } = require('./modules')
     const modules = scanModules(cwd)
     for (const mod of modules) {
       if (mod.enabled && mod.source !== 'builtin' && mod.path) {
@@ -73,10 +102,11 @@ export function createSession(
   }
 
   const args = ['--mode', 'rpc', ...extensionArgs]
-  const proc = spawn(cli.command, args, {
+  const proc = spawn(cli.path ?? cli.command, args, {
     cwd,
     env: {
       ...process.env,
+      PATH: executableSearchDirs().join(path.delimiter),
       HOME: homedir(),
       FORCE_COLOR: '0'
     }
@@ -94,33 +124,42 @@ export function createSession(
 
   let buffer = ''
   proc.stdout?.on('data', (chunk: Buffer) => {
-    buffer += chunk.toString('utf-8')
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
+    const { lines, rest } = drainLines(buffer, chunk.toString('utf-8'))
+    buffer = rest
     for (const line of lines) {
-      if (!line.trim()) continue
-      parseLine(line, id, onEvent)
+      onEvent(parseRpcLine(line, id))
     }
   })
 
+  // Buffer stderr instead of streaming it as chat errors; the CLI writes
+  // progress/diagnostic noise there. Surface it only on abnormal exit.
+  let stderrBuffer = ''
   proc.stderr?.on('data', (chunk: Buffer) => {
-    const text = chunk.toString('utf-8')
-    const errorEvent: SessionEvent = {
+    stderrBuffer += chunk.toString('utf-8')
+    if (stderrBuffer.length > 10_000) {
+      stderrBuffer = stderrBuffer.slice(-10_000)
+    }
+  })
+
+  proc.on('error', (err) => {
+    sessions.delete(id)
+    onEvent({
       type: 'error',
       sessionId: id,
-      message: text
-    }
-    onEvent(errorEvent)
+      message: `Failed to start ${cli.command}: ${err.message}`
+    })
+    onEvent({ type: 'closed', sessionId: id })
   })
 
   proc.on('exit', (code) => {
     sessions.delete(id)
     onEvent({ type: 'closed', sessionId: id })
     if (code !== 0 && code !== null) {
+      const detail = stderrBuffer.trim().split('\n').slice(-3).join('\n')
       onEvent({
         type: 'error',
         sessionId: id,
-        message: `omp exited with code ${code}`
+        message: `omp exited with code ${code}${detail ? `\n${detail}` : ''}`
       })
     }
   })
@@ -133,42 +172,6 @@ export function createSession(
   }
 
   return session
-}
-
-function parseLine(line: string, sessionId: string, onEvent: (event: SessionEvent) => void) {
-  try {
-    const payload = JSON.parse(line)
-    if (payload.type === 'tool_call') {
-      onEvent({
-        type: 'tool_call',
-        sessionId,
-        tool: payload.tool,
-        input: payload.input,
-        output: payload.output
-      })
-    } else if (payload.type === 'message') {
-      onEvent({
-        type: 'message',
-        sessionId,
-        role: payload.role || 'assistant',
-        content: payload.content
-      })
-    } else {
-      onEvent({
-        type: 'message',
-        sessionId,
-        role: 'assistant',
-        content: line
-      })
-    }
-  } catch {
-    onEvent({
-      type: 'message',
-      sessionId,
-      role: 'assistant',
-      content: line
-    })
-  }
 }
 
 export function sendMessage(sessionId: string, text: string): boolean {

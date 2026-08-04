@@ -1,24 +1,30 @@
-import { ipcMain, dialog, IpcMainInvokeEvent, IpcMainEvent } from 'electron'
+import { ipcMain, dialog, BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import path from 'node:path'
 import { IPC_CHANNELS } from '../shared/constants'
-import { SessionEvent, ModuleInfo, AppSettings, InstallStatus } from '../shared/types'
+import { SessionEvent, AppSettings, InstallStatus, ReadFileResult } from '../shared/types'
 import {
   detectCli,
+  invalidateCliCache,
   createSession,
   sendMessage,
   killSession,
   listSessions
 } from './omp'
 import { scanModules } from './modules'
-import { getStore, setStore, getAllSettings } from './store'
+import { getStore, setStore } from './store'
 import { installOmp } from './installer'
+import { FsGuard } from './fsGuard'
 
-const sessionListeners = new Map<string, Set<(event: SessionEvent) => void>>()
+const fsGuard = new FsGuard()
 
-function getListeners(sessionId: string): Set<(event: SessionEvent) => void> {
-  if (!sessionListeners.has(sessionId)) {
-    sessionListeners.set(sessionId, new Set())
+const MAX_READ_FILE_BYTES = 2 * 1024 * 1024
+
+function broadcastSessionEvent(event: SessionEvent): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(IPC_CHANNELS.OMP_SESSION_EVENT, event)
+    }
   }
-  return sessionListeners.get(sessionId)!
 }
 
 export function registerIpc() {
@@ -32,12 +38,12 @@ export function registerIpc() {
   ipcMain.handle(
     IPC_CHANNELS.OMP_CREATE_SESSION,
     async (_event: IpcMainInvokeEvent, cwd: string) => {
-      return createSession(cwd, (ev) => {
-        const listeners = sessionListeners.get(ev.sessionId)
-        if (listeners) {
-          listeners.forEach((cb) => cb(ev))
-        }
-      })
+      if (typeof cwd !== 'string' || !cwd.trim()) {
+        throw new Error('createSession requires a non-empty cwd')
+      }
+      const resolved = path.resolve(cwd)
+      fsGuard.addRoot(resolved)
+      return createSession(resolved, broadcastSessionEvent)
     }
   )
 
@@ -58,47 +64,68 @@ export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.OMP_INSTALL, async (event: IpcMainInvokeEvent) => {
     const sender = event.sender
     const success = await installOmp((status: InstallStatus) => {
-      sender.send(IPC_CHANNELS.OMP_INSTALL_STATUS, status)
+      if (!sender.isDestroyed()) {
+        sender.send(IPC_CHANNELS.OMP_INSTALL_STATUS, status)
+      }
     })
+    if (success) {
+      invalidateCliCache()
+    }
     return success
   })
 
-  ipcMain.on(
-    IPC_CHANNELS.OMP_SESSION_EVENT,
-    (event: IpcMainEvent, sessionId: string) => {
-      const listener = (ev: SessionEvent) => {
-        event.sender.send(IPC_CHANNELS.OMP_SESSION_EVENT, ev)
-      }
-      getListeners(sessionId).add(listener)
-      event.sender.on('destroyed', () => {
-        getListeners(sessionId).delete(listener)
-      })
+  ipcMain.handle(
+    IPC_CHANNELS.FS_SET_ROOT,
+    async (_event: IpcMainInvokeEvent, root: string) => {
+      if (typeof root !== 'string' || !root.trim()) return false
+      fsGuard.addRoot(root)
+      return true
     }
   )
 
   ipcMain.handle(IPC_CHANNELS.FS_LIST_DIR, async (_event, dirPath: string) => {
+    if (!fsGuard.isAllowed(dirPath)) return []
     const fs = await import('node:fs/promises')
     try {
       const entries = await fs.readdir(dirPath, { withFileTypes: true })
       return entries.map((e) => ({
         name: e.name,
         isDirectory: e.isDirectory(),
-        path: dirPath + '/' + e.name
+        path: path.join(dirPath, e.name)
       }))
-    } catch (err) {
+    } catch {
       return []
     }
   })
 
-  ipcMain.handle(IPC_CHANNELS.FS_READ_FILE, async (_event, filePath: string) => {
-    const fs = await import('node:fs/promises')
-    try {
-      const content = await fs.readFile(filePath, 'utf-8')
-      return content
-    } catch (err) {
-      return ''
+  ipcMain.handle(
+    IPC_CHANNELS.FS_READ_FILE,
+    async (_event, filePath: string): Promise<ReadFileResult> => {
+      if (!fsGuard.isAllowed(filePath)) {
+        return { ok: false, error: 'Access denied: path is outside the allowed project folders.' }
+      }
+      const fs = await import('node:fs/promises')
+      try {
+        const stat = await fs.stat(filePath)
+        if (!stat.isFile()) {
+          return { ok: false, error: 'Not a regular file.' }
+        }
+        if (stat.size > MAX_READ_FILE_BYTES) {
+          return {
+            ok: false,
+            error: `File too large to preview (${(stat.size / 1024 / 1024).toFixed(1)} MB, limit 2 MB).`
+          }
+        }
+        const buf = await fs.readFile(filePath)
+        if (buf.subarray(0, 8192).includes(0)) {
+          return { ok: false, error: 'Binary file cannot be previewed.' }
+        }
+        return { ok: true, content: buf.toString('utf-8') }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
     }
-  })
+  )
 
   ipcMain.handle(IPC_CHANNELS.MODULES_SCAN, async (_event, cwd?: string) => {
     return scanModules(cwd)
@@ -125,7 +152,7 @@ export function registerIpc() {
     return true
   })
 
-  ipcMain.handle('dialog:select-folder', async () => {
+  ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_FOLDER, async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory']
     })

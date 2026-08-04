@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useRef, useEffect } from 'react'
 import { Bot, MoreHorizontal, Cpu } from 'lucide-react'
 import { useAppStore } from '../store'
 import MessageList from './MessageList'
@@ -16,23 +16,20 @@ export default function ChatPanel() {
 
   const currentSession = sessions.find((s) => s.id === currentSessionId)
   const sessionMessages = currentSessionId ? messages[currentSessionId] || [] : []
-  const [isSending, setIsSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [sessionMessages, isSending])
+  }, [sessionMessages])
 
   const handleSend = async (text: string) => {
     if (!currentSessionId || !text.trim() || cliAvailable === false) return
-    setIsSending(true)
     useAppStore.getState().addMessage(currentSessionId, {
       id: crypto.randomUUID(),
       role: 'user',
       content: text.trim()
     })
     await window.electronAPI.sendMessage(currentSessionId, text.trim())
-    setIsSending(false)
   }
 
   const enabledCount = modules.filter((m) => m.enabled).length
@@ -81,7 +78,7 @@ export default function ChatPanel() {
         <div ref={bottomRef} />
       </div>
 
-      <Composer onSend={handleSend} disabled={!currentSessionId || isSending} />
+      <Composer onSend={handleSend} disabled={!currentSessionId} />
     </div>
   )
 }

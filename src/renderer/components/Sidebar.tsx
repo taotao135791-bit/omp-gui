@@ -32,17 +32,20 @@ export default function Sidebar() {
     window.electronAPI.getStore('recentProjects').then((projects) => {
       if (projects.length > 0 && !currentProject) {
         setCurrentProject(projects[0])
+        window.electronAPI.setFsRoot(projects[0])
       }
     })
   }, [currentProject, setCurrentProject])
 
   const handleNewChat = async () => {
-    if (!currentProject) {
-      const folder = await window.electronAPI.selectFolder()
-      if (!folder) return
-      setCurrentProject(folder)
+    let project = currentProject
+    if (!project) {
+      project = await window.electronAPI.selectFolder()
+      if (!project) return
+      setCurrentProject(project)
+      window.electronAPI.setFsRoot(project)
     }
-    const session = await window.electronAPI.createSession(currentProject!)
+    const session = await window.electronAPI.createSession(project)
     addSession(session)
     navigate('/')
   }
@@ -51,6 +54,7 @@ export default function Sidebar() {
     const folder = await window.electronAPI.selectFolder()
     if (folder) {
       setCurrentProject(folder)
+      window.electronAPI.setFsRoot(folder)
     }
   }
 

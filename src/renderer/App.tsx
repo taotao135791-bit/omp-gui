@@ -38,6 +38,15 @@ function App() {
     }
   }, [setTheme, setCliAvailable, setSetupComplete, applySessionEvent])
 
+  if (setupComplete === null) {
+    // Settings not loaded yet — avoid flashing the setup wizard
+    return (
+      <div className="flex h-full items-center justify-center bg-surface-900 text-sm text-gray-500">
+        Loading...
+      </div>
+    )
+  }
+
   if (!setupComplete) {
     return <SetupWizard />
   }

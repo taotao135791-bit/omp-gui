@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
 import { IPC_CHANNELS } from '../shared/constants'
-import { CliInfo, Session, SessionEvent, ModuleInfo, AppSettings, InstallStatus } from '../shared/types'
+import { CliInfo, Session, SessionEvent, ModuleInfo, AppSettings, InstallStatus, ReadFileResult } from '../shared/types'
 
 export interface ElectronAPI {
   detectCli: () => Promise<CliInfo>
@@ -11,8 +11,9 @@ export interface ElectronAPI {
   onSessionEvent: (callback: (event: SessionEvent) => void) => () => void
   installOmp: () => Promise<boolean>
   onInstallStatus: (callback: (status: InstallStatus) => void) => () => void
+  setFsRoot: (root: string) => Promise<boolean>
   listDir: (dirPath: string) => Promise<{ name: string; isDirectory: boolean; path: string }[]>
-  readFile: (filePath: string) => Promise<string>
+  readFile: (filePath: string) => Promise<ReadFileResult>
   scanModules: (cwd?: string) => Promise<ModuleInfo[]>
   setModuleEnabled: (moduleId: string, enabled: boolean) => Promise<string[]>
   getStore: <K extends keyof AppSettings>(key: K) => Promise<AppSettings[K]>
@@ -42,6 +43,7 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener(IPC_CHANNELS.OMP_INSTALL_STATUS, handler)
     }
   },
+  setFsRoot: (root: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_SET_ROOT, root),
   listDir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_DIR, dirPath),
   readFile: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_READ_FILE, filePath),
   scanModules: (cwd?: string) => ipcRenderer.invoke(IPC_CHANNELS.MODULES_SCAN, cwd),
@@ -50,13 +52,7 @@ const api: ElectronAPI = {
   getStore: (key: keyof AppSettings) => ipcRenderer.invoke(IPC_CHANNELS.STORE_GET, key),
   setStore: (key: keyof AppSettings, value: unknown) =>
     ipcRenderer.invoke(IPC_CHANNELS.STORE_SET, key, value),
-  selectFolder: () => ipcRenderer.invoke('dialog:select-folder')
+  selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FOLDER)
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)
-
-declare global {
-  interface Window {
-    electronAPI: ElectronAPI
-  }
-}

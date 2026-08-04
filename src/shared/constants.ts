@@ -11,10 +11,12 @@ export const IPC_CHANNELS = {
   OMP_INSTALL_STATUS: 'omp:install-status',
   FS_LIST_DIR: 'fs:list-dir',
   FS_READ_FILE: 'fs:read-file',
+  FS_SET_ROOT: 'fs:set-root',
   MODULES_SCAN: 'modules:scan',
   MODULES_SET_ENABLED: 'modules:set-enabled',
   STORE_GET: 'store:get',
-  STORE_SET: 'store:set'
+  STORE_SET: 'store:set',
+  DIALOG_SELECT_FOLDER: 'dialog:select-folder'
 } as const
 
 export const OMP_GLOBAL_DIR = '.omp'

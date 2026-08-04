@@ -16,8 +16,8 @@ export default function RightPanel() {
 
   useEffect(() => {
     if (selectedFile && activeRightTab === 'preview') {
-      window.electronAPI.readFile(selectedFile).then((content) => {
-        setPreviewContent(content)
+      window.electronAPI.readFile(selectedFile).then((result) => {
+        setPreviewContent(result.ok ? result.content : `Cannot preview: ${result.error}`)
       })
     }
   }, [selectedFile, activeRightTab, setPreviewContent])
