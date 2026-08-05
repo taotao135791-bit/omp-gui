@@ -18,6 +18,7 @@ import {
 import { PackageInfo, PackageResource } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
+import Logo from '../components/Logo'
 
 type PendingAction =
   | { kind: 'install' }
@@ -307,9 +308,7 @@ export default function PackagesPage() {
             )}
           >
             <div className="mb-3 flex items-center gap-2.5">
-              <div className="brand-mark flex h-7 w-7 items-center justify-center rounded-lg text-[13px] font-bold">
-                π
-              </div>
+              <Logo size={28} className="shrink-0" />
               <span className="text-[13px] font-semibold text-cream">{t('plugins.core')}</span>
               <span className="rounded-full bg-accent/15 px-2 py-0.5 font-mono text-[10px] text-accent">
                 {t('plugins.mounted', { count: mounted.length })}

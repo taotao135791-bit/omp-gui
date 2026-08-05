@@ -42,9 +42,9 @@ export default function ExtensionUiDialog({
 
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 p-6 backdrop-blur-[2px]">
-      <div className="msg-in w-full max-w-md rounded-xl border border-line bg-ink-900 shadow-[0_16px_48px_rgba(0,0,0,0.18)]">
+      <div className="msg-in w-full max-w-md rounded-xl border border-line bg-ink-900 shadow-pop">
         <div className="flex items-start gap-3 border-b border-line px-5 py-4">
-          <span className="brand-mark mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md">
+          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
             <MessageCircleQuestion size={14} strokeWidth={1.8} />
           </span>
           <div className="min-w-0 flex-1">

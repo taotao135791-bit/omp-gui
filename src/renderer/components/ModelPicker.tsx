@@ -55,7 +55,7 @@ export default function ModelPicker() {
           setOpen((v) => !v)
           if (!open) loadModelState()
         }}
-        className="flex items-center gap-1 rounded-md px-1.5 py-1.5 text-[11px] text-cream-dim transition hover:bg-overlay hover:text-cream"
+        className="focus-ring flex items-center gap-1.5 rounded-lg border border-transparent px-2 py-1.5 text-[11px] font-medium text-cream-dim transition-colors hover:border-line hover:bg-overlay hover:text-cream"
         title={t('composer.model')}
       >
         <Cpu size={13} />
@@ -64,7 +64,7 @@ export default function ModelPicker() {
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-30 mb-1.5 max-h-80 w-64 overflow-y-auto rounded-xl border border-line bg-ink-900 p-1 shadow-[0_12px_32px_rgba(0,0,0,0.16)]">
+        <div className="absolute bottom-full left-0 z-30 mb-1.5 max-h-80 w-64 overflow-y-auto rounded-xl border border-line bg-ink-900 p-1 shadow-pop">
           <button
             onClick={() => pick('', '')}
             className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-cream transition hover:bg-ink-800"

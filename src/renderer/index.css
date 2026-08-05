@@ -4,40 +4,47 @@
 
 @layer base {
   :root {
-    /* Light theme — warm paper, editorial neutrals, single warm accent */
-    --bg-app: 250 250 248;
-    --bg-sidebar: 242 242 239;
+    /* Light theme — warm paper, editorial neutrals, terracotta accent */
+    --bg-app: 250 249 247;
+    --bg-sidebar: 244 243 240;
     --bg-elev: 255 255 255;
-    --bg-sunken: 244 244 241;
-    --bubble: 236 236 232;
-    --text: 26 26 24;
-    --text-dim: 98 98 92;
-    --text-faint: 158 158 150;
-    --line: rgba(26, 26, 24, 0.09);
-    --line-strong: rgba(26, 26, 24, 0.16);
-    --overlay: rgba(26, 26, 24, 0.045);
-    --overlay-strong: rgba(26, 26, 24, 0.085);
-    --accent: 194 65 12;
-    --accent-bright: 234 88 12;
-    --accent-deep: 154 52 18;
+    --bg-sunken: 240 239 236;
+    --bubble: 233 231 227;
+    --text: 28 27 25;
+    --text-dim: 110 107 100;
+    --text-faint: 164 160 152;
+    --line: rgba(28, 27, 25, 0.08);
+    --line-strong: rgba(28, 27, 25, 0.14);
+    --overlay: rgba(28, 27, 25, 0.04);
+    --overlay-strong: rgba(28, 27, 25, 0.07);
+    --accent: 217 119 87;
+    --accent-bright: 199 101 69;
+    --accent-deep: 176 90 58;
+    --accent-soft: rgba(217, 119, 87, 0.12);
+    --shadow-pop: 0 1px 2px rgba(28, 27, 25, 0.05), 0 12px 32px rgba(28, 27, 25, 0.12);
+    --shadow-card: 0 1px 2px rgba(28, 27, 25, 0.04), 0 4px 16px rgba(28, 27, 25, 0.05);
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .dark {
-    --bg-app: 19 19 18;
-    --bg-sidebar: 23 23 21;
-    --bg-elev: 28 28 26;
-    --bg-sunken: 15 15 14;
-    --bubble: 40 40 36;
-    --text: 230 228 224;
-    --text-dim: 156 154 147;
-    --text-faint: 106 104 98;
-    --line: rgba(255, 255, 255, 0.08);
-    --line-strong: rgba(255, 255, 255, 0.16);
-    --overlay: rgba(255, 255, 255, 0.05);
-    --overlay-strong: rgba(255, 255, 255, 0.09);
-    --accent: 224 129 95;
-    --accent-bright: 236 153 122;
-    --accent-deep: 208 108 73;
+    --bg-app: 20 19 17;
+    --bg-sidebar: 24 23 21;
+    --bg-elev: 29 28 26;
+    --bg-sunken: 16 15 14;
+    --bubble: 46 44 40;
+    --text: 235 231 228;
+    --text-dim: 158 152 145;
+    --text-faint: 110 105 99;
+    --line: rgba(235, 231, 228, 0.07);
+    --line-strong: rgba(235, 231, 228, 0.13);
+    --overlay: rgba(235, 231, 228, 0.045);
+    --overlay-strong: rgba(235, 231, 228, 0.08);
+    --accent: 224 138 106;
+    --accent-bright: 233 158 128;
+    --accent-deep: 204 116 82;
+    --accent-soft: rgba(224, 138, 106, 0.14);
+    --shadow-pop: 0 2px 6px rgba(0, 0, 0, 0.3), 0 16px 40px rgba(0, 0, 0, 0.45);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 6px 20px rgba(0, 0, 0, 0.24);
   }
 
   html, body, #root {
@@ -133,19 +140,26 @@
     -webkit-app-region: no-drag;
   }
 
-  /* Solid brand mark — near-black square in light, near-white in dark */
-  .brand-mark {
-    background: rgb(var(--text));
-    color: rgb(var(--bg-app));
+  /* Keyboard hint — mono, bordered chip */
+  .kbd {
+    @apply rounded border border-line bg-overlay px-1 py-px font-mono text-[10px] leading-4 text-cream-faint;
+  }
+
+  /* Consistent focus ring for interactive controls */
+  .focus-ring {
+    outline: none;
+  }
+  .focus-ring:focus-visible {
+    box-shadow: 0 0 0 2px rgb(var(--bg-app)), 0 0 0 4px rgb(var(--accent) / 0.55);
   }
 
   .msg-in {
-    animation: msg-in 0.18s ease-out;
+    animation: msg-in 0.22s var(--ease);
   }
   @keyframes msg-in {
     from {
       opacity: 0;
-      transform: translateY(4px);
+      transform: translateY(5px);
     }
     to {
       opacity: 1;
@@ -154,11 +168,26 @@
   }
 
   .fade-in {
-    animation: fade-in 0.25s ease-out;
+    animation: fade-in 0.3s var(--ease);
   }
   @keyframes fade-in {
     from { opacity: 0; }
     to { opacity: 1; }
+  }
+
+  /* staggered entrance for hero cards: .rise + inline animation-delay */
+  .rise {
+    animation: rise 0.5s var(--ease) both;
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   /* "working" indicator — three pulsing dots */

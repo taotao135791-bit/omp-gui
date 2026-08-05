@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Download, CheckCircle, AlertCircle, Loader2, Terminal, ArrowRight } from 'lucide-react'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
+import Logo from '../components/Logo'
 
 export default function SetupWizard() {
   const {
@@ -86,9 +87,7 @@ export default function SetupWizard() {
     <div className="flex h-full flex-col items-center justify-center bg-ink-950 p-8">
       <div className="w-full max-w-xl rounded-2xl border border-line bg-ink-900 p-8">
         <div className="mb-6 flex items-center gap-3">
-          <div className="brand-mark flex h-10 w-10 items-center justify-center rounded-xl text-lg font-bold shadow-md">
-            π
-          </div>
+          <Logo size={40} className="shrink-0" />
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-cream">{t('setup.welcome.title')}</h1>
             <p className="text-sm text-cream-dim">{t('setup.welcome.subtitle')}</p>

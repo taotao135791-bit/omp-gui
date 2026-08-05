@@ -44,6 +44,8 @@ export interface ElectronAPI {
   setApiKey: (provider: string, key: string) => Promise<PackageActionResult>
   clearApiKey: (provider: string) => Promise<PackageActionResult>
   listModels: () => Promise<PiModel[]>
+  /** pi's full built-in model registry, credentials not required. */
+  listCatalogModels: () => Promise<PiModel[]>
   getAppVersion: () => Promise<string>
   /** Real filesystem path for a File dropped from Finder (contextIsolation-safe). */
   getPathForFile: (file: File) => string
@@ -99,6 +101,7 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.PI_SET_API_KEY, provider, key),
   clearApiKey: (provider: string) => ipcRenderer.invoke(IPC_CHANNELS.PI_CLEAR_API_KEY, provider),
   listModels: () => ipcRenderer.invoke(IPC_CHANNELS.PI_LIST_MODELS),
+  listCatalogModels: () => ipcRenderer.invoke(IPC_CHANNELS.PI_LIST_CATALOG_MODELS),
   getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_VERSION),
   getPathForFile: (file: File) => webUtils.getPathForFile(file)
 }

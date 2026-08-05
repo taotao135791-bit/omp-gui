@@ -16,10 +16,10 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const t = useT()
 
   return (
-    <div className="overflow-hidden rounded-lg border border-line bg-overlay font-mono text-xs">
+    <div className="overflow-hidden rounded-xl border border-line bg-overlay font-mono text-xs">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-overlay"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-overlay"
       >
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${
@@ -37,9 +37,9 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
         </span>
       </button>
       {expanded && (
-        <div className="space-y-2.5 border-t border-line px-3 py-2.5">
+        <div className="fade-in space-y-2.5 border-t border-line px-3 py-2.5">
           <div>
-            <div className="mb-1 text-[10px] uppercase tracking-[0.15em] text-cream-faint">
+            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-cream-faint">
               {t('tool.input')}
             </div>
             <pre className="max-h-48 overflow-auto rounded-lg bg-ink-800 p-2.5 leading-5 text-cream/80">
@@ -48,7 +48,7 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
           </div>
           {toolCall.output !== undefined && (
             <div>
-              <div className="mb-1 text-[10px] uppercase tracking-[0.15em] text-cream-faint">
+              <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-cream-faint">
                 {t('tool.output')}
               </div>
               <pre className="max-h-48 overflow-auto rounded-lg bg-ink-800 p-2.5 leading-5 text-cream/80">

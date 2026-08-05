@@ -26,13 +26,21 @@ module.exports = {
         accent: {
           DEFAULT: 'rgb(var(--accent) / <alpha-value>)',
           bright: 'rgb(var(--accent-bright) / <alpha-value>)',
-          deep: 'rgb(var(--accent-deep) / <alpha-value>)'
+          deep: 'rgb(var(--accent-deep) / <alpha-value>)',
+          soft: 'var(--accent-soft)'
         },
         line: 'var(--line)',
         overlay: {
           DEFAULT: 'var(--overlay)',
           strong: 'var(--overlay-strong)'
         }
+      },
+      boxShadow: {
+        pop: 'var(--shadow-pop)',
+        card: 'var(--shadow-card)'
+      },
+      transitionTimingFunction: {
+        standard: 'var(--ease)'
       },
       fontFamily: {
         sans: [

@@ -38,10 +38,16 @@ export default function Composer({ onSend, onStop, busy, disabled }: ComposerPro
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }
 
+  const canSend = !disabled && !busy && Boolean(text.trim())
+
   return (
-    <div className="p-4 pt-2">
+    <div className="px-4 pb-4 pt-2">
       <div className="mx-auto max-w-3xl">
-        <div className="rounded-xl border border-line bg-ink-850 p-2 shadow-[0_2px_12px_rgba(0,0,0,0.05)] transition focus-within:border-ink-600 dark:shadow-[0_8px_24px_rgba(0,0,0,0.3)]">
+        <div
+          className={`rounded-2xl border bg-ink-850 p-2 shadow-card transition-all duration-200 ease-standard focus-within:shadow-pop ${
+            disabled ? 'border-line' : 'border-line focus-within:border-accent/50'
+          }`}
+        >
           <textarea
             ref={textareaRef}
             value={text}
@@ -55,10 +61,16 @@ export default function Composer({ onSend, onStop, busy, disabled }: ComposerPro
           />
           <div className="flex items-center justify-between px-1 pb-0.5 pt-0.5">
             <div className="flex items-center gap-0.5">
-              <button className="rounded-md p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream">
+              <button
+                title={t('composer.attach')}
+                className="focus-ring rounded-lg p-1.5 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
+              >
                 <Paperclip size={14} />
               </button>
-              <button className="rounded-md p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream">
+              <button
+                title={t('composer.attachImage')}
+                className="focus-ring rounded-lg p-1.5 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
+              >
                 <Image size={14} />
               </button>
               <ModelPicker />
@@ -67,15 +79,20 @@ export default function Composer({ onSend, onStop, busy, disabled }: ComposerPro
               <button
                 onClick={onStop}
                 title={t('composer.stop')}
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-cream text-ink-950 transition hover:opacity-85 active:scale-95"
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-cream text-ink-950 shadow-card transition-all duration-150 hover:opacity-85 active:scale-95"
               >
                 <Square size={11} fill="currentColor" />
               </button>
             ) : (
               <button
                 onClick={handleSend}
-                disabled={disabled || !text.trim()}
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-cream text-ink-950 transition hover:opacity-85 active:scale-95 disabled:cursor-not-allowed disabled:opacity-25"
+                disabled={!canSend}
+                title={t('composer.send')}
+                className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-150 active:scale-95 ${
+                  canSend
+                    ? 'bg-accent text-white shadow-card hover:bg-accent-bright'
+                    : 'cursor-not-allowed bg-overlay-strong text-cream-faint'
+                }`}
               >
                 <ArrowUp size={15} strokeWidth={2.5} />
               </button>

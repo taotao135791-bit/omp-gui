@@ -10,14 +10,14 @@ import {
   Sun,
   Trash2
 } from 'lucide-react'
-import { CliInfo, ModelConfig, PI_PROVIDERS, ToolAccess } from '@shared/types'
+import { CliInfo, ModelConfig, PI_PROVIDERS, PiModel, ToolAccess } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-line bg-ink-850">
-      <div className="border-b border-line px-4 py-2.5 text-[11px] font-medium uppercase tracking-wider text-cream-faint">
+    <section className="overflow-hidden rounded-xl border border-line bg-ink-850 shadow-card">
+      <div className="border-b border-line px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-cream-faint">
         {title}
       </div>
       <div className="divide-y divide-line">{children}</div>
@@ -39,10 +39,13 @@ function Note({ children }: { children: React.ReactNode }) {
 }
 
 const selectCls =
-  'rounded-md border border-line bg-ink-900 px-2 py-1.5 text-xs text-cream outline-none transition focus:border-accent dark:bg-ink-800'
+  'h-8 rounded-lg border border-line bg-ink-900 px-2 text-xs text-cream outline-none transition-colors focus:border-accent dark:bg-ink-800'
 
 const inputCls =
-  'w-56 rounded-md border border-line bg-ink-900 px-2.5 py-1.5 text-xs text-cream outline-none transition placeholder:text-cream-faint focus:border-accent dark:bg-ink-800'
+  'h-8 w-56 rounded-lg border border-line bg-ink-900 px-2.5 text-xs text-cream outline-none transition-colors placeholder:text-cream-faint focus:border-accent dark:bg-ink-800'
+
+const buttonCls =
+  'flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-xs text-cream-dim transition-colors hover:border-line-strong hover:text-cream disabled:opacity-50'
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 
@@ -70,10 +73,16 @@ export default function SettingsPage() {
   const provider = modelConfig?.defaultProvider ?? ''
   const providerConfigured = provider ? (modelConfig?.authProviders ?? []).includes(provider) : false
   const providerModels = provider ? models.filter((m) => m.provider === provider) : []
+  const [catalog, setCatalog] = useState<PiModel[]>([])
+  // The full registry lets the picker offer models before a key is stored;
+  // the credential-filtered list is only a fallback if the registry is unreadable.
+  const catalogForProvider = provider ? catalog.filter((m) => m.provider === provider) : []
+  const selectableModels = catalogForProvider.length > 0 ? catalogForProvider : providerModels
 
   useEffect(() => {
     window.electronAPI.detectCli().then(setCli)
     window.electronAPI.getAppVersion().then(setVersion)
+    window.electronAPI.listCatalogModels().then(setCatalog)
     loadModelState()
     window.electronAPI.getStore('toolAccess').then((v) => setToolAccessState(v ?? 'full'))
   }, [loadModelState])
@@ -157,8 +166,8 @@ export default function SettingsPage() {
   }
 
   const seg = (active: boolean) =>
-    `rounded px-2.5 py-1 text-xs font-medium transition ${
-      active ? 'bg-ink-900 text-cream shadow-sm dark:bg-ink-800' : 'text-cream-dim hover:text-cream'
+    `rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+      active ? 'bg-ink-850 text-cream shadow-card dark:bg-ink-800' : 'text-cream-dim hover:text-cream'
     }`
 
   return (
@@ -196,7 +205,7 @@ export default function SettingsPage() {
                       </span>
                       <button
                         onClick={removeKey}
-                        className="rounded-md border border-line px-2.5 py-1.5 text-xs text-cream-dim transition hover:border-red-500/40 hover:text-red-500"
+                        className="flex h-8 items-center gap-1 rounded-lg border border-line px-2.5 text-xs text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500"
                       >
                         {t('settings.clearKey')}
                       </button>
@@ -219,7 +228,7 @@ export default function SettingsPage() {
                       <button
                         onClick={saveKey}
                         disabled={!keyInput.trim() || keyState === 'saving'}
-                        className="flex items-center gap-1 rounded-md border border-line px-2.5 py-1.5 text-xs text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+                        className={buttonCls}
                       >
                         {keyState === 'saved' ? (
                           <>
@@ -245,14 +254,14 @@ export default function SettingsPage() {
             {provider && (
               <Row label={t('settings.defaultModel')}>
                 <div className="flex items-center gap-2">
-                  {providerModels.length > 0 ? (
+                  {selectableModels.length > 0 ? (
                     <select
                       value={modelConfig?.defaultModel ?? ''}
                       onChange={(e) => changeModel(e.target.value)}
                       className={`${selectCls} max-w-64`}
                     >
                       <option value="">{t('settings.modelAuto')}</option>
-                      {providerModels.map((m) => (
+                      {selectableModels.map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.name}
                         </option>
@@ -298,7 +307,7 @@ export default function SettingsPage() {
 
           <Section title={t('settings.permissions')}>
             <Row label={t('settings.toolAccess')}>
-              <div className="flex rounded-md bg-overlay p-0.5">
+              <div className="flex rounded-lg border border-line bg-overlay p-0.5">
                 <button onClick={() => changeToolAccess('full')} className={seg(toolAccess === 'full')}>
                   {t('settings.toolAccessFull')}
                 </button>
@@ -320,7 +329,7 @@ export default function SettingsPage() {
             <Row label={t('settings.projectTrust')}>
               <div className="flex items-center gap-2">
                 <ShieldCheck size={13} className="text-cream-faint" />
-                <div className="flex rounded-md bg-overlay p-0.5">
+                <div className="flex rounded-lg border border-line bg-overlay p-0.5">
                   <button
                     onClick={() => changeTrust('ask')}
                     className={seg((modelConfig?.projectTrust ?? 'ask') === 'ask')}
@@ -347,7 +356,7 @@ export default function SettingsPage() {
 
           <Section title={t('settings.appearance')}>
             <Row label={t('settings.theme')}>
-              <div className="flex rounded-md bg-overlay p-0.5">
+              <div className="flex rounded-lg border border-line bg-overlay p-0.5">
                 <button onClick={() => setTheme('light')} className={seg(theme === 'light')}>
                   <span className="flex items-center gap-1">
                     <Sun size={11} />
@@ -365,7 +374,7 @@ export default function SettingsPage() {
             <Row label={t('settings.language')}>
               <div className="flex items-center gap-2">
                 <Languages size={13} className="text-cream-faint" />
-                <div className="flex rounded-md bg-overlay p-0.5">
+                <div className="flex rounded-lg border border-line bg-overlay p-0.5">
                   <button onClick={() => setLanguage('zh')} className={seg(language === 'zh')}>
                     中文
                   </button>
@@ -401,7 +410,7 @@ export default function SettingsPage() {
               <button
                 onClick={redetect}
                 disabled={detecting}
-                className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-xs text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+                className={buttonCls}
               >
                 <RefreshCw size={11} className={detecting ? 'animate-spin' : ''} />
                 {detecting ? t('settings.detecting') : t('settings.redetect')}
@@ -410,7 +419,7 @@ export default function SettingsPage() {
             <Row label={t('settings.cliSettingsFile')}>
               <button
                 onClick={() => window.electronAPI.showCliSettings()}
-                className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-xs text-cream-dim transition hover:border-ink-600 hover:text-cream"
+                className={buttonCls}
               >
                 <FolderCog size={11} />
                 {t('settings.showInFinder')}
@@ -422,7 +431,7 @@ export default function SettingsPage() {
             <Row label={t('settings.clearRecent')}>
               <button
                 onClick={clearRecent}
-                className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-xs text-cream-dim transition hover:border-red-500/40 hover:text-red-500"
+                className="flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-xs text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500"
               >
                 {cleared ? (
                   <>

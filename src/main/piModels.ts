@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process'
+import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { PiModel } from '../shared/types'
 import { detectCli, executableSearchDirs } from './omp'
 import { drainLines } from './protocol'
@@ -23,6 +26,78 @@ let inFlight: Promise<PiModel[]> | null = null
 /** Drop the cache (e.g. after an API key was added or removed). */
 export function invalidateModelCache(): void {
   cache = null
+}
+
+/**
+ * pi's full built-in model registry, read straight from the pi-ai package
+ * shipped inside the pi install — independent of credentials. The settings
+ * page uses this so the default-model picker can offer every model a
+ * provider supports before a key is stored.
+ *
+ * The registry file is ESM inside a CJS bundle, so it is loaded with a
+ * runtime `import()` hidden from the bundler. Cached for the process
+ * lifetime: the registry only changes when pi itself is upgraded.
+ */
+let catalogCache: PiModel[] | null = null
+
+export async function listCatalogModels(provider?: string): Promise<PiModel[]> {
+  if (!catalogCache) catalogCache = await loadCatalog()
+  return provider ? catalogCache.filter((m) => m.provider === provider) : catalogCache
+}
+
+async function loadCatalog(): Promise<PiModel[]> {
+  const file = findRegistryFile()
+  if (!file) return []
+  try {
+    // Indirect import so bundlers leave the runtime dynamic import alone.
+    const dynamicImport = new Function('u', 'return import(u)') as (
+      u: string
+    ) => Promise<{ MODELS?: unknown }>
+    const mod = await dynamicImport(pathToFileURL(file).href)
+    const registry = mod.MODELS
+    if (!registry || typeof registry !== 'object') return []
+    const models: PiModel[] = []
+    for (const byId of Object.values(registry as Record<string, Record<string, unknown>>)) {
+      for (const m of Object.values(byId ?? {})) {
+        const entry = m as { id?: unknown; name?: unknown; provider?: unknown; reasoning?: unknown }
+        if (typeof entry?.id !== 'string' || typeof entry?.provider !== 'string') continue
+        models.push({
+          id: entry.id,
+          name: typeof entry.name === 'string' ? entry.name : entry.id,
+          provider: entry.provider,
+          reasoning: Boolean(entry.reasoning)
+        })
+      }
+    }
+    return models.sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * cli.path is usually a symlink into the pi install
+ * (…/node_modules/@earendil-works/pi-coding-agent/dist/cli.js); pi-ai sits
+ * in a node_modules directory somewhere above it (nested first, then the
+ * install root for hoisted layouts).
+ */
+function findRegistryFile(): string | null {
+  const cli = detectCli()
+  if (!cli.available || !cli.path) return null
+  const rel = join('node_modules', '@earendil-works', 'pi-ai', 'dist', 'models.generated.js')
+  try {
+    let dir = dirname(realpathSync(cli.path))
+    for (let i = 0; i < 6; i++) {
+      const candidate = join(dir, rel)
+      if (existsSync(candidate)) return candidate
+      const parent = dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  } catch {
+    // fall through
+  }
+  return null
 }
 
 export async function listAvailableModels(): Promise<PiModel[]> {

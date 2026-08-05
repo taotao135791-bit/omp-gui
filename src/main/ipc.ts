@@ -29,7 +29,7 @@ import {
   defaultPiAgentDir
 } from './packages'
 import { getModelConfig, setModelConfig, setApiKey, clearApiKey } from './piSettings'
-import { listAvailableModels, invalidateModelCache } from './piModels'
+import { listAvailableModels, listCatalogModels, invalidateModelCache } from './piModels'
 import { getStore, setStore } from './store'
 import { installOmp } from './installer'
 import { FsGuard } from './fsGuard'
@@ -118,6 +118,10 @@ export function registerIpc() {
 
   ipcMain.handle(IPC_CHANNELS.PI_LIST_MODELS, async () => {
     return listAvailableModels()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PI_LIST_CATALOG_MODELS, async () => {
+    return listCatalogModels()
   })
 
   ipcMain.handle(IPC_CHANNELS.PI_GET_MODEL_CONFIG, async () => {

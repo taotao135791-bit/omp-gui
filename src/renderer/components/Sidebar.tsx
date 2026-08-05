@@ -17,6 +17,8 @@ import {
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
+import { formatRelativeTime } from '../lib/time'
+import Logo from './Logo'
 
 export default function Sidebar() {
   const navigate = useNavigate()
@@ -30,6 +32,7 @@ export default function Sidebar() {
     rightPanelOpen,
     language,
     theme,
+    busy,
     setCurrentProject,
     setCurrentSessionId,
     setSessions,
@@ -79,10 +82,8 @@ export default function Sidebar() {
     )
   }, [sessions, query])
 
-  const timeLocale = language === 'zh' ? 'zh-CN' : 'en-US'
-
   const navRow = (active: boolean) =>
-    `flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition ${
+    `group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] transition-all duration-150 ease-standard ${
       active
         ? 'bg-overlay-strong font-medium text-cream'
         : 'text-cream-dim hover:bg-overlay hover:text-cream'
@@ -91,34 +92,33 @@ export default function Sidebar() {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-ink-900">
       {/* drag spacer — clears the macOS traffic lights */}
-      <div className="app-drag h-12 shrink-0" />
+      <div className="app-drag h-11 shrink-0" />
 
-      <div className="app-drag flex items-center justify-between px-3.5 pb-2.5">
-        <div className="flex items-center gap-2">
-          <div className="brand-mark flex h-5 w-5 items-center justify-center rounded-md text-[11px] font-bold">
-            π
-          </div>
-          <span className="text-[14px] font-semibold tracking-tight text-cream">OMP GUI</span>
+      <div className="app-drag flex items-center justify-between px-3.5 pb-3">
+        <div className="flex items-center gap-2.5">
+          <Logo size={22} className="shrink-0" />
+          <span className="text-[13.5px] font-semibold tracking-tight text-cream">OMP GUI</span>
         </div>
         <button
           onClick={() => {
             setSearchOpen(!searchOpen)
             if (searchOpen) setQuery('')
           }}
-          className="app-no-drag rounded-md p-1 text-cream-faint transition hover:bg-overlay hover:text-cream"
+          title={t('sidebar.searchSessions')}
+          className="app-no-drag focus-ring rounded-md p-1.5 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
         >
           {searchOpen ? <X size={14} /> : <Search size={14} />}
         </button>
       </div>
 
       {searchOpen && (
-        <div className="px-3 pb-2">
+        <div className="px-3 pb-2.5">
           <input
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('sidebar.searchSessions')}
-            className="w-full rounded-md border border-line bg-ink-850 px-2.5 py-1.5 text-xs text-cream placeholder-cream-faint outline-none focus:border-ink-600"
+            className="w-full rounded-lg border border-line bg-ink-850 px-2.5 py-1.5 text-xs text-cream shadow-card placeholder-cream-faint outline-none transition-colors focus:border-line-strong"
           />
         </div>
       )}
@@ -131,7 +131,7 @@ export default function Sidebar() {
         >
           <SquarePen size={14} className="shrink-0" />
           {t('sidebar.newChat')}
-          <span className="ml-auto text-[10px] text-cream-faint">⌘N</span>
+          <span className="kbd ml-auto opacity-0 transition-opacity group-hover:opacity-100">⌘N</span>
         </button>
         <button onClick={() => navigate('/')} className={navRow(location.pathname === '/')}>
           <MessageSquare size={14} className="shrink-0" />
@@ -151,14 +151,14 @@ export default function Sidebar() {
       </nav>
 
       {cliAvailable === false && (
-        <div className="mx-2.5 mt-2 flex items-start gap-2 rounded-md border border-yellow-500/25 bg-yellow-500/10 p-2 text-xs leading-5 text-yellow-700 dark:text-yellow-200/90">
+        <div className="mx-2.5 mt-2.5 flex items-start gap-2 rounded-lg border border-yellow-500/25 bg-yellow-500/10 p-2.5 text-xs leading-5 text-yellow-700 dark:text-yellow-200/90">
           <AlertCircle size={13} className="mt-0.5 shrink-0" />
           <span>{t('sidebar.cliMissing')}</span>
         </div>
       )}
 
-      <div className="mt-4 px-2.5">
-        <div className="px-2 pb-1 text-[10.5px] font-medium uppercase tracking-wider text-cream-faint">
+      <div className="mt-5 px-2.5">
+        <div className="px-2 pb-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-cream-faint">
           {t('sidebar.project')}
         </div>
         <button onClick={handleSelectProject} className={`${navRow(false)} font-mono text-xs`}>
@@ -167,8 +167,8 @@ export default function Sidebar() {
         </button>
       </div>
 
-      <div className="mt-4 flex-1 overflow-y-auto px-2.5 pb-2">
-        <div className="px-2 pb-1 text-[10.5px] font-medium uppercase tracking-wider text-cream-faint">
+      <div className="mt-5 flex-1 overflow-y-auto px-2.5 pb-2">
+        <div className="px-2 pb-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-cream-faint">
           {t('sidebar.sessions')}
         </div>
         {filteredSessions.length === 0 ? (
@@ -177,52 +177,63 @@ export default function Sidebar() {
           </div>
         ) : (
           <div className="space-y-0.5">
-            {filteredSessions.map((session) => (
-              <div
-                key={session.id}
-                onClick={() => {
-                  setCurrentSessionId(session.id)
-                  navigate('/')
-                }}
-                className={`group flex cursor-pointer items-center justify-between rounded-md px-2.5 py-1.5 transition ${
-                  currentSessionId === session.id ? 'bg-overlay-strong' : 'hover:bg-overlay'
-                }`}
-              >
-                <div className="min-w-0">
-                  <div
-                    className={`truncate text-[13px] leading-5 ${
-                      currentSessionId === session.id ? 'font-medium text-cream' : 'text-cream-dim'
-                    }`}
-                  >
-                    {session.title}
-                  </div>
-                  <div className="truncate font-mono text-[10px] text-cream-faint">
-                    {new Date(session.createdAt).toLocaleTimeString(timeLocale, {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </div>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleDeleteSession(session.id)
+            {filteredSessions.map((session) => {
+              const active = currentSessionId === session.id
+              const running = Boolean(busy[session.id])
+              return (
+                <div
+                  key={session.id}
+                  onClick={() => {
+                    setCurrentSessionId(session.id)
+                    navigate('/')
                   }}
-                  className="ml-2 shrink-0 rounded p-1 text-cream-faint opacity-0 transition hover:bg-red-500/15 hover:text-red-500 group-hover:opacity-100"
+                  className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-[7px] transition-colors duration-150 ${
+                    active ? 'bg-overlay-strong' : 'hover:bg-overlay'
+                  }`}
                 >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            ))}
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      running
+                        ? 'animate-pulse bg-accent'
+                        : active
+                          ? 'bg-cream-faint'
+                          : 'bg-line-strong'
+                    }`}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div
+                      className={`truncate text-[13px] leading-5 ${
+                        active ? 'font-medium text-cream' : 'text-cream-dim'
+                      }`}
+                    >
+                      {session.title}
+                    </div>
+                    <div className="truncate font-mono text-[10px] leading-4 text-cream-faint">
+                      {formatRelativeTime(session.createdAt, language)}
+                    </div>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleDeleteSession(session.id)
+                    }}
+                    title={t('sidebar.deleteSession')}
+                    className="shrink-0 rounded-md p-1 text-cream-faint opacity-0 transition-all hover:bg-red-500/15 hover:text-red-500 group-hover:opacity-100"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-0.5 border-t border-line p-2">
+      <div className="flex items-center gap-1 border-t border-line px-2.5 py-2">
         <button
           onClick={() => navigate('/settings')}
           title={t('sidebar.settings')}
-          className={`rounded-md p-1.5 transition ${
+          className={`focus-ring rounded-md p-1.5 transition-colors ${
             location.pathname === '/settings'
               ? 'bg-overlay-strong text-cream'
               : 'text-cream-faint hover:bg-overlay hover:text-cream'
@@ -230,14 +241,14 @@ export default function Sidebar() {
         >
           <Settings size={15} />
         </button>
-        <div className="ml-1 flex rounded-md bg-overlay p-0.5">
+        <div className="ml-0.5 flex rounded-lg border border-line bg-overlay p-0.5">
           {(['zh', 'en'] as const).map((lang) => (
             <button
               key={lang}
               onClick={() => setLanguage(lang)}
-              className={`rounded px-1.5 py-0.5 text-[10.5px] font-medium transition ${
+              className={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors ${
                 language === lang
-                  ? 'bg-ink-850 text-cream shadow-sm'
+                  ? 'bg-ink-850 text-cream shadow-card'
                   : 'text-cream-dim hover:text-cream'
               }`}
             >
@@ -248,7 +259,7 @@ export default function Sidebar() {
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           title={t('sidebar.theme')}
-          className="ml-auto rounded-md p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream"
+          className="focus-ring ml-auto rounded-md p-1.5 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
         >
           {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
         </button>

@@ -20,6 +20,7 @@ const en = {
   'sidebar.settings': 'Settings',
   'sidebar.searchSessions': 'Search sessions…',
   'sidebar.noMatch': 'No sessions match your search.',
+  'sidebar.deleteSession': 'Delete session',
 
   // Chat panel
   'chat.noActiveSession': 'No active session',
@@ -43,6 +44,8 @@ const en = {
   'composer.placeholder': 'Ask anything…  (Enter to send, Shift+Enter for newline)',
   'composer.placeholderDisabled': 'Install the omp/pi CLI to start chatting…',
   'composer.send': 'Send',
+  'composer.attach': 'Attach file',
+  'composer.attachImage': 'Attach image',
   'composer.stop': 'Stop generating',
   'composer.model': 'Model',
   'composer.modelAuto': 'Auto',
@@ -205,6 +208,7 @@ const zh: Record<I18nKey, string> = {
   'sidebar.settings': '设置',
   'sidebar.searchSessions': '搜索会话…',
   'sidebar.noMatch': '没有匹配的会话。',
+  'sidebar.deleteSession': '删除会话',
 
   'chat.noActiveSession': '没有活动会话',
   'chat.noProject': '未选择项目',
@@ -226,6 +230,8 @@ const zh: Record<I18nKey, string> = {
   'composer.placeholder': '想问什么？（Enter 发送，Shift+Enter 换行）',
   'composer.placeholderDisabled': '安装 omp/pi CLI 后开始对话…',
   'composer.send': '发送',
+  'composer.attach': '添加附件',
+  'composer.attachImage': '添加图片',
   'composer.stop': '停止生成',
   'composer.model': '模型',
   'composer.modelAuto': '自动',

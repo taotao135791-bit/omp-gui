@@ -30,6 +30,7 @@ export const IPC_CHANNELS = {
   PI_SET_API_KEY: 'pi:set-api-key',
   PI_CLEAR_API_KEY: 'pi:clear-api-key',
   PI_LIST_MODELS: 'pi:list-models',
+  PI_LIST_CATALOG_MODELS: 'pi:list-catalog-models',
   APP_VERSION: 'app:version'
 } as const
 
