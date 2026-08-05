@@ -4,6 +4,8 @@ import {
   CliInfo,
   Session,
   SessionEvent,
+  SessionStats,
+  SlashCommand,
   PackageInfo,
   PackageActionResult,
   AppSettings,
@@ -39,6 +41,12 @@ export interface ElectronAPI {
   showCliSettings: () => Promise<boolean>
   respondUi: (sessionId: string, requestId: string, answer: ExtensionUiAnswer) => Promise<boolean>
   setSessionModel: (sessionId: string, provider: string, modelId: string) => Promise<boolean>
+  /** Token/context usage of a session; null when unavailable. */
+  getSessionStats: (sessionId: string) => Promise<SessionStats | null>
+  /** Slash commands (extensions/prompts/skills) available in a session. */
+  listCommands: (sessionId: string) => Promise<SlashCommand[]>
+  /** Trigger context compaction for a session. */
+  compactSession: (sessionId: string) => Promise<boolean>
   getModelConfig: () => Promise<ModelConfig>
   setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) => Promise<PackageActionResult>
   setApiKey: (provider: string, key: string) => Promise<PackageActionResult>
@@ -94,6 +102,12 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.OMP_RESPOND_UI, sessionId, requestId, answer),
   setSessionModel: (sessionId: string, provider: string, modelId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SET_MODEL, sessionId, provider, modelId),
+  getSessionStats: (sessionId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_SESSION_STATS, sessionId),
+  listCommands: (sessionId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_COMMANDS, sessionId),
+  compactSession: (sessionId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_COMPACT, sessionId),
   getModelConfig: () => ipcRenderer.invoke(IPC_CHANNELS.PI_GET_MODEL_CONFIG),
   setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) =>
     ipcRenderer.invoke(IPC_CHANNELS.PI_SET_MODEL_CONFIG, patch),

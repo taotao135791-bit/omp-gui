@@ -1,11 +1,13 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { FolderOpen, Compass, Hammer, GitPullRequest, Bug } from 'lucide-react'
+import { SlashCommand } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
 import MessageList from './MessageList'
 import Composer from './Composer'
 import ExtensionUiDialog from './ExtensionUiDialog'
+import UsageMonitor from './UsageMonitor'
 import Logo from './Logo'
 
 interface Suggestion {
@@ -64,8 +66,27 @@ export default function ChatPanel() {
   const currentSession = sessions.find((s) => s.id === currentSessionId)
   const sessionMessages = currentSessionId ? messages[currentSessionId] || [] : []
   const isBusy = currentSessionId ? Boolean(busy[currentSessionId]) : false
+  const isCompacting = useAppStore((s) =>
+    currentSessionId ? Boolean(s.compacting[currentSessionId]) : false
+  )
   const pendingUi = currentSessionId ? (uiRequests[currentSessionId] || [])[0] : undefined
   const bottomRef = useRef<HTMLDivElement>(null)
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
+
+  // Slash commands come from the live session (extensions/prompts/skills)
+  useEffect(() => {
+    if (!currentSessionId) {
+      setSlashCommands([])
+      return
+    }
+    let cancelled = false
+    window.electronAPI.listCommands(currentSessionId).then((cmds) => {
+      if (!cancelled) setSlashCommands(cmds)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [currentSessionId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -89,6 +110,17 @@ export default function ChatPanel() {
     if (currentSessionId) {
       await window.electronAPI.abortSession(currentSessionId)
     }
+  }
+
+  const handleCompact = async () => {
+    const sid = currentSessionId
+    if (!sid) return
+    const store = useAppStore.getState()
+    store.setCompacting(sid, true)
+    await window.electronAPI.compactSession(sid)
+    useAppStore.getState().setCompacting(sid, false)
+    const stats = await window.electronAPI.getSessionStats(sid)
+    if (stats) useAppStore.getState().setStats(sid, stats)
   }
 
   const handleSelectProject = async () => {
@@ -118,7 +150,13 @@ export default function ChatPanel() {
             {projectName || t('chat.noProject')}
           </span>
         </span>
-        <span className="ml-auto flex shrink-0 items-center gap-1.5 text-cream-dim">
+        <span className="ml-auto flex shrink-0 items-center gap-2.5 text-cream-dim">
+          {isCompacting && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+              <span className="font-medium text-accent">{t('chat.compacting')}</span>
+            </span>
+          )}
           {isBusy ? (
             <>
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
@@ -133,7 +171,8 @@ export default function ChatPanel() {
         </span>
       </header>
 
-      <div className="relative flex-1 overflow-y-auto">
+      <div className="relative min-h-0 flex-1">
+        <div className="relative h-full overflow-y-auto">
         {showHero ? (
           <div className="flex h-full flex-col items-center justify-center px-8 pb-10">
             <div className="flex w-full max-w-2xl flex-col items-center">
@@ -182,6 +221,12 @@ export default function ChatPanel() {
           </div>
         )}
         <div ref={bottomRef} />
+        </div>
+        {currentSessionId && (
+          <div className="absolute bottom-3 right-4 z-10">
+            <UsageMonitor sessionId={currentSessionId} />
+          </div>
+        )}
       </div>
 
       {!currentProject && (
@@ -201,6 +246,8 @@ export default function ChatPanel() {
         onStop={handleStop}
         busy={isBusy}
         disabled={cliAvailable === false}
+        commands={slashCommands}
+        onCompact={currentSessionId ? handleCompact : undefined}
       />
 
       {pendingUi && currentSessionId && (

@@ -20,6 +20,7 @@ export type SessionEvent =
   | { type: 'tool_call'; sessionId: string; tool: string; input: unknown; output?: unknown }
   | { type: 'tool_result'; sessionId: string; tool: string; output: unknown; isError: boolean }
   | { type: 'status'; sessionId: string; status: 'working' | 'idle' }
+  | { type: 'compaction'; sessionId: string; phase: 'start' | 'end' }
   | { type: 'error'; sessionId: string; message: string }
   | {
       type: 'ui_request'
@@ -34,6 +35,33 @@ export type SessionEvent =
       timeout?: number
     }
   | { type: 'closed'; sessionId: string }
+
+/** Token/context usage of a session, as returned by the RPC get_session_stats command. */
+export interface SessionStats {
+  userMessages: number
+  assistantMessages: number
+  toolCalls: number
+  tokens: {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+    total: number
+  }
+  cost: number
+  contextUsage?: {
+    tokens: number | null
+    contextWindow: number
+    percent: number | null
+  }
+}
+
+/** A slash command the session can run via prompt, from the RPC get_commands command. */
+export interface SlashCommand {
+  name: string
+  description?: string
+  source: 'extension' | 'prompt' | 'skill'
+}
 
 /** Answer to an extension UI dialog, sent back over the session's stdin. */
 export type ExtensionUiAnswer = { cancelled: true } | { value: string } | { confirmed: boolean }

@@ -153,6 +153,17 @@ describe('parseRpcLine', () => {
     })
   })
 
+  it('maps compaction lifecycle events to compaction phases', () => {
+    expect(parseRpcLine(JSON.stringify({ type: 'compaction_start' }), 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'compaction', sessionId: 's1', phase: 'start' }
+    })
+    expect(parseRpcLine(JSON.stringify({ type: 'compaction_end' }), 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'compaction', sessionId: 's1', phase: 'end' }
+    })
+  })
+
   it('ignores turn and queue events', () => {
     for (const type of ['turn_start', 'turn_end', 'queue_update']) {
       expect(parseRpcLine(JSON.stringify({ type }), 's1')).toEqual({ kind: 'none' })

@@ -157,8 +157,20 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
         event: { type: 'status', sessionId, status: 'idle' }
       }
 
+    case 'compaction_start':
+      return {
+        kind: 'event',
+        event: { type: 'compaction', sessionId, phase: 'start' }
+      }
+
+    case 'compaction_end':
+      return {
+        kind: 'event',
+        event: { type: 'compaction', sessionId, phase: 'end' }
+      }
+
     default:
-      // turn_*/queue_update/compaction_*/… — not surfaced
+      // turn_*/queue_update/… — not surfaced
       return { kind: 'none' }
   }
 }

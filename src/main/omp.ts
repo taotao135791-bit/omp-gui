@@ -2,11 +2,31 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { CliInfo, ExtensionUiAnswer, Session, SessionEvent, ToolAccess } from '../shared/types'
+import {
+  CliInfo,
+  ExtensionUiAnswer,
+  Session,
+  SessionEvent,
+  SessionStats,
+  SlashCommand,
+  ToolAccess
+} from '../shared/types'
 import { getStore, setStore } from './store'
 import { parseRpcLine, drainLines, extensionUiResponse } from './protocol'
 
-const sessions = new Map<string, { process: ChildProcess; session: Session }>()
+interface PendingQuery {
+  resolve: (payload: Record<string, unknown> | null) => void
+  timer: NodeJS.Timeout
+}
+
+interface SessionEntry {
+  process: ChildProcess
+  session: Session
+  /** In-flight RPC queries awaiting their response, keyed by request id. */
+  pending: Map<string, PendingQuery>
+}
+
+const sessions = new Map<string, SessionEntry>()
 
 // Only successful detections are cached; a negative result is re-checked
 // every time so the app picks up a CLI installed after launch.
@@ -118,13 +138,30 @@ export function createSession(
     status: 'idle'
   }
 
-  sessions.set(id, { process: proc, session })
+  sessions.set(id, { process: proc, session, pending: new Map() })
 
   let buffer = ''
   proc.stdout?.on('data', (chunk: Buffer) => {
     const { lines, rest } = drainLines(buffer, chunk.toString('utf-8'))
     buffer = rest
     for (const line of lines) {
+      // Query responses are claimed by id before the generic parser sees them
+      let raw: Record<string, unknown> | null = null
+      try {
+        raw = JSON.parse(line)
+      } catch {
+        raw = null
+      }
+      if (raw && raw.type === 'response' && typeof raw.id === 'string') {
+        const entry = sessions.get(id)
+        const query = entry?.pending.get(raw.id)
+        if (entry && query) {
+          entry.pending.delete(raw.id)
+          clearTimeout(query.timer)
+          query.resolve(raw)
+          continue
+        }
+      }
       const result = parseRpcLine(line, id)
       if (result.kind === 'event') {
         onEvent(result.event)
@@ -172,6 +209,14 @@ export function createSession(
   })
 
   proc.on('exit', (code) => {
+    const entry = sessions.get(id)
+    if (entry) {
+      for (const query of entry.pending.values()) {
+        clearTimeout(query.timer)
+        query.resolve(null)
+      }
+      entry.pending.clear()
+    }
     sessions.delete(id)
     onEvent({ type: 'closed', sessionId: id })
     if (code !== 0 && code !== null) {
@@ -239,4 +284,58 @@ export function setSessionModel(sessionId: string, provider: string, modelId: st
     JSON.stringify({ id: crypto.randomUUID(), type: 'set_model', provider, modelId }) + '\n'
   entry.process.stdin?.write(payload)
   return true
+}
+
+/**
+ * Send an RPC command and await its response, matched by request id.
+ * Resolves null on timeout, missing session, or process exit.
+ */
+function querySession(
+  sessionId: string,
+  command: Record<string, unknown>,
+  timeoutMs = 8000
+): Promise<Record<string, unknown> | null> {
+  const entry = sessions.get(sessionId)
+  if (!entry) return Promise.resolve(null)
+  const id = crypto.randomUUID()
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      entry.pending.delete(id)
+      resolve(null)
+    }, timeoutMs)
+    entry.pending.set(id, { resolve, timer })
+    entry.process.stdin?.write(JSON.stringify({ id, ...command }) + '\n')
+  })
+}
+
+/** Token/context usage for the usage monitor. */
+export async function getSessionStats(sessionId: string): Promise<SessionStats | null> {
+  const res = await querySession(sessionId, { type: 'get_session_stats' })
+  if (!res || res.success !== true || !res.data) return null
+  return res.data as SessionStats
+}
+
+/** Slash commands available in this session (extensions, prompts, skills). */
+export async function listSessionCommands(sessionId: string): Promise<SlashCommand[]> {
+  const res = await querySession(sessionId, { type: 'get_commands' })
+  if (!res || res.success !== true || !res.data) return []
+  const raw = (res.data as { commands?: unknown }).commands
+  if (!Array.isArray(raw)) return []
+  const out: SlashCommand[] = []
+  for (const c of raw) {
+    const cmd = c as { name?: unknown; description?: unknown; source?: unknown }
+    if (typeof cmd?.name !== 'string') continue
+    out.push({
+      name: cmd.name,
+      description: typeof cmd.description === 'string' ? cmd.description : undefined,
+      source: cmd.source === 'extension' || cmd.source === 'skill' ? cmd.source : 'prompt'
+    })
+  }
+  return out
+}
+
+/** Trigger context compaction; the summarization LLM call can take a while. */
+export async function compactSession(sessionId: string): Promise<boolean> {
+  const res = await querySession(sessionId, { type: 'compact' }, 120_000)
+  return Boolean(res && res.success === true)
 }

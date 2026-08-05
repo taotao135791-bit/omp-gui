@@ -18,7 +18,10 @@ import {
   abortSession,
   listSessions,
   respondExtensionUi,
-  setSessionModel
+  setSessionModel,
+  getSessionStats,
+  listSessionCommands,
+  compactSession
 } from './omp'
 import {
   listPackages,
@@ -119,6 +122,30 @@ export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.PI_LIST_MODELS, async () => {
     return listAvailableModels()
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_SESSION_STATS,
+    async (_event: IpcMainInvokeEvent, sessionId: string) => {
+      if (typeof sessionId !== 'string' || !sessionId) return null
+      return getSessionStats(sessionId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_LIST_COMMANDS,
+    async (_event: IpcMainInvokeEvent, sessionId: string) => {
+      if (typeof sessionId !== 'string' || !sessionId) return []
+      return listSessionCommands(sessionId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_COMPACT,
+    async (_event: IpcMainInvokeEvent, sessionId: string) => {
+      if (typeof sessionId !== 'string' || !sessionId) return false
+      return compactSession(sessionId)
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.PI_LIST_CATALOG_MODELS, async () => {
     return listCatalogModels()

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, PackageInfo, InstallStatus, Language, ModelConfig, PiModel } from '@shared/types'
+import { Session, SessionEvent, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel } from '@shared/types'
 
 export interface MessageLike {
   id: string
@@ -40,6 +40,10 @@ interface AppState {
   modelConfig: ModelConfig | null
   /** sessionId -> whether the agent is currently generating */
   busy: Record<string, boolean>
+  /** sessionId -> whether context compaction is running */
+  compacting: Record<string, boolean>
+  /** sessionId -> latest known token/context usage */
+  stats: Record<string, SessionStats>
   setTheme: (theme: 'dark' | 'light') => void
   setLanguage: (language: Language) => void
   setCurrentProject: (path: string | null) => void
@@ -57,6 +61,8 @@ interface AppState {
   setPreviewContent: (content: string | null) => void
   setCliAvailable: (available: boolean) => void
   setBusy: (sessionId: string, busy: boolean) => void
+  setCompacting: (sessionId: string, compacting: boolean) => void
+  setStats: (sessionId: string, stats: SessionStats) => void
   setSetupComplete: (complete: boolean) => void
   setInstallStatus: (status: InstallStatus) => void
   /** (Re)load model config + available models from the main process. */
@@ -85,6 +91,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   models: [],
   modelConfig: null,
   busy: {},
+  compacting: {},
+  stats: {},
 
   setTheme: (theme) => {
     set({ theme })
@@ -149,6 +157,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCliAvailable: (cliAvailable) => set({ cliAvailable }),
   setBusy: (sessionId, busy) =>
     set((state) => ({ busy: { ...state.busy, [sessionId]: busy } })),
+  setCompacting: (sessionId, compacting) =>
+    set((state) => ({ compacting: { ...state.compacting, [sessionId]: compacting } })),
+  setStats: (sessionId, stats) =>
+    set((state) => ({ stats: { ...state.stats, [sessionId]: stats } })),
   setSetupComplete: (setupComplete) => {
     set({ setupComplete })
     window.electronAPI.setStore('setupComplete', setupComplete)
@@ -223,6 +235,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } else if (event.type === 'status') {
       set((state) => ({ busy: { ...state.busy, [event.sessionId]: event.status === 'working' } }))
+    } else if (event.type === 'compaction') {
+      set((state) => ({
+        compacting: { ...state.compacting, [event.sessionId]: event.phase === 'start' }
+      }))
     } else if (event.type === 'ui_request') {
       set((state) => ({
         uiRequests: {
@@ -241,6 +257,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else if (event.type === 'closed') {
       set((state) => ({
         busy: { ...state.busy, [event.sessionId]: false },
+        compacting: { ...state.compacting, [event.sessionId]: false },
         uiRequests: { ...state.uiRequests, [event.sessionId]: [] }
       }))
     }
