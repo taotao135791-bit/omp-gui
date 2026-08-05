@@ -17,7 +17,8 @@ import {
   killSession,
   abortSession,
   listSessions,
-  respondExtensionUi
+  respondExtensionUi,
+  setSessionModel
 } from './omp'
 import {
   listPackages,
@@ -28,6 +29,7 @@ import {
   defaultPiAgentDir
 } from './packages'
 import { getModelConfig, setModelConfig, setApiKey, clearApiKey } from './piSettings'
+import { listAvailableModels, invalidateModelCache } from './piModels'
 import { getStore, setStore } from './store'
 import { installOmp } from './installer'
 import { FsGuard } from './fsGuard'
@@ -104,6 +106,20 @@ export function registerIpc() {
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_SET_MODEL,
+    async (_event: IpcMainInvokeEvent, sessionId: string, provider: string, modelId: string) => {
+      if (typeof provider !== 'string' || !provider || typeof modelId !== 'string' || !modelId) {
+        return false
+      }
+      return setSessionModel(sessionId, provider, modelId)
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.PI_LIST_MODELS, async () => {
+    return listAvailableModels()
+  })
+
   ipcMain.handle(IPC_CHANNELS.PI_GET_MODEL_CONFIG, async () => {
     return getModelConfig()
   })
@@ -120,11 +136,15 @@ export function registerIpc() {
 
   ipcMain.handle(IPC_CHANNELS.PI_SET_API_KEY, async (_event, provider: string, key: string) => {
     if (typeof key !== 'string') return { ok: false, log: 'invalid api key' }
-    return setApiKey(String(provider ?? ''), key)
+    const result = setApiKey(String(provider ?? ''), key)
+    if (result.ok) invalidateModelCache()
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.PI_CLEAR_API_KEY, async (_event, provider: string) => {
-    return clearApiKey(String(provider ?? ''))
+    const result = clearApiKey(String(provider ?? ''))
+    if (result.ok) invalidateModelCache()
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.APP_VERSION, async () => {

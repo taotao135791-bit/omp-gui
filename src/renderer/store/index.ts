@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, PackageInfo, InstallStatus, Language } from '@shared/types'
+import { Session, SessionEvent, PackageInfo, InstallStatus, Language, ModelConfig, PiModel } from '@shared/types'
 
 export interface MessageLike {
   id: string
@@ -34,6 +34,10 @@ interface AppState {
   /** null = not yet loaded from disk */
   setupComplete: boolean | null
   installStatus: InstallStatus
+  /** Models pi can use right now (credentialed providers); empty until loaded */
+  models: PiModel[]
+  /** pi's own model configuration; null until loaded */
+  modelConfig: ModelConfig | null
   /** sessionId -> whether the agent is currently generating */
   busy: Record<string, boolean>
   setTheme: (theme: 'dark' | 'light') => void
@@ -55,6 +59,10 @@ interface AppState {
   setBusy: (sessionId: string, busy: boolean) => void
   setSetupComplete: (complete: boolean) => void
   setInstallStatus: (status: InstallStatus) => void
+  /** (Re)load model config + available models from the main process. */
+  loadModelState: () => Promise<void>
+  /** Persist a model choice and hot-apply it to the live session, if any. */
+  selectModel: (provider: string, modelId: string) => Promise<void>
   applySessionEvent: (event: SessionEvent) => void
 }
 
@@ -74,6 +82,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   cliAvailable: null,
   setupComplete: null,
   installStatus: { type: 'idle' },
+  models: [],
+  modelConfig: null,
   busy: {},
 
   setTheme: (theme) => {
@@ -144,6 +154,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     window.electronAPI.setStore('setupComplete', setupComplete)
   },
   setInstallStatus: (installStatus) => set({ installStatus }),
+
+  loadModelState: async () => {
+    const [modelConfig, models] = await Promise.all([
+      window.electronAPI.getModelConfig(),
+      window.electronAPI.listModels()
+    ])
+    set({ modelConfig, models })
+  },
+
+  selectModel: async (provider, modelId) => {
+    await window.electronAPI.setModelConfig({ defaultProvider: provider, defaultModel: modelId })
+    const sid = get().currentSessionId
+    if (sid) {
+      await window.electronAPI.setSessionModel(sid, provider, modelId)
+    }
+    set((state) => ({
+      modelConfig: state.modelConfig
+        ? { ...state.modelConfig, defaultProvider: provider, defaultModel: modelId }
+        : state.modelConfig
+    }))
+  },
 
   applySessionEvent: (event) => {
     if (event.type === 'message') {

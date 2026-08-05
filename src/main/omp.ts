@@ -230,3 +230,13 @@ export function respondExtensionUi(
   entry.process.stdin?.write(extensionUiResponse(requestId, answer))
   return true
 }
+
+/** Hot-switch the model of a live session via the RPC set_model command. */
+export function setSessionModel(sessionId: string, provider: string, modelId: string): boolean {
+  const entry = sessions.get(sessionId)
+  if (!entry) return false
+  const payload =
+    JSON.stringify({ id: crypto.randomUUID(), type: 'set_model', provider, modelId }) + '\n'
+  entry.process.stdin?.write(payload)
+  return true
+}

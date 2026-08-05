@@ -1,6 +1,7 @@
 import { useState, useRef, KeyboardEvent } from 'react'
 import { ArrowUp, Square, Paperclip, Image } from 'lucide-react'
 import { useT } from '../i18n'
+import ModelPicker from './ModelPicker'
 
 interface ComposerProps {
   onSend: (text: string) => void
@@ -60,6 +61,7 @@ export default function Composer({ onSend, onStop, busy, disabled }: ComposerPro
               <button className="rounded-md p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream">
                 <Image size={14} />
               </button>
+              <ModelPicker />
             </div>
             {busy ? (
               <button

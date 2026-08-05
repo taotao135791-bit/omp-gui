@@ -10,7 +10,8 @@ import {
   InstallStatus,
   ReadFileResult,
   ExtensionUiAnswer,
-  ModelConfig
+  ModelConfig,
+  PiModel
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -37,10 +38,12 @@ export interface ElectronAPI {
   selectFile: () => Promise<string | null>
   showCliSettings: () => Promise<boolean>
   respondUi: (sessionId: string, requestId: string, answer: ExtensionUiAnswer) => Promise<boolean>
+  setSessionModel: (sessionId: string, provider: string, modelId: string) => Promise<boolean>
   getModelConfig: () => Promise<ModelConfig>
   setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) => Promise<PackageActionResult>
   setApiKey: (provider: string, key: string) => Promise<PackageActionResult>
   clearApiKey: (provider: string) => Promise<PackageActionResult>
+  listModels: () => Promise<PiModel[]>
   getAppVersion: () => Promise<string>
   /** Real filesystem path for a File dropped from Finder (contextIsolation-safe). */
   getPathForFile: (file: File) => string
@@ -87,12 +90,15 @@ const api: ElectronAPI = {
   showCliSettings: () => ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_CLI_SETTINGS),
   respondUi: (sessionId: string, requestId: string, answer: ExtensionUiAnswer) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_RESPOND_UI, sessionId, requestId, answer),
+  setSessionModel: (sessionId: string, provider: string, modelId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_SET_MODEL, sessionId, provider, modelId),
   getModelConfig: () => ipcRenderer.invoke(IPC_CHANNELS.PI_GET_MODEL_CONFIG),
   setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) =>
     ipcRenderer.invoke(IPC_CHANNELS.PI_SET_MODEL_CONFIG, patch),
   setApiKey: (provider: string, key: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PI_SET_API_KEY, provider, key),
   clearApiKey: (provider: string) => ipcRenderer.invoke(IPC_CHANNELS.PI_CLEAR_API_KEY, provider),
+  listModels: () => ipcRenderer.invoke(IPC_CHANNELS.PI_LIST_MODELS),
   getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_VERSION),
   getPathForFile: (file: File) => webUtils.getPathForFile(file)
 }

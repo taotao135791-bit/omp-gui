@@ -24,10 +24,12 @@ export const IPC_CHANNELS = {
   DIALOG_SELECT_FILE: 'dialog:select-file',
   SHELL_SHOW_CLI_SETTINGS: 'shell:show-cli-settings',
   OMP_RESPOND_UI: 'omp:respond-ui',
+  OMP_SET_MODEL: 'omp:set-model',
   PI_GET_MODEL_CONFIG: 'pi:get-model-config',
   PI_SET_MODEL_CONFIG: 'pi:set-model-config',
   PI_SET_API_KEY: 'pi:set-api-key',
   PI_CLEAR_API_KEY: 'pi:clear-api-key',
+  PI_LIST_MODELS: 'pi:list-models',
   APP_VERSION: 'app:version'
 } as const
 

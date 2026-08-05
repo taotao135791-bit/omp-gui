@@ -53,34 +53,30 @@ const TOOL_ACCESS_NOTE = {
 } as const
 
 export default function SettingsPage() {
-  const { theme, language, setTheme, setLanguage } = useAppStore()
+  const { theme, language, setTheme, setLanguage, models, modelConfig, loadModelState, selectModel } =
+    useAppStore()
   const t = useT()
   const [cli, setCli] = useState<CliInfo | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [cleared, setCleared] = useState(false)
   const [version, setVersion] = useState('')
 
-  const [modelCfg, setModelCfg] = useState<ModelConfig | null>(null)
   const [keyInput, setKeyInput] = useState('')
   const [keyState, setKeyState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [keyError, setKeyError] = useState('')
-  const [modelInput, setModelInput] = useState('')
+  const [modelSaved, setModelSaved] = useState(false)
   const [toolAccess, setToolAccessState] = useState<ToolAccess>('full')
 
-  const provider = modelCfg?.defaultProvider ?? ''
-  const providerConfigured = provider ? (modelCfg?.authProviders ?? []).includes(provider) : false
+  const provider = modelConfig?.defaultProvider ?? ''
+  const providerConfigured = provider ? (modelConfig?.authProviders ?? []).includes(provider) : false
+  const providerModels = provider ? models.filter((m) => m.provider === provider) : []
 
   useEffect(() => {
     window.electronAPI.detectCli().then(setCli)
     window.electronAPI.getAppVersion().then(setVersion)
-    window.electronAPI.getModelConfig().then((cfg) => {
-      setModelCfg(cfg)
-      setModelInput(cfg.defaultModel)
-    })
+    loadModelState()
     window.electronAPI.getStore('toolAccess').then((v) => setToolAccessState(v ?? 'full'))
-  }, [])
-
-  const refreshModelCfg = () => window.electronAPI.getModelConfig().then(setModelCfg)
+  }, [loadModelState])
 
   const redetect = async () => {
     setDetecting(true)
@@ -96,12 +92,29 @@ export default function SettingsPage() {
     setTimeout(() => setCleared(false), 1500)
   }
 
+  const flashModelSaved = () => {
+    setModelSaved(true)
+    setTimeout(() => setModelSaved(false), 1500)
+  }
+
   const changeProvider = async (id: string) => {
     setKeyInput('')
     setKeyState('idle')
-    setModelCfg((cfg) => (cfg ? { ...cfg, defaultProvider: id } : cfg))
-    await window.electronAPI.setModelConfig({ defaultProvider: id })
-    refreshModelCfg()
+    // A model id only makes sense within its provider — reset it on switch
+    await window.electronAPI.setModelConfig({ defaultProvider: id, defaultModel: '' })
+    loadModelState()
+  }
+
+  const changeModel = async (modelId: string) => {
+    if (!provider) return
+    await selectModel(provider, modelId)
+    flashModelSaved()
+  }
+
+  const saveCustomModel = async (value: string) => {
+    if (!provider || value === (modelConfig?.defaultModel ?? '')) return
+    await selectModel(provider, value)
+    flashModelSaved()
   }
 
   const saveKey = async () => {
@@ -112,7 +125,7 @@ export default function SettingsPage() {
       setKeyInput('')
       setKeyState('saved')
       setTimeout(() => setKeyState('idle'), 2000)
-      refreshModelCfg()
+      loadModelState()
     } else {
       setKeyError(result.log)
       setKeyState('error')
@@ -123,23 +136,14 @@ export default function SettingsPage() {
     if (!provider) return
     await window.electronAPI.clearApiKey(provider)
     setKeyState('idle')
-    refreshModelCfg()
-  }
-
-  const saveDefaultModel = async () => {
-    if (modelInput === (modelCfg?.defaultModel ?? '')) return
-    await window.electronAPI.setModelConfig({ defaultModel: modelInput })
-    refreshModelCfg()
+    loadModelState()
   }
 
   const changeThinking = async (level: string) => {
-    setModelCfg((cfg) =>
-      cfg ? { ...cfg, defaultThinkingLevel: level as ModelConfig['defaultThinkingLevel'] } : cfg
-    )
     await window.electronAPI.setModelConfig({
       defaultThinkingLevel: level as ModelConfig['defaultThinkingLevel']
     })
-    refreshModelCfg()
+    loadModelState()
   }
 
   const changeToolAccess = async (value: ToolAccess) => {
@@ -148,9 +152,8 @@ export default function SettingsPage() {
   }
 
   const changeTrust = async (value: ModelConfig['projectTrust']) => {
-    setModelCfg((cfg) => (cfg ? { ...cfg, projectTrust: value } : cfg))
     await window.electronAPI.setModelConfig({ projectTrust: value })
-    refreshModelCfg()
+    loadModelState()
   }
 
   const seg = (active: boolean) =>
@@ -177,7 +180,7 @@ export default function SettingsPage() {
                 {PI_PROVIDERS.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label}
-                    {(modelCfg?.authProviders ?? []).includes(p.id) ? ' ✓' : ''}
+                    {(modelConfig?.authProviders ?? []).includes(p.id) ? ' ✓' : ''}
                   </option>
                 ))}
               </select>
@@ -239,21 +242,46 @@ export default function SettingsPage() {
                 <span className="text-red-500">{t('settings.saveFailed', { error: keyError })}</span>
               </Note>
             )}
-            <Row label={t('settings.defaultModel')}>
-              <input
-                value={modelInput}
-                onChange={(e) => setModelInput(e.target.value)}
-                onBlur={saveDefaultModel}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveDefaultModel()
-                }}
-                placeholder={t('settings.defaultModelPlaceholder')}
-                className={inputCls}
-              />
-            </Row>
+            {provider && (
+              <Row label={t('settings.defaultModel')}>
+                <div className="flex items-center gap-2">
+                  {providerModels.length > 0 ? (
+                    <select
+                      value={modelConfig?.defaultModel ?? ''}
+                      onChange={(e) => changeModel(e.target.value)}
+                      className={`${selectCls} max-w-64`}
+                    >
+                      <option value="">{t('settings.modelAuto')}</option>
+                      {providerModels.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      key={provider}
+                      defaultValue={modelConfig?.defaultModel ?? ''}
+                      onBlur={(e) => saveCustomModel(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveCustomModel((e.target as HTMLInputElement).value)
+                      }}
+                      placeholder={t('settings.defaultModelPlaceholder')}
+                      className={inputCls}
+                    />
+                  )}
+                  {modelSaved && (
+                    <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                      <Check size={11} />
+                      {t('settings.saved')}
+                    </span>
+                  )}
+                </div>
+              </Row>
+            )}
             <Row label={t('settings.thinking')}>
               <select
-                value={modelCfg?.defaultThinkingLevel ?? ''}
+                value={modelConfig?.defaultThinkingLevel ?? ''}
                 onChange={(e) => changeThinking(e.target.value)}
                 className={selectCls}
               >
@@ -295,19 +323,19 @@ export default function SettingsPage() {
                 <div className="flex rounded-md bg-overlay p-0.5">
                   <button
                     onClick={() => changeTrust('ask')}
-                    className={seg((modelCfg?.projectTrust ?? 'ask') === 'ask')}
+                    className={seg((modelConfig?.projectTrust ?? 'ask') === 'ask')}
                   >
                     {t('settings.trustAsk')}
                   </button>
                   <button
                     onClick={() => changeTrust('always')}
-                    className={seg((modelCfg?.projectTrust ?? 'ask') === 'always')}
+                    className={seg((modelConfig?.projectTrust ?? 'ask') === 'always')}
                   >
                     {t('settings.trustAlways')}
                   </button>
                   <button
                     onClick={() => changeTrust('never')}
-                    className={seg((modelCfg?.projectTrust ?? 'ask') === 'never')}
+                    className={seg((modelConfig?.projectTrust ?? 'ask') === 'never')}
                   >
                     {t('settings.trustNever')}
                   </button>

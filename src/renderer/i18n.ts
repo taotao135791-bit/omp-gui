@@ -44,6 +44,9 @@ const en = {
   'composer.placeholderDisabled': 'Install the omp/pi CLI to start chatting…',
   'composer.send': 'Send',
   'composer.stop': 'Stop generating',
+  'composer.model': 'Model',
+  'composer.modelAuto': 'Auto',
+  'composer.noModels': 'No API keys yet — add one in Settings',
   'composer.disclaimer': 'Oh My Pi can make mistakes. Review important code before running it.',
 
   // Message actions
@@ -64,7 +67,8 @@ const en = {
   'settings.clearKey': 'Remove',
   'settings.saveFailed': 'Failed: {error}',
   'settings.defaultModel': 'Default model',
-  'settings.defaultModelPlaceholder': 'e.g. claude-sonnet-4-5 · blank = provider default',
+  'settings.defaultModelPlaceholder': 'Model id (blank = provider default)',
+  'settings.modelAuto': 'Provider default',
   'settings.thinking': 'Thinking level',
   'settings.thinkingDefault': 'Default',
   'settings.modelNote': 'Keys are stored in ~/.pi/agent/auth.json (readable only by you). Model settings apply to new chats.',
@@ -223,6 +227,9 @@ const zh: Record<I18nKey, string> = {
   'composer.placeholderDisabled': '安装 omp/pi CLI 后开始对话…',
   'composer.send': '发送',
   'composer.stop': '停止生成',
+  'composer.model': '模型',
+  'composer.modelAuto': '自动',
+  'composer.noModels': '还没有 API 密钥，去设置里添加',
   'composer.disclaimer': 'Oh My Pi 可能会犯错，重要代码运行前请人工检查。',
 
   // Message actions
@@ -243,7 +250,8 @@ const zh: Record<I18nKey, string> = {
   'settings.clearKey': '移除',
   'settings.saveFailed': '保存失败：{error}',
   'settings.defaultModel': '默认模型',
-  'settings.defaultModelPlaceholder': '如 claude-sonnet-4-5，留空用服务商默认',
+  'settings.defaultModelPlaceholder': '模型 id（留空用服务商默认）',
+  'settings.modelAuto': '服务商默认',
   'settings.thinking': '思考深度',
   'settings.thinkingDefault': '默认',
   'settings.modelNote': '密钥保存在 ~/.pi/agent/auth.json（仅本人可读）。模型设置对新对话生效。',

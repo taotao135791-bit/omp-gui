@@ -6,8 +6,8 @@ A desktop GUI for [Oh My Pi](https://omp.sh) / [Pi](https://github.com/badlogic/
 
 **macOS** — download, open the DMG, drag OMP GUI into Applications:
 
-- [Apple Silicon (M1/M2/M3/M4)](https://github.com/taotao135791-bit/omp-gui/releases/latest/download/OMP-GUI-0.1.0-arm64.dmg)
-- [Intel](https://github.com/taotao135791-bit/omp-gui/releases/latest/download/OMP-GUI-0.1.0-x64.dmg)
+- [Apple Silicon (M1/M2/M3/M4)](https://github.com/taotao135791-bit/omp-gui/releases/latest/download/OMP-GUI-arm64.dmg)
+- [Intel](https://github.com/taotao135791-bit/omp-gui/releases/latest/download/OMP-GUI-x64.dmg)
 
 > The app is not notarized. On first launch macOS may say it can't be opened: right-click the app → **Open** → **Open**, or run `xattr -cr "/Applications/OMP GUI.app"`.
 
@@ -16,7 +16,7 @@ The app auto-detects an installed `omp`/`pi` CLI, or offers to install Oh My Pi 
 ## Features
 
 - **Codex-style layout** — sidebar with sessions & projects, streaming chat in the middle, file tree + preview on the right. Chinese/English UI, light & dark themes.
-- **Model & API keys** — pick from 26 providers (Anthropic, OpenAI, Gemini, DeepSeek, Kimi, MiniMax, ZAI, OpenRouter, …) and paste your API key in Settings. Keys are written to pi's own `~/.pi/agent/auth.json` (chmod 600) — the CLI and the GUI share them.
+- **Model & API keys** — pick from 26 providers (Anthropic, OpenAI, Gemini, DeepSeek, Kimi, MiniMax, ZAI, OpenRouter, …) and paste your API key in Settings. Keys are written to pi's own `~/.pi/agent/auth.json` (chmod 600) — the CLI and the GUI share them. The model dropdown is fed by pi itself (`get_available_models`), so you only ever see models your keys can actually run; switch models live from the composer picker mid-session.
 - **Permissions** — tool access modes (full access / no Bash / read-only) applied to new sessions, plus project-trust control for project-local plugins.
 - **Assemble your Pi** — the plugin page works like a mecha bay: drag parts onto the core to mount them, drag back to the rack to detach, drop to the red zone to uninstall. Install npm/git/local packages or drop a folder straight from Finder. Only mounted parts load into new chats, keeping pi lean.
 - **Interactive plugin dialogs** — when an extension asks (select / confirm / input / editor), a real dialog pops up in the chat instead of hanging the agent.

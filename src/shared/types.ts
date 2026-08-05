@@ -48,6 +48,17 @@ export interface ModelConfig {
   authProviders: string[]
 }
 
+/**
+ * A model pi can actually use (credentials present), as returned by the RPC
+ * `get_available_models` command — only the fields the GUI needs.
+ */
+export interface PiModel {
+  id: string
+  name: string
+  provider: string
+  reasoning: boolean
+}
+
 /** API-key providers pi supports (providers.md), shown in Settings. */
 export const PI_PROVIDERS: { id: string; label: string }[] = [
   { id: 'anthropic', label: 'Anthropic' },
