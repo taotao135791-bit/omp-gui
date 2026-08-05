@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -16,7 +16,8 @@ import {
   setApiKey,
   clearApiKey,
   listAuthProviders,
-  readPiSettings
+  readPiSettings,
+  syncMachineSkills
 } from '../piSettings'
 
 let dir: string
@@ -147,5 +148,68 @@ describe('readPiSettings', () => {
     expect(readPiSettings(dir)).toEqual({})
     writeFileSync(path.join(dir, 'settings.json'), '{broken')
     expect(readPiSettings(dir)).toEqual({})
+  })
+})
+
+describe('syncMachineSkills', () => {
+  let skillsDir: string
+
+  beforeEach(() => {
+    skillsDir = mkdtempSync(path.join(tmpdir(), 'omp-machine-skills-'))
+    mkdirSync(path.join(skillsDir, 'skill-a'))
+    mkdirSync(path.join(skillsDir, 'skill-b'))
+    mkdirSync(path.join(skillsDir, '.hidden'))
+    writeFileSync(path.join(skillsDir, 'a-file.txt'), 'not a skill')
+  })
+
+  afterEach(() => {
+    rmSync(skillsDir, { recursive: true, force: true })
+  })
+
+  it('writes !name exclusions for every skill dir when disabled', () => {
+    const excluded = syncMachineSkills(false, dir, skillsDir)
+    expect(excluded).toEqual(['skill-a', 'skill-b'])
+    expect(readJson('settings.json').skills).toEqual(['!skill-a', '!skill-b'])
+  })
+
+  it('preserves user-written overrides alongside managed exclusions', () => {
+    writeFileSync(
+      path.join(dir, 'settings.json'),
+      JSON.stringify({ skills: ['!other-agent', 'my-skill'] })
+    )
+    syncMachineSkills(false, dir, skillsDir)
+    expect(readJson('settings.json').skills).toEqual([
+      '!other-agent',
+      'my-skill',
+      '!skill-a',
+      '!skill-b'
+    ])
+  })
+
+  it('removes exactly the managed exclusions when re-enabled', () => {
+    writeFileSync(
+      path.join(dir, 'settings.json'),
+      JSON.stringify({ skills: ['!skill-a', '!skill-b', '!other-agent', 42] })
+    )
+    const excluded = syncMachineSkills(true, dir, skillsDir)
+    expect(excluded).toEqual([])
+    // 42 is dropped by the string filter; the user pattern survives
+    expect(readJson('settings.json').skills).toEqual(['!other-agent'])
+  })
+
+  it('deletes the skills key when nothing remains', () => {
+    syncMachineSkills(false, dir, skillsDir)
+    syncMachineSkills(true, dir, skillsDir)
+    expect('skills' in readJson('settings.json')).toBe(false)
+  })
+
+  it('is a no-op when no machine skills exist', () => {
+    const empty = mkdtempSync(path.join(tmpdir(), 'omp-no-skills-'))
+    try {
+      expect(syncMachineSkills(false, dir, empty)).toEqual([])
+      expect('skills' in (readPiSettings(dir) as Record<string, unknown>)).toBe(false)
+    } finally {
+      rmSync(empty, { recursive: true, force: true })
+    }
   })
 })

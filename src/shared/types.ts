@@ -148,6 +148,13 @@ export interface PackageActionResult {
   log: string
 }
 
+/** A pi package found on the npm registry (community/curated lists). */
+export interface CommunityPackageInfo {
+  name: string
+  description: string
+  version: string
+}
+
 export type Language = 'zh' | 'en'
 
 export interface AppSettings {
@@ -158,6 +165,8 @@ export interface AppSettings {
   recentProjects: string[]
   setupComplete: boolean
   toolAccess: ToolAccess
+  /** Load machine-local ~/.agents/skills into sessions (default off — they belong to other agents). */
+  machineSkills: boolean
 }
 
 export type InstallStatus =
@@ -178,5 +187,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   windowHeight: 800,
   recentProjects: [],
   setupComplete: false,
-  toolAccess: 'full'
+  toolAccess: 'full',
+  machineSkills: false
 }

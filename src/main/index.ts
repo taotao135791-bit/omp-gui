@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
 import { getStore, setStore } from './store'
 import { registerIpc } from './ipc'
+import { syncMachineSkills } from './piSettings'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
@@ -44,6 +45,9 @@ function createWindow() {
 
 app.whenReady().then(() => {
   registerIpc()
+  // Keep pi's skill overrides in line with the GUI toggle — pi loads
+  // ~/.agents/skills (other agents' skills) into every session by default.
+  syncMachineSkills(getStore('machineSkills'))
   createWindow()
 
   app.on('activate', () => {

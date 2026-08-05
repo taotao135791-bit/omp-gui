@@ -1,4 +1,4 @@
-import { chmodSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { ModelConfig, PackageActionResult } from '../shared/types'
@@ -38,6 +38,58 @@ export function writePiSettings(piAgentDir: string, settings: PiSettings): void 
   const tmp = `${target}.tmp-${process.pid}`
   writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf-8')
   renameSync(tmp, target)
+}
+
+// ---------------------------------------------------------------------------
+// Machine-local skills (~/.agents/skills)
+//
+// pi unconditionally loads every skill it finds under ~/.agents/skills — a
+// directory shared with other agents on this machine (Kimi CLI's lark-* set
+// and the like). That leaks unrelated abilities into every GUI session. The
+// GUI therefore manages pi's own `skills` override list: for each discovered
+// skill directory it writes a `!<name>` exclusion (pi matches overrides by
+// basename), and removes exactly those entries again when re-enabled.
+// ---------------------------------------------------------------------------
+
+export function machineSkillsDir(): string {
+  return path.join(homedir(), '.agents', 'skills')
+}
+
+/** Names of skill directories present under ~/.agents/skills. */
+export function listMachineSkillNames(dir: string = machineSkillsDir()): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .map((e) => e.name)
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Sync pi's skills overrides with the desired state. Returns the names that
+ * were excluded. Only entries the GUI manages (exact `!<machine skill name>`)
+ * are touched — user-written patterns and other overrides are preserved.
+ */
+export function syncMachineSkills(
+  enabled: boolean,
+  piAgentDir: string = defaultPiAgentDir(),
+  skillsDir: string = machineSkillsDir()
+): string[] {
+  const names = listMachineSkillNames(skillsDir)
+  if (names.length === 0) return []
+  const settings = readPiSettings(piAgentDir)
+  const current = Array.isArray(settings.skills)
+    ? settings.skills.filter((s): s is string => typeof s === 'string')
+    : []
+  const managed = names.map((n) => `!${n}`)
+  const kept = current.filter((s) => !managed.includes(s))
+  const next = enabled ? kept : [...kept, ...managed.filter((m) => !kept.includes(m))]
+  if (next.length === 0) delete settings.skills
+  else settings.skills = next
+  writePiSettings(piAgentDir, settings)
+  return enabled ? [] : names
 }
 
 // ---------------------------------------------------------------------------

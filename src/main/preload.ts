@@ -13,7 +13,8 @@ import {
   ReadFileResult,
   ExtensionUiAnswer,
   ModelConfig,
-  PiModel
+  PiModel,
+  CommunityPackageInfo
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -30,6 +31,8 @@ export interface ElectronAPI {
   listDir: (dirPath: string) => Promise<{ name: string; isDirectory: boolean; path: string }[]>
   readFile: (filePath: string) => Promise<ReadFileResult>
   listPackages: () => Promise<PackageInfo[]>
+  /** Search the npm registry for community pi packages (keyword pi-package). */
+  searchPackages: (query: string, curatedOnly?: boolean) => Promise<CommunityPackageInfo[]>
   installPackage: (source: string) => Promise<PackageActionResult>
   removePackage: (source: string) => Promise<PackageActionResult>
   updatePackage: (source: string) => Promise<PackageActionResult>
@@ -47,6 +50,8 @@ export interface ElectronAPI {
   listCommands: (sessionId: string) => Promise<SlashCommand[]>
   /** Trigger context compaction for a session. */
   compactSession: (sessionId: string) => Promise<boolean>
+  /** Toggle loading of machine-local ~/.agents/skills; returns what changed. */
+  setMachineSkills: (enabled: boolean) => Promise<{ enabled: boolean; excluded: string[]; available: string[] }>
   getModelConfig: () => Promise<ModelConfig>
   setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) => Promise<PackageActionResult>
   setApiKey: (provider: string, key: string) => Promise<PackageActionResult>
@@ -87,6 +92,8 @@ const api: ElectronAPI = {
   listDir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_DIR, dirPath),
   readFile: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_READ_FILE, filePath),
   listPackages: () => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_LIST),
+  searchPackages: (query: string, curatedOnly?: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SEARCH, query, curatedOnly),
   installPackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_INSTALL, source),
   removePackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_REMOVE, source),
   updatePackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_UPDATE, source),
@@ -108,6 +115,8 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_COMMANDS, sessionId),
   compactSession: (sessionId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_COMPACT, sessionId),
+  setMachineSkills: (enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PI_SET_MACHINE_SKILLS, enabled),
   getModelConfig: () => ipcRenderer.invoke(IPC_CHANNELS.PI_GET_MODEL_CONFIG),
   setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) =>
     ipcRenderer.invoke(IPC_CHANNELS.PI_SET_MODEL_CONFIG, patch),

@@ -69,6 +69,8 @@ export default function SettingsPage() {
   const [keyError, setKeyError] = useState('')
   const [modelSaved, setModelSaved] = useState(false)
   const [toolAccess, setToolAccessState] = useState<ToolAccess>('full')
+  const [machineSkills, setMachineSkillsState] = useState(false)
+  const [machineSkillCount, setMachineSkillCount] = useState(0)
 
   const provider = modelConfig?.defaultProvider ?? ''
   const providerConfigured = provider ? (modelConfig?.authProviders ?? []).includes(provider) : false
@@ -85,6 +87,12 @@ export default function SettingsPage() {
     window.electronAPI.listCatalogModels().then(setCatalog)
     loadModelState()
     window.electronAPI.getStore('toolAccess').then((v) => setToolAccessState(v ?? 'full'))
+    window.electronAPI.getStore('machineSkills').then((v) => {
+      const enabled = v ?? false
+      setMachineSkillsState(enabled)
+      // Idempotent re-sync doubles as the machine-skill count probe
+      window.electronAPI.setMachineSkills(enabled).then((r) => setMachineSkillCount(r.available.length))
+    })
   }, [loadModelState])
 
   const redetect = async () => {
@@ -163,6 +171,12 @@ export default function SettingsPage() {
   const changeTrust = async (value: ModelConfig['projectTrust']) => {
     await window.electronAPI.setModelConfig({ projectTrust: value })
     loadModelState()
+  }
+
+  const changeMachineSkills = async (enabled: boolean) => {
+    setMachineSkillsState(enabled)
+    const r = await window.electronAPI.setMachineSkills(enabled)
+    setMachineSkillCount(r.available.length)
   }
 
   const seg = (active: boolean) =>
@@ -352,6 +366,24 @@ export default function SettingsPage() {
               </div>
             </Row>
             <Note>{t('settings.trustNote')}</Note>
+          </Section>
+
+          <Section title={t('settings.skills')}>
+            <Row label={t('settings.machineSkills')}>
+              <div className="flex rounded-lg border border-line bg-overlay p-0.5">
+                <button onClick={() => changeMachineSkills(true)} className={seg(machineSkills)}>
+                  {t('settings.on')}
+                </button>
+                <button onClick={() => changeMachineSkills(false)} className={seg(!machineSkills)}>
+                  {t('settings.off')}
+                </button>
+              </div>
+            </Row>
+            <Note>
+              {machineSkillCount > 0
+                ? t('settings.machineSkillsNoteCount', { count: machineSkillCount })
+                : t('settings.machineSkillsNote')}
+            </Note>
           </Section>
 
           <Section title={t('settings.appearance')}>

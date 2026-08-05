@@ -44,6 +44,8 @@ interface AppState {
   compacting: Record<string, boolean>
   /** sessionId -> latest known token/context usage */
   stats: Record<string, SessionStats>
+  /** One-shot composer prefill (e.g. "build your own plugin" from the packages page). */
+  composerPrefill: string | null
   setTheme: (theme: 'dark' | 'light') => void
   setLanguage: (language: Language) => void
   setCurrentProject: (path: string | null) => void
@@ -63,6 +65,7 @@ interface AppState {
   setBusy: (sessionId: string, busy: boolean) => void
   setCompacting: (sessionId: string, compacting: boolean) => void
   setStats: (sessionId: string, stats: SessionStats) => void
+  setComposerPrefill: (text: string | null) => void
   setSetupComplete: (complete: boolean) => void
   setInstallStatus: (status: InstallStatus) => void
   /** (Re)load model config + available models from the main process. */
@@ -93,6 +96,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   busy: {},
   compacting: {},
   stats: {},
+  composerPrefill: null,
 
   setTheme: (theme) => {
     set({ theme })
@@ -161,6 +165,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ compacting: { ...state.compacting, [sessionId]: compacting } })),
   setStats: (sessionId, stats) =>
     set((state) => ({ stats: { ...state.stats, [sessionId]: stats } })),
+  setComposerPrefill: (composerPrefill) => set({ composerPrefill }),
   setSetupComplete: (setupComplete) => {
     set({ setupComplete })
     window.electronAPI.setStore('setupComplete', setupComplete)

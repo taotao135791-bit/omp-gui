@@ -31,10 +31,11 @@ import {
   setPackageEnabled,
   defaultPiAgentDir
 } from './packages'
-import { getModelConfig, setModelConfig, setApiKey, clearApiKey } from './piSettings'
+import { getModelConfig, setModelConfig, setApiKey, clearApiKey, syncMachineSkills, listMachineSkillNames } from './piSettings'
 import { listAvailableModels, listCatalogModels, invalidateModelCache } from './piModels'
 import { getStore, setStore } from './store'
 import { installOmp } from './installer'
+import { searchCommunityPackages } from './community'
 import { FsGuard } from './fsGuard'
 
 const fsGuard = new FsGuard()
@@ -119,6 +120,13 @@ export function registerIpc() {
     }
   )
 
+  ipcMain.handle(
+    IPC_CHANNELS.PACKAGES_SEARCH,
+    async (_event: IpcMainInvokeEvent, query: unknown, curatedOnly: unknown) => {
+      return searchCommunityPackages(typeof query === 'string' ? query : '', curatedOnly === true)
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.PI_LIST_MODELS, async () => {
     return listAvailableModels()
   })
@@ -144,6 +152,16 @@ export function registerIpc() {
     async (_event: IpcMainInvokeEvent, sessionId: string) => {
       if (typeof sessionId !== 'string' || !sessionId) return false
       return compactSession(sessionId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PI_SET_MACHINE_SKILLS,
+    async (_event: IpcMainInvokeEvent, enabled: boolean) => {
+      const on = enabled === true
+      setStore('machineSkills', on)
+      const excluded = syncMachineSkills(on)
+      return { enabled: on, excluded, available: listMachineSkillNames() }
     }
   )
 

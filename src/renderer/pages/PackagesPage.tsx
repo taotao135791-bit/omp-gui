@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Puzzle,
   Plus,
@@ -13,11 +14,15 @@ import {
   Wrench,
   Info,
   GripVertical,
-  PackageOpen
+  PackageOpen,
+  Search,
+  Hammer,
+  Check
 } from 'lucide-react'
-import { PackageInfo, PackageResource } from '@shared/types'
+import { CommunityPackageInfo, PackageInfo, PackageResource } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
+import { createSessionForCurrentProject } from '../lib/session'
 import Logo from '../components/Logo'
 
 type PendingAction =
@@ -374,6 +379,9 @@ export default function PackagesPage() {
               </div>
             )}
           </section>
+
+          {/* Discover — curated picks, community search, build-your-own */}
+          <DiscoverSection packages={packages} pending={pending} onInstall={handleInstall} />
         </div>
       </div>
 
@@ -520,6 +528,203 @@ function PartCard({
             <Trash2 size={13} />
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Discover — curated pi packages, live npm community search, and the
+ * build-your-own entry that jumps into a chat with a scaffold prompt.
+ */
+function DiscoverSection({
+  packages,
+  pending,
+  onInstall
+}: {
+  packages: PackageInfo[]
+  pending: PendingAction
+  onInstall: (source: string) => void
+}) {
+  const t = useT()
+  const navigate = useNavigate()
+  const [curated, setCurated] = useState<CommunityPackageInfo[] | null>(null)
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<CommunityPackageInfo[] | null>(null)
+  const [searching, setSearching] = useState(false)
+
+  const isInstalled = (name: string) =>
+    packages.some((p) => {
+      if (p.kind !== 'npm') return false
+      const spec = p.source.replace(/^npm:/, '')
+      return spec === name || spec.startsWith(`${name}@`)
+    })
+
+  useEffect(() => {
+    let alive = true
+    window.electronAPI
+      .searchPackages('', true)
+      .then((list) => {
+        if (alive) setCurated(list)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  // Debounced community search against the npm registry
+  useEffect(() => {
+    const q = query.trim()
+    if (!q) {
+      setResults(null)
+      setSearching(false)
+      return
+    }
+    setSearching(true)
+    const timer = setTimeout(() => {
+      window.electronAPI.searchPackages(q).then((list) => {
+        setResults(list)
+        setSearching(false)
+      })
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  const handleBuildOwn = async () => {
+    const id = await createSessionForCurrentProject()
+    if (!id) return
+    useAppStore.getState().setComposerPrefill(t('plugins.buildOwnPrompt'))
+    navigate('/')
+  }
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center gap-2 px-1">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-cream-faint">
+          {t('plugins.discover')}
+        </span>
+      </div>
+
+      {/* Curated picks */}
+      {curated !== null &&
+        (curated.length === 0 ? (
+          <div className="rounded-lg border border-line bg-ink-850 px-4 py-3 text-xs text-cream-faint">
+            {t('plugins.curatedEmpty')}
+          </div>
+        ) : (
+          <div>
+            <div className="mb-2 px-1 text-[11px] font-medium text-cream-faint">
+              {t('plugins.curated')}
+            </div>
+            <div className="grid grid-cols-2 gap-2.5">
+              {curated.map((pkg) => (
+                <CommunityPackageCard
+                  key={pkg.name}
+                  pkg={pkg}
+                  installed={isInstalled(pkg.name)}
+                  disabled={pending !== null}
+                  onInstall={() => onInstall(`npm:${pkg.name}`)}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+
+      {/* Community search */}
+      <div className="rounded-lg border border-line bg-ink-850 p-4">
+        <div className="mb-2.5 text-[11px] font-medium uppercase tracking-wider text-cream-faint">
+          {t('plugins.community')}
+        </div>
+        <div className="relative">
+          <Search
+            size={12}
+            className="absolute top-1/2 left-3 -translate-y-1/2 text-cream-faint"
+          />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('plugins.communityPlaceholder')}
+            className="w-full rounded-md border border-line bg-ink-900 py-2 pr-3 pl-8 text-xs text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/40"
+          />
+        </div>
+        {searching && <div className="mt-3 text-xs text-cream-faint">{t('plugins.searching')}</div>}
+        {!searching && results !== null && results.length === 0 && (
+          <div className="mt-3 text-xs text-cream-faint">{t('plugins.noResults')}</div>
+        )}
+        {!searching && results !== null && results.length > 0 && (
+          <div className="mt-3 grid gap-2.5">
+            {results.map((pkg) => (
+              <CommunityPackageCard
+                key={pkg.name}
+                pkg={pkg}
+                installed={isInstalled(pkg.name)}
+                disabled={pending !== null}
+                onInstall={() => onInstall(`npm:${pkg.name}`)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Build your own */}
+      <button
+        onClick={handleBuildOwn}
+        className="flex w-full items-center gap-3 rounded-xl border border-dashed border-line px-4 py-3.5 text-left transition hover:border-accent/50 hover:bg-accent/5"
+      >
+        <Hammer size={15} className="shrink-0 text-accent" />
+        <div className="min-w-0">
+          <div className="text-[13px] font-medium text-cream">{t('plugins.buildOwn')}</div>
+          <div className="mt-0.5 text-xs text-cream-dim">{t('plugins.buildOwnHint')}</div>
+        </div>
+      </button>
+    </section>
+  )
+}
+
+function CommunityPackageCard({
+  pkg,
+  installed,
+  disabled,
+  onInstall
+}: {
+  pkg: CommunityPackageInfo
+  installed: boolean
+  disabled: boolean
+  onInstall: () => void
+}) {
+  const t = useT()
+  return (
+    <div className="flex flex-col rounded-lg border border-line bg-ink-850 p-3.5">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-cream">
+          {pkg.name}
+        </span>
+        {pkg.version && (
+          <span className="rounded-full bg-overlay-strong px-1.5 py-0.5 font-mono text-[10px] text-cream-dim">
+            {pkg.version}
+          </span>
+        )}
+      </div>
+      {pkg.description && (
+        <div className="mt-1 line-clamp-2 text-xs leading-5 text-cream-dim">{pkg.description}</div>
+      )}
+      <div className="mt-2.5 flex justify-end">
+        {installed ? (
+          <span className="flex items-center gap-1 rounded-md bg-accent/15 px-2 py-1 text-[10.5px] font-medium text-accent">
+            <Check size={10} />
+            {t('plugins.installed')}
+          </span>
+        ) : (
+          <button
+            onClick={onInstall}
+            disabled={disabled}
+            className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[10.5px] text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+          >
+            <Plus size={10} />
+            {t('plugins.install')}
+          </button>
+        )}
       </div>
     </div>
   )

@@ -1,6 +1,7 @@
-import { useState, useRef, useMemo, KeyboardEvent } from 'react'
+import { useState, useRef, useMemo, useEffect, KeyboardEvent } from 'react'
 import { ArrowUp, Square, Paperclip, Image, Zap } from 'lucide-react'
 import { SlashCommand } from '@shared/types'
+import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import ModelPicker from './ModelPicker'
 
@@ -30,6 +31,23 @@ export default function Composer({
   const [menuDismissed, setMenuDismissed] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const t = useT()
+  const composerPrefill = useAppStore((s) => s.composerPrefill)
+  const setComposerPrefill = useAppStore((s) => s.setComposerPrefill)
+
+  // One-shot prefill requested by another page (e.g. "build your own plugin")
+  useEffect(() => {
+    if (composerPrefill == null) return
+    setText(composerPrefill)
+    setComposerPrefill(null)
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(el.value.length, el.value.length)
+      el.style.height = 'auto'
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+    })
+  }, [composerPrefill, setComposerPrefill])
 
   // Slash menu is active while the whole input is a single "/partial" token
   const slashQuery = /^\/(\S*)$/.test(text) && !menuDismissed ? text.slice(1).toLowerCase() : null

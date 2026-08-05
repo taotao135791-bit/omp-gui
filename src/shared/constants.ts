@@ -14,6 +14,7 @@ export const IPC_CHANNELS = {
   FS_READ_FILE: 'fs:read-file',
   FS_SET_ROOT: 'fs:set-root',
   PACKAGES_LIST: 'packages:list',
+  PACKAGES_SEARCH: 'packages:search',
   PACKAGES_INSTALL: 'packages:install',
   PACKAGES_REMOVE: 'packages:remove',
   PACKAGES_UPDATE: 'packages:update',
@@ -34,6 +35,7 @@ export const IPC_CHANNELS = {
   PI_CLEAR_API_KEY: 'pi:clear-api-key',
   PI_LIST_MODELS: 'pi:list-models',
   PI_LIST_CATALOG_MODELS: 'pi:list-catalog-models',
+  PI_SET_MACHINE_SKILLS: 'pi:set-machine-skills',
   APP_VERSION: 'app:version'
 } as const
 
