@@ -5,6 +5,7 @@ import { useT, I18nKey } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
 import MessageList from './MessageList'
 import Composer from './Composer'
+import ExtensionUiDialog from './ExtensionUiDialog'
 
 interface Suggestion {
   icon: typeof Compass
@@ -29,6 +30,7 @@ export default function ChatPanel() {
     packages,
     cliAvailable,
     busy,
+    uiRequests,
     setCurrentProject
   } = useAppStore()
   const t = useT()
@@ -36,6 +38,7 @@ export default function ChatPanel() {
   const currentSession = sessions.find((s) => s.id === currentSessionId)
   const sessionMessages = currentSessionId ? messages[currentSessionId] || [] : []
   const isBusy = currentSessionId ? Boolean(busy[currentSessionId]) : false
+  const pendingUi = currentSessionId ? (uiRequests[currentSessionId] || [])[0] : undefined
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -76,7 +79,7 @@ export default function ChatPanel() {
     isBusy && sessionMessages.length > 0 && sessionMessages[sessionMessages.length - 1].role === 'user'
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       {/* status bar, doubles as window drag region */}
       <header className="app-drag flex h-12 shrink-0 items-center gap-2.5 border-b border-line px-4 text-xs">
         <span className="brand-mark flex h-[18px] w-[18px] items-center justify-center rounded text-[10px] font-bold">
@@ -169,6 +172,10 @@ export default function ChatPanel() {
         busy={isBusy}
         disabled={cliAvailable === false}
       />
+
+      {pendingUi && currentSessionId && (
+        <ExtensionUiDialog sessionId={currentSessionId} request={pendingUi} />
+      )}
     </div>
   )
 }

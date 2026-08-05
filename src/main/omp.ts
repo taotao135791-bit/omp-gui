@@ -2,9 +2,9 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { CliInfo, Session, SessionEvent } from '../shared/types'
+import { CliInfo, ExtensionUiAnswer, Session, SessionEvent, ToolAccess } from '../shared/types'
 import { getStore, setStore } from './store'
-import { parseRpcLine, drainLines, extensionUiCancel } from './protocol'
+import { parseRpcLine, drainLines, extensionUiResponse } from './protocol'
 
 const sessions = new Map<string, { process: ChildProcess; session: Session }>()
 
@@ -92,6 +92,14 @@ export function createSession(
   // pi loads installed packages (settings.json) and auto-discovered extension
   // dirs itself on startup; the GUI manages them through the Packages page.
   const args = ['--mode', 'rpc']
+  const toolAccess: ToolAccess = getStore('toolAccess')
+  // pi has no built-in tool approval; coarse-grained gating goes through
+  // --exclude-tools. 'full' leaves all seven built-in tools enabled.
+  if (toolAccess === 'no-bash') {
+    args.push('--exclude-tools', 'bash')
+  } else if (toolAccess === 'readonly') {
+    args.push('--exclude-tools', 'bash,edit,write')
+  }
   const proc = spawn(cli.path ?? cli.command, args, {
     cwd,
     env: {
@@ -125,9 +133,20 @@ export function createSession(
           onEvent({ type: 'status', sessionId: id, status: 'idle' })
         }
       } else if (result.kind === 'extension_ui') {
-        // Interactive extension dialogs can't be answered from the GUI yet —
-        // cancel them so the agent doesn't hang waiting for a response.
-        proc.stdin?.write(extensionUiCancel(result.id))
+        // Forward interactive extension dialogs to the renderer; the answer
+        // comes back through respondExtensionUi().
+        onEvent({
+          type: 'ui_request',
+          sessionId: id,
+          id: result.id,
+          method: result.method,
+          title: result.title,
+          message: result.message,
+          options: result.options,
+          placeholder: result.placeholder,
+          prefill: result.prefill,
+          timeout: result.timeout
+        })
       }
     }
   })
@@ -197,5 +216,17 @@ export function abortSession(sessionId: string): boolean {
   if (!entry) return false
   const payload = JSON.stringify({ id: crypto.randomUUID(), type: 'abort' }) + '\n'
   entry.process.stdin?.write(payload)
+  return true
+}
+
+/** Answer (or cancel) a pending extension UI dialog for a session. */
+export function respondExtensionUi(
+  sessionId: string,
+  requestId: string,
+  answer: ExtensionUiAnswer
+): boolean {
+  const entry = sessions.get(sessionId)
+  if (!entry) return false
+  entry.process.stdin?.write(extensionUiResponse(requestId, answer))
   return true
 }

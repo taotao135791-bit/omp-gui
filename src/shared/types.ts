@@ -21,7 +21,65 @@ export type SessionEvent =
   | { type: 'tool_result'; sessionId: string; tool: string; output: unknown; isError: boolean }
   | { type: 'status'; sessionId: string; status: 'working' | 'idle' }
   | { type: 'error'; sessionId: string; message: string }
+  | {
+      type: 'ui_request'
+      sessionId: string
+      id: string
+      method: 'select' | 'confirm' | 'input' | 'editor'
+      title: string
+      message?: string
+      options?: string[]
+      placeholder?: string
+      prefill?: string
+      timeout?: number
+    }
   | { type: 'closed'; sessionId: string }
+
+/** Answer to an extension UI dialog, sent back over the session's stdin. */
+export type ExtensionUiAnswer = { cancelled: true } | { value: string } | { confirmed: boolean }
+
+/** pi model/agent configuration, persisted in pi's own settings.json. */
+export interface ModelConfig {
+  defaultProvider: string
+  defaultModel: string
+  defaultThinkingLevel: '' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  projectTrust: 'ask' | 'always' | 'never'
+  /** Providers with stored credentials in auth.json (ids only, never secrets). */
+  authProviders: string[]
+}
+
+/** API-key providers pi supports (providers.md), shown in Settings. */
+export const PI_PROVIDERS: { id: string; label: string }[] = [
+  { id: 'anthropic', label: 'Anthropic' },
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'google', label: 'Google Gemini' },
+  { id: 'deepseek', label: 'DeepSeek' },
+  { id: 'kimi-coding', label: 'Kimi For Coding' },
+  { id: 'minimax', label: 'MiniMax' },
+  { id: 'minimax-cn', label: 'MiniMax (China)' },
+  { id: 'zai', label: 'ZAI Coding Plan' },
+  { id: 'zai-coding-cn', label: 'ZAI Coding (China)' },
+  { id: 'openrouter', label: 'OpenRouter' },
+  { id: 'xai', label: 'xAI' },
+  { id: 'groq', label: 'Groq' },
+  { id: 'mistral', label: 'Mistral' },
+  { id: 'cerebras', label: 'Cerebras' },
+  { id: 'nvidia', label: 'NVIDIA NIM' },
+  { id: 'together', label: 'Together AI' },
+  { id: 'fireworks', label: 'Fireworks' },
+  { id: 'huggingface', label: 'Hugging Face' },
+  { id: 'vercel-ai-gateway', label: 'Vercel AI Gateway' },
+  { id: 'azure-openai-responses', label: 'Azure OpenAI' },
+  { id: 'opencode', label: 'OpenCode Zen' },
+  { id: 'opencode-go', label: 'OpenCode Go' },
+  { id: 'ant-ling', label: 'Ant Ling' },
+  { id: 'xiaomi', label: 'Xiaomi MiMo' },
+  { id: 'cloudflare-ai-gateway', label: 'Cloudflare AI Gateway' },
+  { id: 'cloudflare-workers-ai', label: 'Cloudflare Workers AI' }
+]
+
+/** How much the agent may do in a session; maps to --exclude-tools. */
+export type ToolAccess = 'full' | 'no-bash' | 'readonly'
 
 /** pi package source flavor, derived from the source string in settings.json */
 export type PackageSourceKind = 'npm' | 'git' | 'local'
@@ -60,6 +118,7 @@ export interface AppSettings {
   windowHeight: number
   recentProjects: string[]
   setupComplete: boolean
+  toolAccess: ToolAccess
 }
 
 export type InstallStatus =
@@ -79,5 +138,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   windowWidth: 1280,
   windowHeight: 800,
   recentProjects: [],
-  setupComplete: false
+  setupComplete: false,
+  toolAccess: 'full'
 }

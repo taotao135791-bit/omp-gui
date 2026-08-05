@@ -8,7 +8,9 @@ import {
   PackageActionResult,
   AppSettings,
   InstallStatus,
-  ReadFileResult
+  ReadFileResult,
+  ExtensionUiAnswer,
+  ModelConfig
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -34,6 +36,12 @@ export interface ElectronAPI {
   selectFolder: () => Promise<string | null>
   selectFile: () => Promise<string | null>
   showCliSettings: () => Promise<boolean>
+  respondUi: (sessionId: string, requestId: string, answer: ExtensionUiAnswer) => Promise<boolean>
+  getModelConfig: () => Promise<ModelConfig>
+  setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) => Promise<PackageActionResult>
+  setApiKey: (provider: string, key: string) => Promise<PackageActionResult>
+  clearApiKey: (provider: string) => Promise<PackageActionResult>
+  getAppVersion: () => Promise<string>
   /** Real filesystem path for a File dropped from Finder (contextIsolation-safe). */
   getPathForFile: (file: File) => string
 }
@@ -77,6 +85,15 @@ const api: ElectronAPI = {
   selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FOLDER),
   selectFile: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FILE),
   showCliSettings: () => ipcRenderer.invoke(IPC_CHANNELS.SHELL_SHOW_CLI_SETTINGS),
+  respondUi: (sessionId: string, requestId: string, answer: ExtensionUiAnswer) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_RESPOND_UI, sessionId, requestId, answer),
+  getModelConfig: () => ipcRenderer.invoke(IPC_CHANNELS.PI_GET_MODEL_CONFIG),
+  setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PI_SET_MODEL_CONFIG, patch),
+  setApiKey: (provider: string, key: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PI_SET_API_KEY, provider, key),
+  clearApiKey: (provider: string) => ipcRenderer.invoke(IPC_CHANNELS.PI_CLEAR_API_KEY, provider),
+  getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_VERSION),
   getPathForFile: (file: File) => webUtils.getPathForFile(file)
 }
 

@@ -22,7 +22,13 @@ export const IPC_CHANNELS = {
   STORE_SET: 'store:set',
   DIALOG_SELECT_FOLDER: 'dialog:select-folder',
   DIALOG_SELECT_FILE: 'dialog:select-file',
-  SHELL_SHOW_CLI_SETTINGS: 'shell:show-cli-settings'
+  SHELL_SHOW_CLI_SETTINGS: 'shell:show-cli-settings',
+  OMP_RESPOND_UI: 'omp:respond-ui',
+  PI_GET_MODEL_CONFIG: 'pi:get-model-config',
+  PI_SET_MODEL_CONFIG: 'pi:set-model-config',
+  PI_SET_API_KEY: 'pi:set-api-key',
+  PI_CLEAR_API_KEY: 'pi:clear-api-key',
+  APP_VERSION: 'app:version'
 } as const
 
 export const OMP_GLOBAL_DIR = '.omp'

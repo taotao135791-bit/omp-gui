@@ -1,6 +1,7 @@
 {
   "appId": "sh.omp.gui",
   "productName": "OMP GUI",
+  "artifactName": "OMP-GUI-${version}-${arch}.${ext}",
   "electronDist": "node_modules/electron/dist",
   "directories": {
     "output": "release"

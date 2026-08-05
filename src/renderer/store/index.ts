@@ -13,6 +13,9 @@ export interface MessageLike {
   }
 }
 
+/** A pending interactive extension dialog, keyed by session. */
+export type UiRequest = Extract<SessionEvent, { type: 'ui_request' }>
+
 interface AppState {
   theme: 'dark' | 'light'
   language: Language
@@ -20,6 +23,8 @@ interface AppState {
   sessions: Session[]
   currentSessionId: string | null
   messages: Record<string, MessageLike[]>
+  /** sessionId -> pending extension UI dialogs (FIFO) */
+  uiRequests: Record<string, UiRequest[]>
   packages: PackageInfo[]
   rightPanelOpen: boolean
   activeRightTab: 'files' | 'preview'
@@ -39,6 +44,7 @@ interface AppState {
   setCurrentSessionId: (id: string | null) => void
   addMessage: (sessionId: string, message: MessageLike) => void
   appendMessageContent: (sessionId: string, content: string) => void
+  resolveUiRequest: (sessionId: string, requestId: string) => void
   setPackages: (packages: PackageInfo[]) => void
   updatePackageEnabled: (source: string, enabled: boolean) => void
   setRightPanelOpen: (open: boolean) => void
@@ -59,6 +65,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessions: [],
   currentSessionId: null,
   messages: {},
+  uiRequests: {},
   packages: [],
   rightPanelOpen: false,
   activeRightTab: 'files',
@@ -114,6 +121,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     updated[updated.length - 1] = { ...last, content: last.content + content }
     return { messages: { ...state.messages, [sessionId]: updated } }
   }),
+  resolveUiRequest: (sessionId, requestId) =>
+    set((state) => ({
+      uiRequests: {
+        ...state.uiRequests,
+        [sessionId]: (state.uiRequests[sessionId] || []).filter((r) => r.id !== requestId)
+      }
+    })),
   setPackages: (packages) => set({ packages }),
   updatePackageEnabled: (source, enabled) => set((state) => ({
     packages: state.packages.map((p) => (p.source === source ? { ...p, enabled } : p))
@@ -178,14 +192,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     } else if (event.type === 'status') {
       set((state) => ({ busy: { ...state.busy, [event.sessionId]: event.status === 'working' } }))
+    } else if (event.type === 'ui_request') {
+      set((state) => ({
+        uiRequests: {
+          ...state.uiRequests,
+          [event.sessionId]: [...(state.uiRequests[event.sessionId] || []), event]
+        }
+      }))
     } else if (event.type === 'error') {
       get().addMessage(event.sessionId, {
         id: crypto.randomUUID(),
         role: 'system',
         content: `Error: ${event.message}`
       })
+      // A dead session can't answer dialogs — drop them
+      set((state) => ({ uiRequests: { ...state.uiRequests, [event.sessionId]: [] } }))
     } else if (event.type === 'closed') {
-      set((state) => ({ busy: { ...state.busy, [event.sessionId]: false } }))
+      set((state) => ({
+        busy: { ...state.busy, [event.sessionId]: false },
+        uiRequests: { ...state.uiRequests, [event.sessionId]: [] }
+      }))
     }
   }
 }))

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseRpcLine, drainLines, extensionUiCancel } from '../protocol'
+import { parseRpcLine, drainLines, extensionUiCancel, extensionUiResponse } from '../protocol'
 
 describe('parseRpcLine', () => {
   it('maps failed responses to error events', () => {
@@ -86,14 +86,60 @@ describe('parseRpcLine', () => {
     })
   })
 
-  it('flags interactive extension requests for cancellation', () => {
+  it('flags interactive extension requests with their full payload', () => {
     const line = JSON.stringify({
       type: 'extension_ui_request',
       id: 'x2',
       method: 'confirm',
-      title: 'Proceed?'
+      title: 'Proceed?',
+      message: 'Run rm -rf build?'
     })
-    expect(parseRpcLine(line, 's1')).toEqual({ kind: 'extension_ui', id: 'x2', method: 'confirm' })
+    expect(parseRpcLine(line, 's1')).toEqual({
+      kind: 'extension_ui',
+      id: 'x2',
+      method: 'confirm',
+      title: 'Proceed?',
+      message: 'Run rm -rf build?'
+    })
+  })
+
+  it('carries select options and input placeholders', () => {
+    const select = JSON.stringify({
+      type: 'extension_ui_request',
+      id: 'x3',
+      method: 'select',
+      title: 'Pick one',
+      options: ['a', 'b']
+    })
+    expect(parseRpcLine(select, 's1')).toEqual({
+      kind: 'extension_ui',
+      id: 'x3',
+      method: 'select',
+      title: 'Pick one',
+      options: ['a', 'b']
+    })
+
+    const input = JSON.stringify({
+      type: 'extension_ui_request',
+      id: 'x4',
+      method: 'input',
+      title: 'Name?',
+      placeholder: 'type here'
+    })
+    expect(parseRpcLine(input, 's1')).toEqual({
+      kind: 'extension_ui',
+      id: 'x4',
+      method: 'input',
+      title: 'Name?',
+      placeholder: 'type here'
+    })
+  })
+
+  it('ignores fire-and-forget extension UI methods', () => {
+    for (const method of ['setStatus', 'setWidget', 'setTitle', 'set_editor_text']) {
+      const line = JSON.stringify({ type: 'extension_ui_request', id: 'x9', method })
+      expect(parseRpcLine(line, 's1')).toEqual({ kind: 'none' })
+    }
   })
 
   it('maps agent lifecycle events to working status', () => {
@@ -125,6 +171,20 @@ describe('extensionUiCancel', () => {
   it('builds a cancel response line', () => {
     expect(extensionUiCancel('abc')).toBe(
       '{"type":"extension_ui_response","id":"abc","cancelled":true}\n'
+    )
+  })
+})
+
+describe('extensionUiResponse', () => {
+  it('builds value, confirmed and cancelled response lines', () => {
+    expect(extensionUiResponse('a', { value: 'yes' })).toBe(
+      '{"type":"extension_ui_response","id":"a","value":"yes"}\n'
+    )
+    expect(extensionUiResponse('b', { confirmed: false })).toBe(
+      '{"type":"extension_ui_response","id":"b","confirmed":false}\n'
+    )
+    expect(extensionUiResponse('c', { cancelled: true })).toBe(
+      '{"type":"extension_ui_response","id":"c","cancelled":true}\n'
     )
   })
 })

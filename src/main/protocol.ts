@@ -1,21 +1,38 @@
-import { SessionEvent } from '../shared/types'
+import { ExtensionUiAnswer, SessionEvent } from '../shared/types'
 
 /**
  * Parser for pi/omp `--mode rpc` JSONL output.
  *
- * Protocol (verified against pi-coding-agent dist/modes/rpc):
+ * Protocol (verified against pi-coding-agent dist/modes/rpc/rpc-types.d.ts):
  * - Commands (stdin):   { id?, type: 'prompt', message: string, images? }
  * - Responses (stdout): { type: 'response', command, success, data | error }
  * - Events (stdout):    AgentSessionEvent objects streamed as they occur
  * - Extension UI:       { type: 'extension_ui_request', id, method, ... }
+ *   - select:  title, options[], timeout?
+ *   - confirm: title, message, timeout?
+ *   - input:   title, placeholder?, timeout?
+ *   - editor:  title, prefill?
+ *   - notify / setStatus / setWidget / setTitle / set_editor_text: no response
  *
  * Pure functions so they can be unit-tested without Electron.
  */
 
+export type ExtensionUiMethod = 'select' | 'confirm' | 'input' | 'editor'
+
 export type RpcParseResult =
   | { kind: 'event'; event: SessionEvent }
   /** Interactive extension UI request — the host should answer or cancel it */
-  | { kind: 'extension_ui'; id: string; method: string }
+  | {
+      kind: 'extension_ui'
+      id: string
+      method: ExtensionUiMethod
+      title: string
+      message?: string
+      options?: string[]
+      placeholder?: string
+      prefill?: string
+      timeout?: number
+    }
   /** Line consumed, nothing to surface */
   | { kind: 'none' }
 
@@ -93,8 +110,29 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
           }
         }
       }
-      // Interactive requests (select/confirm/input/editor) need a response
-      return { kind: 'extension_ui', id: String(payload.id ?? ''), method }
+      if (
+        method === 'select' ||
+        method === 'confirm' ||
+        method === 'input' ||
+        method === 'editor'
+      ) {
+        // Interactive requests need a response from the user
+        return {
+          kind: 'extension_ui',
+          id: String(payload.id ?? ''),
+          method,
+          title: String(payload.title ?? ''),
+          message: typeof payload.message === 'string' ? payload.message : undefined,
+          options: Array.isArray(payload.options)
+            ? payload.options.map((o) => String(o))
+            : undefined,
+          placeholder: typeof payload.placeholder === 'string' ? payload.placeholder : undefined,
+          prefill: typeof payload.prefill === 'string' ? payload.prefill : undefined,
+          timeout: typeof payload.timeout === 'number' ? payload.timeout : undefined
+        }
+      }
+      // setStatus / setWidget / setTitle / set_editor_text — fire and forget
+      return { kind: 'none' }
     }
 
     case 'extension_error':
@@ -128,6 +166,11 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
 /** Build a cancel response for an interactive extension UI request. */
 export function extensionUiCancel(id: string): string {
   return JSON.stringify({ type: 'extension_ui_response', id, cancelled: true }) + '\n'
+}
+
+/** Build the response line for an answered extension UI request. */
+export function extensionUiResponse(id: string, answer: ExtensionUiAnswer): string {
+  return JSON.stringify({ type: 'extension_ui_response', id, ...answer }) + '\n'
 }
 
 /**

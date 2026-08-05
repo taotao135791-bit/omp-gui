@@ -1,7 +1,14 @@
-import { ipcMain, dialog, shell, BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import { ipcMain, dialog, shell, app, BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import path from 'node:path'
 import { IPC_CHANNELS } from '../shared/constants'
-import { SessionEvent, AppSettings, InstallStatus, ReadFileResult } from '../shared/types'
+import {
+  SessionEvent,
+  AppSettings,
+  InstallStatus,
+  ReadFileResult,
+  ExtensionUiAnswer,
+  ModelConfig
+} from '../shared/types'
 import {
   detectCli,
   invalidateCliCache,
@@ -9,7 +16,8 @@ import {
   sendMessage,
   killSession,
   abortSession,
-  listSessions
+  listSessions,
+  respondExtensionUi
 } from './omp'
 import {
   listPackages,
@@ -19,6 +27,7 @@ import {
   setPackageEnabled,
   defaultPiAgentDir
 } from './packages'
+import { getModelConfig, setModelConfig, setApiKey, clearApiKey } from './piSettings'
 import { getStore, setStore } from './store'
 import { installOmp } from './installer'
 import { FsGuard } from './fsGuard'
@@ -79,6 +88,48 @@ export function registerIpc() {
       return abortSession(sessionId)
     }
   )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_RESPOND_UI,
+    async (_event: IpcMainInvokeEvent, sessionId: string, requestId: string, answer: ExtensionUiAnswer) => {
+      if (typeof requestId !== 'string' || !requestId) return false
+      if (
+        typeof answer !== 'object' ||
+        answer === null ||
+        !('cancelled' in answer || 'value' in answer || 'confirmed' in answer)
+      ) {
+        return false
+      }
+      return respondExtensionUi(sessionId, requestId, answer)
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.PI_GET_MODEL_CONFIG, async () => {
+    return getModelConfig()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.PI_SET_MODEL_CONFIG,
+    async (_event, patch: Partial<Omit<ModelConfig, 'authProviders'>>) => {
+      if (typeof patch !== 'object' || patch === null) {
+        return { ok: false, log: 'invalid model config' }
+      }
+      return setModelConfig(patch)
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.PI_SET_API_KEY, async (_event, provider: string, key: string) => {
+    if (typeof key !== 'string') return { ok: false, log: 'invalid api key' }
+    return setApiKey(String(provider ?? ''), key)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PI_CLEAR_API_KEY, async (_event, provider: string) => {
+    return clearApiKey(String(provider ?? ''))
+  })
+
+  ipcMain.handle(IPC_CHANNELS.APP_VERSION, async () => {
+    return app.getVersion()
+  })
 
   ipcMain.handle(IPC_CHANNELS.OMP_INSTALL, async (event: IpcMainInvokeEvent) => {
     const sender = event.sender

@@ -3,9 +3,7 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
-  renameSync,
-  statSync,
-  writeFileSync
+  statSync
 } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -16,6 +14,9 @@ import {
   PackageSourceKind
 } from '../shared/types'
 import { detectCli, executableSearchDirs } from './omp'
+import { defaultPiAgentDir, readPiSettings, writePiSettings, PiSettings } from './piSettings'
+
+export { defaultPiAgentDir } from './piSettings'
 
 /**
  * pi package management, backed by the CLI's native mechanisms:
@@ -25,15 +26,6 @@ import { detectCli, executableSearchDirs } from './omp'
  *   and the object form with all resource arrays empty (load nothing) — the
  *   documented settings filter format, applied by pi on the next launch.
  */
-
-export function defaultPiAgentDir(cliCommand: string = detectCli().command): string {
-  const dir = cliCommand === 'omp' ? '.omp' : '.pi'
-  return path.join(homedir(), dir, 'agent')
-}
-
-function settingsPath(piAgentDir: string): string {
-  return path.join(piAgentDir, 'settings.json')
-}
 
 // ---------------------------------------------------------------------------
 // Source classification (pure)
@@ -72,26 +64,6 @@ export function isPinned(source: string, kind: PackageSourceKind): boolean {
 // ---------------------------------------------------------------------------
 
 type PackageEntry = string | { source?: string; [key: string]: unknown }
-
-interface PiSettings {
-  packages?: PackageEntry[]
-  [key: string]: unknown
-}
-
-function readSettings(piAgentDir: string): PiSettings {
-  try {
-    return JSON.parse(readFileSync(settingsPath(piAgentDir), 'utf-8')) as PiSettings
-  } catch {
-    return {}
-  }
-}
-
-function writeSettings(piAgentDir: string, settings: PiSettings): void {
-  const target = settingsPath(piAgentDir)
-  const tmp = `${target}.tmp-${process.pid}`
-  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf-8')
-  renameSync(tmp, target)
-}
 
 function entrySource(entry: PackageEntry): string | null {
   if (typeof entry === 'string') return entry
@@ -315,7 +287,7 @@ function skillName(skillDir: string): string | null {
 export function parsePackages(settings: PiSettings, piAgentDir: string): PackageInfo[] {
   const seen = new Set<string>()
   const out: PackageInfo[] = []
-  for (const entry of settings.packages ?? []) {
+  for (const entry of (settings.packages ?? []) as PackageEntry[]) {
     const source = entrySource(entry)
     if (!source || seen.has(source)) continue
     seen.add(source)
@@ -351,7 +323,7 @@ function fallbackName(source: string, kind: PackageSourceKind): string {
 // ---------------------------------------------------------------------------
 
 export function listPackages(piAgentDir: string = defaultPiAgentDir()): PackageInfo[] {
-  return parsePackages(readSettings(piAgentDir), piAgentDir)
+  return parsePackages(readPiSettings(piAgentDir), piAgentDir)
 }
 
 export function setPackageEnabled(
@@ -359,8 +331,8 @@ export function setPackageEnabled(
   enabled: boolean,
   piAgentDir: string = defaultPiAgentDir()
 ): PackageActionResult {
-  const settings = readSettings(piAgentDir)
-  const packages = settings.packages ?? []
+  const settings = readPiSettings(piAgentDir)
+  const packages = (settings.packages ?? []) as PackageEntry[]
   const idx = packages.findIndex((entry) => entrySource(entry) === source)
   if (idx === -1) {
     return { ok: false, log: `package not found in settings: ${source}` }
@@ -370,7 +342,7 @@ export function setPackageEnabled(
     : { source, extensions: [], skills: [], prompts: [], themes: [] }
   settings.packages = packages
   try {
-    writeSettings(piAgentDir, settings)
+    writePiSettings(piAgentDir, settings)
     return { ok: true, log: '' }
   } catch (err) {
     return { ok: false, log: err instanceof Error ? err.message : String(err) }
