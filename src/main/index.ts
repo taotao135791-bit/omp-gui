@@ -3,6 +3,7 @@ import path from 'node:path'
 import { getStore, setStore } from './store'
 import { registerIpc } from './ipc'
 import { syncMachineSkills } from './piSettings'
+import { initUpdater } from './updater'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
@@ -49,6 +50,7 @@ app.whenReady().then(() => {
   // ~/.agents/skills (other agents' skills) into every session by default.
   syncMachineSkills(getStore('machineSkills'))
   createWindow()
+  initUpdater()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

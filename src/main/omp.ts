@@ -1,15 +1,20 @@
 import { spawn, ChildProcess } from 'node:child_process'
-import { accessSync, constants, existsSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { app } from 'electron'
 import {
   CliInfo,
   ExtensionUiAnswer,
+  PermissionMode,
+  PromptImage,
   Session,
   SessionEvent,
+  SessionState,
   SessionStats,
   SlashCommand,
-  ToolAccess
+  StreamingBehavior,
+  ThinkingLevel
 } from '../shared/types'
 import { getStore, setStore } from './store'
 import { parseRpcLine, drainLines, extensionUiResponse } from './protocol'
@@ -24,6 +29,10 @@ interface SessionEntry {
   session: Session
   /** In-flight RPC queries awaiting their response, keyed by request id. */
   pending: Map<string, PendingQuery>
+  /** Assistant text of the in-flight turn, accumulated from text deltas. */
+  draftText: string
+  /** Finalized assistant text of the last completed turn (for notifications). */
+  lastAssistantText: string
 }
 
 const sessions = new Map<string, SessionEntry>()
@@ -86,6 +95,73 @@ export function listSessions(): Session[] {
   return Array.from(sessions.values()).map((s) => s.session)
 }
 
+export function getSession(sessionId: string): Session | undefined {
+  return sessions.get(sessionId)?.session
+}
+
+/** Assistant text produced by the session's last completed turn ('' if none). */
+export function getLastAssistantText(sessionId: string): string {
+  return sessions.get(sessionId)?.lastAssistantText ?? ''
+}
+
+/** Path of the bundled per-tool approval extension shipped with the GUI. */
+function approvalExtensionPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'omp-approval', 'index.ts')
+    : path.join(app.getAppPath(), 'resources', 'omp-approval', 'index.ts')
+}
+
+interface ApprovalConfig {
+  mode: 'off' | 'writes' | 'all'
+  locale?: 'zh' | 'en'
+}
+
+/**
+ * Write the approval extension config for a new session. Each session gets
+ * its own file so concurrently running sessions with different modes never
+ * clobber each other; the extension re-reads it (mtime-cached) on every
+ * tool call.
+ */
+function writeApprovalConfig(sessionId: string, config: ApprovalConfig): string {
+  const file = path.join(app.getPath('userData'), `omp-approval-config-${sessionId}.json`)
+  mkdirSync(path.dirname(file), { recursive: true })
+  writeFileSync(file, JSON.stringify(config, null, 2))
+  return file
+}
+
+/**
+ * Map the permission mode to CLI flags plus an approval config:
+ * - full:      every tool enabled, approval extension inert
+ * - no-bash:   bash excluded, approval extension inert
+ * - readonly:  bash/edit/write excluded, approval extension inert
+ * - ask:       every tool enabled, extension asks before bash/edit/write
+ */
+function resolvePermissionMode(mode: PermissionMode): { excludeTools: string | null; approval: ApprovalConfig } {
+  switch (mode) {
+    case 'no-bash':
+      return { excludeTools: 'bash', approval: { mode: 'off' } }
+    case 'readonly':
+      return { excludeTools: 'bash,edit,write', approval: { mode: 'off' } }
+    case 'ask':
+      return { excludeTools: null, approval: { mode: 'writes', locale: getStore('language') } }
+    case 'full':
+    default:
+      return { excludeTools: null, approval: { mode: 'off' } }
+  }
+}
+
+/** Accumulate assistant text per turn; turn end finalizes it for notifications. */
+function trackAssistantText(sessionId: string, event: SessionEvent): void {
+  const entry = sessions.get(sessionId)
+  if (!entry) return
+  if (event.type === 'message' && event.role === 'assistant') {
+    entry.draftText += event.content
+  } else if ((event.type === 'status' && event.status === 'idle') || event.type === 'error') {
+    entry.lastAssistantText = entry.draftText
+    entry.draftText = ''
+  }
+}
+
 export function createSession(
   cwd: string,
   onEvent: (event: SessionEvent) => void
@@ -112,21 +188,25 @@ export function createSession(
   // pi loads installed packages (settings.json) and auto-discovered extension
   // dirs itself on startup; the GUI manages them through the Packages page.
   const args = ['--mode', 'rpc']
-  const toolAccess: ToolAccess = getStore('toolAccess')
   // pi has no built-in tool approval; coarse-grained gating goes through
-  // --exclude-tools. 'full' leaves all seven built-in tools enabled.
-  if (toolAccess === 'no-bash') {
-    args.push('--exclude-tools', 'bash')
-  } else if (toolAccess === 'readonly') {
-    args.push('--exclude-tools', 'bash,edit,write')
+  // --exclude-tools, per-call approval through the bundled extension.
+  const { excludeTools, approval } = resolvePermissionMode(getStore('permissionMode'))
+  if (excludeTools) {
+    args.push('--exclude-tools', excludeTools)
   }
+  const approvalExtension = approvalExtensionPath()
+  if (existsSync(approvalExtension)) {
+    args.push('-e', approvalExtension)
+  }
+  const approvalConfigFile = writeApprovalConfig(id, approval)
   const proc = spawn(cli.path ?? cli.command, args, {
     cwd,
     env: {
       ...process.env,
       PATH: executableSearchDirs().join(path.delimiter),
       HOME: homedir(),
-      FORCE_COLOR: '0'
+      FORCE_COLOR: '0',
+      OMP_APPROVAL_CONFIG: approvalConfigFile
     }
   })
 
@@ -138,7 +218,7 @@ export function createSession(
     status: 'idle'
   }
 
-  sessions.set(id, { process: proc, session, pending: new Map() })
+  sessions.set(id, { process: proc, session, pending: new Map(), draftText: '', lastAssistantText: '' })
 
   let buffer = ''
   proc.stdout?.on('data', (chunk: Buffer) => {
@@ -165,6 +245,7 @@ export function createSession(
       const result = parseRpcLine(line, id)
       if (result.kind === 'event') {
         onEvent(result.event)
+        trackAssistantText(id, result.event)
         // A failed command response ends the turn even without agent_end
         if (result.event.type === 'error') {
           onEvent({ type: 'status', sessionId: id, status: 'idle' })
@@ -239,11 +320,22 @@ export function createSession(
   return session
 }
 
-export function sendMessage(sessionId: string, text: string): boolean {
+export function sendMessage(
+  sessionId: string,
+  text: string,
+  images?: PromptImage[],
+  streamingBehavior?: StreamingBehavior
+): boolean {
   const entry = sessions.get(sessionId)
   if (!entry) return false
   const payload =
-    JSON.stringify({ id: crypto.randomUUID(), type: 'prompt', message: text }) + '\n'
+    JSON.stringify({
+      id: crypto.randomUUID(),
+      type: 'prompt',
+      message: text,
+      ...(images?.length ? { images } : {}),
+      ...(streamingBehavior ? { streamingBehavior } : {})
+    }) + '\n'
   entry.process.stdin?.write(payload)
   return true
 }
@@ -253,6 +345,12 @@ export function killSession(sessionId: string): boolean {
   if (!entry) return false
   entry.process.kill()
   sessions.delete(sessionId)
+  // Drop the per-session approval config alongside the process.
+  try {
+    unlinkSync(path.join(app.getPath('userData'), `omp-approval-config-${sessionId}.json`))
+  } catch {
+    // already gone — fine
+  }
   return true
 }
 
@@ -338,4 +436,57 @@ export async function listSessionCommands(sessionId: string): Promise<SlashComma
 export async function compactSession(sessionId: string): Promise<boolean> {
   const res = await querySession(sessionId, { type: 'compact' }, 120_000)
   return Boolean(res && res.success === true)
+}
+
+/** Inject a steering message into a running turn. */
+export async function steer(
+  sessionId: string,
+  message: string,
+  images?: PromptImage[]
+): Promise<boolean> {
+  const res = await querySession(sessionId, {
+    type: 'steer',
+    message,
+    ...(images?.length ? { images } : {})
+  })
+  return Boolean(res && res.success === true)
+}
+
+/** Queue a follow-up message, delivered after the current turn finishes. */
+export async function followUp(
+  sessionId: string,
+  message: string,
+  images?: PromptImage[]
+): Promise<boolean> {
+  const res = await querySession(sessionId, {
+    type: 'follow_up',
+    message,
+    ...(images?.length ? { images } : {})
+  })
+  return Boolean(res && res.success === true)
+}
+
+/** Change the thinking level of a live session. */
+export async function setThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<boolean> {
+  const res = await querySession(sessionId, { type: 'set_thinking_level', level })
+  return Boolean(res && res.success === true)
+}
+
+/** Export the session transcript as HTML; resolves the saved file path. */
+export async function exportHtml(sessionId: string, outputPath?: string): Promise<string | null> {
+  const res = await querySession(
+    sessionId,
+    { type: 'export_html', ...(outputPath ? { outputPath } : {}) },
+    30_000
+  )
+  if (!res || res.success !== true || !res.data) return null
+  const saved = (res.data as { path?: unknown }).path
+  return typeof saved === 'string' ? saved : null
+}
+
+/** Live session state from the RPC get_state command. */
+export async function getSessionState(sessionId: string): Promise<SessionState | null> {
+  const res = await querySession(sessionId, { type: 'get_state' })
+  if (!res || res.success !== true || !res.data) return null
+  return res.data as SessionState
 }

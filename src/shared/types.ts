@@ -117,8 +117,41 @@ export const PI_PROVIDERS: { id: string; label: string }[] = [
   { id: 'cloudflare-workers-ai', label: 'Cloudflare Workers AI' }
 ]
 
-/** How much the agent may do in a session; maps to --exclude-tools. */
+/** Thinking levels accepted by the RPC set_thinking_level command. */
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+
+/** An image attached to a prompt/steer/follow_up RPC command. */
+export interface PromptImage {
+  type: 'image'
+  /** base64-encoded image bytes */
+  data: string
+  mimeType: string
+}
+
+/**
+ * Result of the image picker dialog: the image bytes as base64, or a
+ * categorized failure. `null` means the user cancelled the dialog.
+ */
+export type SelectImageResult =
+  | { ok: true; name: string; data: string; mimeType: string }
+  | { ok: false; error: 'tooLarge' | 'notImage' | 'readFailed' }
+  | null
+
+/** How a prompt sent mid-stream is queued by pi. */
+export type StreamingBehavior = 'steer' | 'followUp'
+
+/**
+ * Legacy three-tier tool access, still used by the current renderer UI.
+ * Subset of PermissionMode — mirrored into it on write (see ipc.ts).
+ */
 export type ToolAccess = 'full' | 'no-bash' | 'readonly'
+
+/**
+ * Permission mode applied when a session is created:
+ * 'full'/'no-bash'/'readonly' map to --exclude-tools; 'ask' leaves every tool
+ * enabled and gates each call through the bundled approval extension.
+ */
+export type PermissionMode = 'full' | 'no-bash' | 'readonly' | 'ask'
 
 /** pi package source flavor, derived from the source string in settings.json */
 export type PackageSourceKind = 'npm' | 'git' | 'local'
@@ -164,9 +197,18 @@ export interface AppSettings {
   windowHeight: number
   recentProjects: string[]
   setupComplete: boolean
+  /** Legacy three-tier setting kept for the current renderer UI. */
   toolAccess: ToolAccess
+  /** Effective per-session permission mode; supersedes toolAccess. */
+  permissionMode: PermissionMode
   /** Load machine-local ~/.agents/skills into sessions (default off — they belong to other agents). */
   machineSkills: boolean
+  /** Desktop notification when an agent turn finishes while the window is unfocused. */
+  notifications: boolean
+  /** Sidebar: sessions pinned to the top of the list. */
+  pinnedSessionIds: string[]
+  /** Sidebar: sessions folded away into the archived group. */
+  archivedSessionIds: string[]
 }
 
 export type InstallStatus =
@@ -188,5 +230,63 @@ export const DEFAULT_SETTINGS: AppSettings = {
   recentProjects: [],
   setupComplete: false,
   toolAccess: 'full',
-  machineSkills: false
+  permissionMode: 'ask',
+  machineSkills: false,
+  notifications: true,
+  pinnedSessionIds: [],
+  archivedSessionIds: []
 }
+
+/** Snapshot of a live session, from the RPC get_state command. */
+export interface SessionState {
+  isStreaming: boolean
+  isCompacting: boolean
+  pendingMessageCount: number
+  sessionId: string
+  sessionName?: string
+  messageCount: number
+  thinkingLevel: string
+  model?: unknown
+  autoCompactionEnabled?: boolean
+}
+
+/** A git snapshot of the project worktree, taken before an agent turn. */
+export interface CheckpointInfo {
+  id: string
+  sessionId: string
+  /** Dangling commit sha holding the full tree (never referenced by a branch). */
+  sha: string
+  /** Untracked files present at checkpoint time (restore keeps these). */
+  untracked: string[]
+  promptPreview: string
+  /** Index of the user message this checkpoint precedes. */
+  msgIndex: number
+  createdAt: number
+}
+
+export interface GitFileChange {
+  path: string
+  status: 'M' | 'A' | 'D' | 'untracked'
+  /** null for binary files and untracked entries */
+  additions: number | null
+  deletions: number | null
+}
+
+export interface GitInfo {
+  branch: string
+  files: GitFileChange[]
+  totalAdditions: number
+  totalDeletions: number
+}
+
+/** Auto-update state machine, broadcast to the renderer on every change. */
+export type UpdaterStatus =
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'available'; version: string }
+  | { status: 'downloading' }
+  | { status: 'progress'; percent: number }
+  | { status: 'downloaded'; version: string }
+  | { status: 'error'; message: string }
+  /** Dev builds have no updater; returned by updaterCheck only. */
+  | { status: 'dev' }

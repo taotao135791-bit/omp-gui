@@ -7,7 +7,12 @@ import {
   InstallStatus,
   ReadFileResult,
   ExtensionUiAnswer,
-  ModelConfig
+  ModelConfig,
+  CheckpointInfo,
+  PromptImage,
+  StreamingBehavior,
+  ThinkingLevel,
+  SelectImageResult
 } from '../shared/types'
 import {
   detectCli,
@@ -17,11 +22,17 @@ import {
   killSession,
   abortSession,
   listSessions,
+  getSession,
   respondExtensionUi,
   setSessionModel,
   getSessionStats,
   listSessionCommands,
-  compactSession
+  compactSession,
+  steer,
+  followUp,
+  setThinkingLevel,
+  exportHtml,
+  getSessionState
 } from './omp'
 import {
   listPackages,
@@ -37,10 +48,36 @@ import { getStore, setStore } from './store'
 import { installOmp } from './installer'
 import { searchCommunityPackages } from './community'
 import { FsGuard } from './fsGuard'
+import {
+  createCheckpoint,
+  restoreCheckpoint,
+  saveCheckpoint,
+  listCheckpoints,
+  getCheckpoint
+} from './checkpoints'
+import { getGitInfo, getFileDiff } from './gitinfo'
+import { defaultExportFileName } from './exportPath'
+import { listProjectFiles } from './projectFiles'
+import { maybeNotifyTurnFinished } from './notify'
+import {
+  getUpdaterStatus,
+  updaterCheck,
+  updaterDownload,
+  updaterQuitAndInstall
+} from './updater'
 
 const fsGuard = new FsGuard()
 
 const MAX_READ_FILE_BYTES = 2 * 1024 * 1024
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp'
+}
 
 function broadcastSessionEvent(event: SessionEvent): void {
   const wins = BrowserWindow.getAllWindows()
@@ -49,7 +86,44 @@ function broadcastSessionEvent(event: SessionEvent): void {
       win.webContents.send(IPC_CHANNELS.OMP_SESSION_EVENT, event)
     }
   }
+  maybeNotifyTurnFinished(event)
 }
+
+/** Accept only well-formed prompt images from the renderer. */
+function sanitizeImages(images: unknown): PromptImage[] | undefined {
+  if (!Array.isArray(images)) return undefined
+  const out: PromptImage[] = []
+  for (const img of images as Partial<PromptImage>[]) {
+    if (img && typeof img.data === 'string' && typeof img.mimeType === 'string') {
+      out.push({ type: 'image', data: img.data, mimeType: img.mimeType })
+    }
+  }
+  return out.length ? out : undefined
+}
+
+function sanitizeStreamingBehavior(value: unknown): StreamingBehavior | undefined {
+  return value === 'steer' || value === 'followUp' ? value : undefined
+}
+
+/** Dialog filters from the renderer; falls back to the legacy ts/js default. */
+function sanitizeDialogFilters(value: unknown): { name: string; extensions: string[] }[] {
+  const fallback = [{ name: 'Extensions', extensions: ['ts', 'js'] }]
+  if (!Array.isArray(value)) return fallback
+  const out: { name: string; extensions: string[] }[] = []
+  for (const f of value as Array<Partial<{ name: string; extensions: unknown[] }>>) {
+    if (
+      f &&
+      typeof f.name === 'string' &&
+      Array.isArray(f.extensions) &&
+      f.extensions.every((e) => typeof e === 'string')
+    ) {
+      out.push({ name: f.name, extensions: f.extensions as string[] })
+    }
+  }
+  return out.length ? out : fallback
+}
+
+const THINKING_LEVELS: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
 
 export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.OMP_DETECT, async (_event: IpcMainInvokeEvent, force?: boolean) => {
@@ -76,8 +150,19 @@ export function registerIpc() {
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_SEND_MESSAGE,
-    async (_event: IpcMainInvokeEvent, sessionId: string, text: string) => {
-      return sendMessage(sessionId, text)
+    async (
+      _event: IpcMainInvokeEvent,
+      sessionId: string,
+      text: string,
+      images?: unknown,
+      streamingBehavior?: unknown
+    ) => {
+      return sendMessage(
+        sessionId,
+        text,
+        sanitizeImages(images),
+        sanitizeStreamingBehavior(streamingBehavior)
+      )
     }
   )
 
@@ -154,6 +239,131 @@ export function registerIpc() {
       return compactSession(sessionId)
     }
   )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_STEER,
+    async (_event: IpcMainInvokeEvent, sessionId: string, message: string, images?: unknown) => {
+      if (typeof sessionId !== 'string' || !sessionId || typeof message !== 'string') return false
+      return steer(sessionId, message, sanitizeImages(images))
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_FOLLOW_UP,
+    async (_event: IpcMainInvokeEvent, sessionId: string, message: string, images?: unknown) => {
+      if (typeof sessionId !== 'string' || !sessionId || typeof message !== 'string') return false
+      return followUp(sessionId, message, sanitizeImages(images))
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_SET_THINKING,
+    async (_event: IpcMainInvokeEvent, sessionId: string, level: ThinkingLevel) => {
+      if (typeof sessionId !== 'string' || !sessionId) return false
+      if (!THINKING_LEVELS.includes(level)) return false
+      return setThinkingLevel(sessionId, level)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_EXPORT_HTML,
+    async (_event: IpcMainInvokeEvent, sessionId: string, outputPath?: string) => {
+      if (typeof sessionId !== 'string' || !sessionId) return null
+      const target =
+        typeof outputPath === 'string' && outputPath
+          ? outputPath
+          : path.join(
+              app.getPath('downloads'),
+              defaultExportFileName(getSession(sessionId)?.title, sessionId)
+            )
+      const saved = await exportHtml(sessionId, target)
+      if (saved) shell.showItemInFolder(saved)
+      return saved
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_SESSION_STATE,
+    async (_event: IpcMainInvokeEvent, sessionId: string) => {
+      if (typeof sessionId !== 'string' || !sessionId) return null
+      return getSessionState(sessionId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHECKPOINT_CREATE,
+    async (_event: IpcMainInvokeEvent, sessionId: string, msgIndex: number, promptPreview: string) => {
+      if (typeof sessionId !== 'string' || !sessionId) return null
+      const session = getSession(sessionId)
+      if (!session) return null
+      const snapshot = await createCheckpoint(session.cwd)
+      if (!snapshot) return null
+      const info: CheckpointInfo = {
+        id: crypto.randomUUID(),
+        sessionId,
+        sha: snapshot.sha,
+        untracked: snapshot.untracked,
+        promptPreview: typeof promptPreview === 'string' ? promptPreview.slice(0, 80) : '',
+        msgIndex: typeof msgIndex === 'number' ? msgIndex : 0,
+        createdAt: Date.now()
+      }
+      saveCheckpoint(info)
+      return info
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHECKPOINT_LIST,
+    async (_event: IpcMainInvokeEvent, sessionId: string) => {
+      if (typeof sessionId !== 'string' || !sessionId) return []
+      return listCheckpoints(sessionId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CHECKPOINT_RESTORE,
+    async (_event: IpcMainInvokeEvent, id: string) => {
+      if (typeof id !== 'string' || !id) return { ok: false, log: 'invalid checkpoint id' }
+      const checkpoint = getCheckpoint(id)
+      if (!checkpoint) return { ok: false, log: 'Checkpoint not found.' }
+      const session = getSession(checkpoint.sessionId)
+      if (!session) return { ok: false, log: 'Session is no longer running.' }
+      return restoreCheckpoint(session.cwd, checkpoint.sha, checkpoint.untracked)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.GIT_INFO,
+    async (_event: IpcMainInvokeEvent, projectDir: string) => {
+      if (typeof projectDir !== 'string' || !projectDir.trim()) return null
+      return getGitInfo(projectDir)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.GIT_FILE_DIFF,
+    async (_event: IpcMainInvokeEvent, projectDir: string, filePath: string) => {
+      if (typeof projectDir !== 'string' || !projectDir.trim()) return null
+      if (typeof filePath !== 'string' || !filePath.trim()) return null
+      return getFileDiff(projectDir, filePath)
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_GET_STATUS, async () => {
+    return getUpdaterStatus()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_CHECK, async () => {
+    return updaterCheck()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_DOWNLOAD, async () => {
+    return updaterDownload()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_QUIT_INSTALL, async () => {
+    updaterQuitAndInstall()
+  })
 
   ipcMain.handle(
     IPC_CHANNELS.PI_SET_MACHINE_SKILLS,
@@ -238,6 +448,15 @@ export function registerIpc() {
   })
 
   ipcMain.handle(
+    IPC_CHANNELS.FS_LIST_PROJECT_FILES,
+    async (_event, projectDir: string): Promise<string[]> => {
+      if (typeof projectDir !== 'string' || !projectDir.trim()) return []
+      if (!fsGuard.isAllowed(projectDir)) return []
+      return listProjectFiles(path.resolve(projectDir))
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.FS_READ_FILE,
     async (_event, filePath: string): Promise<ReadFileResult> => {
       if (!fsGuard.isAllowed(filePath)) {
@@ -315,6 +534,11 @@ export function registerIpc() {
 
   ipcMain.handle(IPC_CHANNELS.STORE_SET, async (_event, key: keyof AppSettings, value: unknown) => {
     setStore(key, value as never)
+    // Transitional: the settings UI still writes the legacy toolAccess tier;
+    // mirror it into permissionMode until the renderer exposes 'ask' itself.
+    if (key === 'toolAccess' && (value === 'full' || value === 'no-bash' || value === 'readonly')) {
+      setStore('permissionMode', value)
+    }
     return true
   })
 
@@ -325,11 +549,33 @@ export function registerIpc() {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_FILE, async () => {
+  ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_FILE, async (_event, filters?: unknown) => {
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],
-      filters: [{ name: 'Extensions', extensions: ['ts', 'js'] }]
+      filters: sanitizeDialogFilters(filters)
     })
     return result.canceled ? null : result.filePaths[0]
+  })
+
+  // Image picker for the composer. The dialog itself is the user's consent,
+  // so (like selectFile) the chosen path is read without the fsGuard root check.
+  ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_IMAGE, async (): Promise<SelectImageResult> => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: Object.keys(IMAGE_MIME_BY_EXT) }]
+    })
+    const filePath = result.canceled ? undefined : result.filePaths[0]
+    if (!filePath) return null
+    const mimeType = IMAGE_MIME_BY_EXT[path.extname(filePath).slice(1).toLowerCase()]
+    if (!mimeType) return { ok: false, error: 'notImage' }
+    const fs = await import('node:fs/promises')
+    try {
+      const stat = await fs.stat(filePath)
+      if (stat.size > MAX_IMAGE_BYTES) return { ok: false, error: 'tooLarge' }
+      const buf = await fs.readFile(filePath)
+      return { ok: true, name: path.basename(filePath), data: buf.toString('base64'), mimeType }
+    } catch {
+      return { ok: false, error: 'readFailed' }
+    }
   })
 }

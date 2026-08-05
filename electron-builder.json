@@ -11,6 +11,19 @@
     "dist-electron",
     "resources"
   ],
+  "extraResources": [
+    {
+      "from": "resources/omp-approval",
+      "to": "omp-approval"
+    }
+  ],
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "taotao135791-bit",
+      "repo": "omp-gui"
+    }
+  ],
   "mac": {
     "category": "public.app-category.developer-tools",
     "icon": "build/icon.icns",

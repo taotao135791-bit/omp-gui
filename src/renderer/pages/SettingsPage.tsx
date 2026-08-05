@@ -10,9 +10,9 @@ import {
   Sun,
   Trash2
 } from 'lucide-react'
-import { CliInfo, ModelConfig, PI_PROVIDERS, PiModel, ToolAccess } from '@shared/types'
+import { CliInfo, ModelConfig, PermissionMode, PI_PROVIDERS, PiModel, UpdaterStatus } from '@shared/types'
 import { useAppStore } from '../store'
-import { useT } from '../i18n'
+import { I18nKey, useT } from '../i18n'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -49,11 +49,12 @@ const buttonCls =
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 
-const TOOL_ACCESS_NOTE = {
-  full: 'settings.toolAccessNote.full',
-  'no-bash': 'settings.toolAccessNote.noBash',
-  readonly: 'settings.toolAccessNote.readonly'
-} as const
+const PERMISSION_MODES: { value: PermissionMode; label: I18nKey; note: I18nKey }[] = [
+  { value: 'ask', label: 'settings.permissions.ask', note: 'settings.permissionsNote.ask' },
+  { value: 'full', label: 'settings.permissions.full', note: 'settings.permissionsNote.full' },
+  { value: 'no-bash', label: 'settings.permissions.noBash', note: 'settings.permissionsNote.noBash' },
+  { value: 'readonly', label: 'settings.permissions.readonly', note: 'settings.permissionsNote.readonly' }
+]
 
 export default function SettingsPage() {
   const { theme, language, setTheme, setLanguage, models, modelConfig, loadModelState, selectModel } =
@@ -68,7 +69,9 @@ export default function SettingsPage() {
   const [keyState, setKeyState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [keyError, setKeyError] = useState('')
   const [modelSaved, setModelSaved] = useState(false)
-  const [toolAccess, setToolAccessState] = useState<ToolAccess>('full')
+  const [permissionMode, setPermissionModeState] = useState<PermissionMode>('ask')
+  const [notifications, setNotificationsState] = useState(true)
+  const [updater, setUpdater] = useState<UpdaterStatus>({ status: 'idle' })
   const [machineSkills, setMachineSkillsState] = useState(false)
   const [machineSkillCount, setMachineSkillCount] = useState(0)
 
@@ -86,7 +89,8 @@ export default function SettingsPage() {
     window.electronAPI.getAppVersion().then(setVersion)
     window.electronAPI.listCatalogModels().then(setCatalog)
     loadModelState()
-    window.electronAPI.getStore('toolAccess').then((v) => setToolAccessState(v ?? 'full'))
+    window.electronAPI.getStore('permissionMode').then((v) => setPermissionModeState(v ?? 'ask'))
+    window.electronAPI.getStore('notifications').then((v) => setNotificationsState(v ?? true))
     window.electronAPI.getStore('machineSkills').then((v) => {
       const enabled = v ?? false
       setMachineSkillsState(enabled)
@@ -94,6 +98,11 @@ export default function SettingsPage() {
       window.electronAPI.setMachineSkills(enabled).then((r) => setMachineSkillCount(r.available.length))
     })
   }, [loadModelState])
+
+  useEffect(() => {
+    window.electronAPI.updaterGetStatus().then(setUpdater)
+    return window.electronAPI.onUpdaterStatus(setUpdater)
+  }, [])
 
   const redetect = async () => {
     setDetecting(true)
@@ -163,9 +172,22 @@ export default function SettingsPage() {
     loadModelState()
   }
 
-  const changeToolAccess = async (value: ToolAccess) => {
-    setToolAccessState(value)
-    await window.electronAPI.setStore('toolAccess', value)
+  const changePermissionMode = async (value: PermissionMode) => {
+    setPermissionModeState(value)
+    await window.electronAPI.setStore('permissionMode', value)
+  }
+
+  const changeNotifications = async (value: boolean) => {
+    setNotificationsState(value)
+    await window.electronAPI.setStore('notifications', value)
+  }
+
+  const checkUpdates = async () => {
+    setUpdater(await window.electronAPI.updaterCheck())
+  }
+
+  const downloadUpdate = async () => {
+    setUpdater(await window.electronAPI.updaterDownload())
   }
 
   const changeTrust = async (value: ModelConfig['projectTrust']) => {
@@ -320,26 +342,20 @@ export default function SettingsPage() {
           </Section>
 
           <Section title={t('settings.permissions')}>
-            <Row label={t('settings.toolAccess')}>
+            <Row label={t('settings.permissionMode')}>
               <div className="flex rounded-lg border border-line bg-overlay p-0.5">
-                <button onClick={() => changeToolAccess('full')} className={seg(toolAccess === 'full')}>
-                  {t('settings.toolAccessFull')}
-                </button>
-                <button
-                  onClick={() => changeToolAccess('no-bash')}
-                  className={seg(toolAccess === 'no-bash')}
-                >
-                  {t('settings.toolAccessNoBash')}
-                </button>
-                <button
-                  onClick={() => changeToolAccess('readonly')}
-                  className={seg(toolAccess === 'readonly')}
-                >
-                  {t('settings.toolAccessReadonly')}
-                </button>
+                {PERMISSION_MODES.map((mode) => (
+                  <button
+                    key={mode.value}
+                    onClick={() => changePermissionMode(mode.value)}
+                    className={seg(permissionMode === mode.value)}
+                  >
+                    {t(mode.label)}
+                  </button>
+                ))}
               </div>
             </Row>
-            <Note>{t(TOOL_ACCESS_NOTE[toolAccess])}</Note>
+            <Note>{t(PERMISSION_MODES.find((m) => m.value === permissionMode)?.note ?? 'settings.permissionsNote.ask')}</Note>
             <Row label={t('settings.projectTrust')}>
               <div className="flex items-center gap-2">
                 <ShieldCheck size={13} className="text-cream-faint" />
@@ -418,6 +434,20 @@ export default function SettingsPage() {
             </Row>
           </Section>
 
+          <Section title={t('settings.notifications')}>
+            <Row label={t('settings.notifyCompletion')}>
+              <div className="flex rounded-lg border border-line bg-overlay p-0.5">
+                <button onClick={() => changeNotifications(true)} className={seg(notifications)}>
+                  {t('settings.on')}
+                </button>
+                <button onClick={() => changeNotifications(false)} className={seg(!notifications)}>
+                  {t('settings.off')}
+                </button>
+              </div>
+            </Row>
+            <Note>{t('settings.notifyCompletionNote')}</Note>
+          </Section>
+
           <Section title="Oh My Pi CLI">
             <Row label={t('settings.cliStatus')}>
               <span
@@ -484,6 +514,68 @@ export default function SettingsPage() {
             <Row label={t('settings.version')}>
               <span className="font-mono text-xs text-cream-dim">{version || '—'}</span>
             </Row>
+            <Row label={t('settings.update')}>
+              <div className="flex items-center gap-2">
+                {updater.status === 'idle' && (
+                  <button onClick={checkUpdates} className={buttonCls}>
+                    <RefreshCw size={11} />
+                    {t('settings.checkUpdate')}
+                  </button>
+                )}
+                {updater.status === 'checking' && (
+                  <span className="flex items-center gap-1.5 text-xs text-cream-dim">
+                    <RefreshCw size={11} className="animate-spin" />
+                    {t('settings.checking')}
+                  </span>
+                )}
+                {updater.status === 'available' && (
+                  <>
+                    <span className="text-xs text-cream-dim">
+                      {t('settings.updateAvailable', { version: updater.version })}
+                    </span>
+                    <button onClick={downloadUpdate} className={buttonCls}>
+                      {t('settings.downloadUpdate')}
+                    </button>
+                  </>
+                )}
+                {(updater.status === 'downloading' || updater.status === 'progress') && (
+                  <span className="flex items-center gap-1.5 text-xs text-cream-dim">
+                    <RefreshCw size={11} className="animate-spin" />
+                    {t('settings.downloading')}
+                    {updater.status === 'progress' ? ` ${updater.percent}%` : ''}
+                  </span>
+                )}
+                {updater.status === 'downloaded' && (
+                  <>
+                    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                      {t('settings.updateReady', { version: updater.version })}
+                    </span>
+                    <button
+                      onClick={() => window.electronAPI.updaterQuitAndInstall()}
+                      className={buttonCls}
+                    >
+                      {t('settings.restartInstall')}
+                    </button>
+                  </>
+                )}
+                {updater.status === 'error' && (
+                  <>
+                    <span className="text-xs text-red-500">{t('settings.updateError')}</span>
+                    <button onClick={checkUpdates} className={buttonCls}>
+                      {t('settings.updateRetry')}
+                    </button>
+                  </>
+                )}
+                {updater.status === 'dev' && (
+                  <span className="text-xs text-cream-faint">{t('settings.updateDevMode')}</span>
+                )}
+              </div>
+            </Row>
+            {updater.status === 'error' && (
+              <Note>
+                <span className="text-red-500">{updater.message}</span>
+              </Note>
+            )}
             <Row label="Oh My Pi">
               <span className="text-xs text-cream-dim">omp.sh · pi.dev</span>
             </Row>

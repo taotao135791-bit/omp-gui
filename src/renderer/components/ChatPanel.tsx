@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react'
-import { FolderOpen, Compass, Hammer, GitPullRequest, Bug } from 'lucide-react'
-import { SlashCommand } from '@shared/types'
+import { FolderOpen, Compass, Hammer, GitPullRequest, Bug, Download, Loader2 } from 'lucide-react'
+import { PromptImage, SlashCommand } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
@@ -8,6 +8,7 @@ import MessageList from './MessageList'
 import Composer from './Composer'
 import ExtensionUiDialog from './ExtensionUiDialog'
 import UsageMonitor from './UsageMonitor'
+import GitChip from './GitChip'
 import Logo from './Logo'
 
 interface Suggestion {
@@ -72,6 +73,8 @@ export default function ChatPanel() {
   const pendingUi = currentSessionId ? (uiRequests[currentSessionId] || [])[0] : undefined
   const bottomRef = useRef<HTMLDivElement>(null)
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
+  const [exporting, setExporting] = useState(false)
+  const [exportFailed, setExportFailed] = useState(false)
 
   // Slash commands come from the live session (extensions/prompts/skills)
   useEffect(() => {
@@ -92,7 +95,7 @@ export default function ChatPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [sessionMessages, isBusy])
 
-  const handleSend = async (text: string) => {
+  const handleSend = async (text: string, images?: PromptImage[]) => {
     if (!text.trim() || cliAvailable === false) return
     const sessionId = currentSessionId ?? (await createSessionForCurrentProject())
     if (!sessionId) return
@@ -103,7 +106,28 @@ export default function ChatPanel() {
     })
     // Optimistic: show the working state until agent_end / error lands
     useAppStore.getState().setBusy(sessionId, true)
-    await window.electronAPI.sendMessage(sessionId, text.trim())
+    const sent = await window.electronAPI.sendMessage(sessionId, text.trim(), images)
+    if (sent) {
+      // Snapshot the worktree so this turn can be rolled back later.
+      const list = useAppStore.getState().messages[sessionId] || []
+      void useAppStore.getState().createCheckpointForMessage(sessionId, list.length - 1, text.trim())
+    }
+  }
+
+  const handleExport = async () => {
+    if (!currentSessionId || exporting) return
+    setExporting(true)
+    setExportFailed(false)
+    try {
+      const saved = await window.electronAPI.exportHtml(currentSessionId)
+      if (!saved) throw new Error('exportHtml returned null')
+    } catch (err) {
+      console.error('Session export failed:', err)
+      setExportFailed(true)
+      setTimeout(() => setExportFailed(false), 2000)
+    } finally {
+      setExporting(false)
+    }
   }
 
   const handleStop = async () => {
@@ -150,7 +174,30 @@ export default function ChatPanel() {
             {projectName || t('chat.noProject')}
           </span>
         </span>
+        <GitChip />
         <span className="ml-auto flex shrink-0 items-center gap-2.5 text-cream-dim">
+          {currentSessionId && (
+            <button
+              onClick={() => void handleExport()}
+              disabled={exporting}
+              title={
+                exporting
+                  ? t('export.exporting')
+                  : exportFailed
+                    ? t('export.failed')
+                    : t('export.button')
+              }
+              className={`app-no-drag rounded-md p-1.5 transition hover:bg-overlay disabled:opacity-60 ${
+                exportFailed ? 'text-red-500' : 'text-cream-dim hover:text-cream'
+              }`}
+            >
+              {exporting ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Download size={13} />
+              )}
+            </button>
+          )}
           {isCompacting && (
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
@@ -207,7 +254,7 @@ export default function ChatPanel() {
           </div>
         ) : (
           <div className="mx-auto max-w-3xl">
-            <MessageList messages={sessionMessages} />
+            <MessageList messages={sessionMessages} sessionId={currentSessionId} />
             {showThinking && (
               <div className="msg-in flex items-center gap-3 px-4 pb-6">
                 <Logo size={22} className="shrink-0" />

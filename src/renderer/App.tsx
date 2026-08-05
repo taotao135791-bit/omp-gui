@@ -37,15 +37,31 @@ function App() {
     window.electronAPI.listPackages().then((packages) => {
       useAppStore.getState().setPackages(packages)
     })
+    window.electronAPI.getStore('pinnedSessionIds').then((ids) => {
+      useAppStore.getState().setPinnedSessionIds(ids ?? [])
+    })
+    window.electronAPI.getStore('archivedSessionIds').then((ids) => {
+      useAppStore.getState().setArchivedSessionIds(ids ?? [])
+    })
 
     const unsubscribe = window.electronAPI.onSessionEvent((event) => {
       applySessionEvent(event)
     })
 
+    // Clicking a completion notification focuses that session's chat
+    const unsubscribeNotify = window.electronAPI.onNotifySelectSession((sessionId) => {
+      const state = useAppStore.getState()
+      if (state.sessions.some((s) => s.id === sessionId)) {
+        state.setCurrentSessionId(sessionId)
+        navigate('/')
+      }
+    })
+
     return () => {
       unsubscribe()
+      unsubscribeNotify()
     }
-  }, [setTheme, setLanguage, setCliAvailable, setSetupComplete, applySessionEvent])
+  }, [setTheme, setLanguage, setCliAvailable, setSetupComplete, applySessionEvent, navigate])
 
   // ⌘N starts a new chat from anywhere
   useEffect(() => {

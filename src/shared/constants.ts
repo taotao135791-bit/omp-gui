@@ -13,6 +13,7 @@ export const IPC_CHANNELS = {
   FS_LIST_DIR: 'fs:list-dir',
   FS_READ_FILE: 'fs:read-file',
   FS_SET_ROOT: 'fs:set-root',
+  FS_LIST_PROJECT_FILES: 'fs:list-project-files',
   PACKAGES_LIST: 'packages:list',
   PACKAGES_SEARCH: 'packages:search',
   PACKAGES_INSTALL: 'packages:install',
@@ -23,6 +24,7 @@ export const IPC_CHANNELS = {
   STORE_SET: 'store:set',
   DIALOG_SELECT_FOLDER: 'dialog:select-folder',
   DIALOG_SELECT_FILE: 'dialog:select-file',
+  DIALOG_SELECT_IMAGE: 'dialog:select-image',
   SHELL_SHOW_CLI_SETTINGS: 'shell:show-cli-settings',
   OMP_RESPOND_UI: 'omp:respond-ui',
   OMP_SET_MODEL: 'omp:set-model',
@@ -36,7 +38,23 @@ export const IPC_CHANNELS = {
   PI_LIST_MODELS: 'pi:list-models',
   PI_LIST_CATALOG_MODELS: 'pi:list-catalog-models',
   PI_SET_MACHINE_SKILLS: 'pi:set-machine-skills',
-  APP_VERSION: 'app:version'
+  APP_VERSION: 'app:version',
+  OMP_STEER: 'omp:steer',
+  OMP_FOLLOW_UP: 'omp:follow-up',
+  OMP_SET_THINKING: 'omp:set-thinking',
+  OMP_EXPORT_HTML: 'omp:export-html',
+  OMP_SESSION_STATE: 'omp:session-state',
+  CHECKPOINT_CREATE: 'checkpoint:create',
+  CHECKPOINT_LIST: 'checkpoint:list',
+  CHECKPOINT_RESTORE: 'checkpoint:restore',
+  GIT_INFO: 'git:info',
+  GIT_FILE_DIFF: 'git:file-diff',
+  UPDATER_STATUS: 'updater:status',
+  UPDATER_GET_STATUS: 'updater:get-status',
+  UPDATER_CHECK: 'updater:check',
+  UPDATER_DOWNLOAD: 'updater:download',
+  UPDATER_QUIT_INSTALL: 'updater:quit-install',
+  NOTIFY_SELECT_SESSION: 'notify:select-session'
 } as const
 
 export const OMP_GLOBAL_DIR = '.omp'

@@ -16,6 +16,14 @@ The app auto-detects an installed `omp`/`pi` CLI, or offers to install Oh My Pi 
 ## Features
 
 - **Codex-style layout** — sidebar with sessions & projects, streaming chat in the middle, file tree + preview on the right. Chinese/English UI, light & dark themes.
+- **Checkpoints & rollback** — every prompt snapshots the git worktree (no touch to your index, stash or refs). Hover any user message to roll the code back to before that message; the chat history stays put.
+- **Message queue & steering** — keep typing while the agent works: Enter queues, each queued card can steer mid-turn or be deleted; the queue drains automatically when the turn ends.
+- **Per-tool approval** — the bundled omp-approval extension asks before bash/edit/write in the new "Ask" permission mode (Allow once / Always allow / Deny), with per-session config files so parallel sessions never clobber each other. Classic modes (full / no-bash / read-only) remain.
+- **Changes view & git chip** — a Changes tab in the right panel lists worktree changes with +add/−del and a full diff per file (untracked files synthesized); the chat header shows the current branch and total diffstat, refreshing after every turn.
+- **Session list that scales** — search, pin, archive, working/unread status dots, and a system notification when a turn finishes in the background (click to jump to the session).
+- **Composer power-ups** — `@` fuzzy file references, image paste & attach (up to 4×10MB), a thinking-level picker (off/low/medium/high) synced with the live session, and self-teaching placeholders.
+- **Auto-update** — checks GitHub Releases on launch and from Settings → About; downloads in the background and installs on restart.
+- **Session export** — one click exports the transcript to a styled HTML file in ~/Downloads.
 - **Model & API keys** — pick from 26 providers (Anthropic, OpenAI, Gemini, DeepSeek, Kimi, MiniMax, ZAI, OpenRouter, …) and paste your API key in Settings. Keys are written to pi's own `~/.pi/agent/auth.json` (chmod 600) — the CLI and the GUI share them. The default-model dropdown is fed by pi's built-in model registry (1,000+ models), so every model a provider supports is selectable even before its key is stored; the composer picker lists the models your keys can actually run and switches the live session mid-chat.
 - **Permissions** — tool access modes (full access / no Bash / read-only) applied to new sessions, plus project-trust control for project-local plugins.
 - **Assemble your Pi** — the plugin page works like a mecha bay: drag parts onto the core to mount them, drag back to the rack to detach, drop to the red zone to uninstall. Install npm/git/local packages or drop a folder straight from Finder. Only mounted parts load into new chats, keeping pi lean.

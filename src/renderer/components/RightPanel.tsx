@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
-import { FileText, X, Eye } from 'lucide-react'
+import { FileText, X, Eye, FileDiff } from 'lucide-react'
 import { useAppStore } from '../store'
 import { useT, translate } from '../i18n'
 import FileTree from './FileTree'
 import CodePreview from './CodePreview'
+import ChangesPanel from './ChangesPanel'
 
 export default function RightPanel() {
   const {
@@ -54,6 +55,17 @@ export default function RightPanel() {
             <Eye size={12} />
             {t('panel.preview')}
           </button>
+          <button
+            onClick={() => setActiveRightTab('changes')}
+            className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
+              activeRightTab === 'changes'
+                ? 'bg-overlay-strong text-cream'
+                : 'text-cream-dim hover:bg-overlay'
+            }`}
+          >
+            <FileDiff size={12} />
+            {t('panel.changes')}
+          </button>
         </div>
         <button
           onClick={() => setRightPanelOpen(false)}
@@ -63,9 +75,15 @@ export default function RightPanel() {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div
+        className={
+          activeRightTab === 'changes' ? 'flex min-h-0 flex-1 flex-col' : 'flex-1 overflow-y-auto'
+        }
+      >
         {activeRightTab === 'files' ? (
           <FileTree />
+        ) : activeRightTab === 'changes' ? (
+          <ChangesPanel />
         ) : (
           <CodePreview filePath={selectedFile} content={previewContent} />
         )}
