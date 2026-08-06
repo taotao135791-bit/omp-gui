@@ -11,9 +11,30 @@ interface ToolCallCardProps {
   }
 }
 
+/** One-line summary of a tool call's input, shown in the collapsed header. */
+function summarizeInput(tool: string, input: unknown): string | null {
+  if (input === undefined || input === null) return null
+  const name = tool.toLowerCase()
+  if (typeof input === 'object') {
+    const obj = input as Record<string, unknown>
+    if (name === 'bash' && typeof obj.command === 'string') {
+      return obj.command.split('\n', 1)[0]
+    }
+    if ((name === 'read' || name === 'edit' || name === 'write') && typeof obj.path === 'string') {
+      return obj.path
+    }
+  }
+  try {
+    return JSON.stringify(input)?.slice(0, 40) ?? null
+  } catch {
+    return null
+  }
+}
+
 export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false)
   const t = useT()
+  const summary = summarizeInput(toolCall.tool, toolCall.input)
 
   return (
     <div className="overflow-hidden rounded-xl border border-line bg-overlay font-mono text-xs">
@@ -31,8 +52,11 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
           }`}
         />
         <Terminal size={12} className="shrink-0 text-accent" />
-        <span className="font-medium text-cream">{toolCall.tool}</span>
-        <span className="ml-auto text-cream-faint">
+        <span className="shrink-0 font-medium text-cream">{toolCall.tool}</span>
+        {summary && (
+          <span className="min-w-0 flex-1 truncate text-[11px] text-cream-faint">{summary}</span>
+        )}
+        <span className="ml-auto shrink-0 text-cream-faint">
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
       </button>

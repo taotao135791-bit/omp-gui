@@ -111,6 +111,8 @@ export default function ChatPanel() {
       // Snapshot the worktree so this turn can be rolled back later.
       const list = useAppStore.getState().messages[sessionId] || []
       void useAppStore.getState().createCheckpointForMessage(sessionId, list.length - 1, text.trim())
+      // First user message of an untitled session becomes its name
+      void useAppStore.getState().maybeNameSession(sessionId, text.trim())
     }
   }
 
@@ -168,12 +170,13 @@ export default function ChatPanel() {
         <span className="max-w-[240px] truncate text-[13px] font-medium tracking-tight text-cream">
           {currentSession ? currentSession.title : t('chat.noActiveSession')}
         </span>
-        <span className="flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-overlay px-2 py-[3px] text-cream-dim">
-          <FolderOpen size={11} className="shrink-0" />
-          <span className="truncate font-mono text-[11px]">
-            {projectName || t('chat.noProject')}
+        {/* The chip duplicates the title while the session is untitled — show it only when it adds the project path context */}
+        {projectName && projectName !== currentSession?.title && (
+          <span className="flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-overlay px-2 py-[3px] text-cream-dim">
+            <FolderOpen size={11} className="shrink-0" />
+            <span className="truncate font-mono text-[11px]">{projectName}</span>
           </span>
-        </span>
+        )}
         <GitChip />
         <span className="ml-auto flex shrink-0 items-center gap-2.5 text-cream-dim">
           {currentSessionId && (

@@ -15,6 +15,8 @@ The app auto-detects an installed `omp`/`pi` CLI, or offers to install Oh My Pi 
 
 ## Features
 
+- **Session persistence** — sessions survive restarts: the sidebar's History section lists pi's on-disk sessions per project (titled by the first message), one click resumes the process and backfills the full transcript, then keeps chatting right where you left off.
+- **Session titles & Chinese-first** — sessions auto-name from your first message (header and sidebar show the real title, not the folder name), and when the UI is Chinese the agent is instructed to reply in Chinese.
 - **Codex-style layout** — sidebar with sessions & projects, streaming chat in the middle, file tree + preview on the right. Chinese/English UI, light & dark themes.
 - **Checkpoints & rollback** — every prompt snapshots the git worktree (no touch to your index, stash or refs). Hover any user message to roll the code back to before that message; the chat history stays put.
 - **Message queue & steering** — keep typing while the agent works: Enter queues, each queued card can steer mid-turn or be deleted; the queue drains automatically when the turn ends.

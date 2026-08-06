@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { app } from 'electron'
 import {
+  ChatMessage,
   CliInfo,
   ExtensionUiAnswer,
   PermissionMode,
@@ -18,6 +19,9 @@ import {
 } from '../shared/types'
 import { getStore, setStore } from './store'
 import { parseRpcLine, drainLines, extensionUiResponse } from './protocol'
+import { AgentMessage, mapAgentMessages } from './messageMapping'
+import { buildLanguageArgs } from './languageArgs'
+import { isSessionFilePath } from './sessionHistory'
 
 interface PendingQuery {
   resolve: (payload: Record<string, unknown> | null) => void
@@ -164,7 +168,8 @@ function trackAssistantText(sessionId: string, event: SessionEvent): void {
 
 export function createSession(
   cwd: string,
-  onEvent: (event: SessionEvent) => void
+  onEvent: (event: SessionEvent) => void,
+  opts?: { resumeSessionPath?: string }
 ): Session {
   const id = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const cli = detectCli()
@@ -198,6 +203,12 @@ export function createSession(
   if (existsSync(approvalExtension)) {
     args.push('-e', approvalExtension)
   }
+  // Resume a persisted session file when requested (history panel).
+  if (opts?.resumeSessionPath) {
+    args.push('--session', opts.resumeSessionPath)
+  }
+  // Steer the reply language to the UI language (no flag for English).
+  args.push(...buildLanguageArgs(getStore('language')))
   const approvalConfigFile = writeApprovalConfig(id, approval)
   const proc = spawn(cli.path ?? cli.command, args, {
     cwd,
@@ -215,7 +226,8 @@ export function createSession(
     cwd,
     title: path.basename(cwd) || 'New Chat',
     createdAt: Date.now(),
-    status: 'idle'
+    status: 'idle',
+    ...(opts?.resumeSessionPath ? { resumeFrom: opts.resumeSessionPath } : {})
   }
 
   sessions.set(id, { process: proc, session, pending: new Map(), draftText: '', lastAssistantText: '' })
@@ -489,4 +501,38 @@ export async function getSessionState(sessionId: string): Promise<SessionState |
   const res = await querySession(sessionId, { type: 'get_state' })
   if (!res || res.success !== true || !res.data) return null
   return res.data as SessionState
+}
+
+/** Full transcript of a session, mapped to GUI chat messages (get_messages). */
+export async function getSessionMessages(sessionId: string): Promise<ChatMessage[]> {
+  const res = await querySession(sessionId, { type: 'get_messages' }, 15_000)
+  if (!res || res.success !== true || !res.data) return []
+  const raw = (res.data as { messages?: unknown }).messages
+  if (!Array.isArray(raw)) return []
+  return mapAgentMessages(raw as AgentMessage[])
+}
+
+/** Set the session display name (single line, truncated to 60 chars). */
+export async function setSessionName(sessionId: string, name: string): Promise<boolean> {
+  const clean = name.replace(/[\r\n]+/g, ' ').trim().slice(0, 60)
+  if (!clean) return false
+  const res = await querySession(sessionId, { type: 'set_session_name', name: clean })
+  return Boolean(res && res.success === true)
+}
+
+/**
+ * Resume a persisted session file as a new live session and return it together
+ * with its transcript in one round-trip. Returns null when the path is not a
+ * session file under the sessions root, or when the CLI is unavailable.
+ */
+export async function resumeSession(
+  cwd: string,
+  onEvent: (event: SessionEvent) => void,
+  filePath: string
+): Promise<{ session: Session; messages: ChatMessage[] } | null> {
+  if (!isSessionFilePath(filePath)) return null
+  const session = createSession(cwd, onEvent, { resumeSessionPath: filePath })
+  if (session.status === 'error') return null
+  const messages = await getSessionMessages(session.id)
+  return { session, messages }
 }

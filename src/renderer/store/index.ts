@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage } from '@shared/types'
+import { Session, SessionEvent, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo } from '@shared/types'
 
 export interface MessageLike {
   id: string
@@ -67,6 +67,8 @@ interface AppState {
   unreadSessionIds: Record<string, boolean>
   /** One-shot composer prefill (e.g. "build your own plugin" from the packages page). */
   composerPrefill: string | null
+  /** Persisted session files of the current project (pi history), newest first. */
+  historySessions: HistorySessionInfo[]
   setTheme: (theme: 'dark' | 'light') => void
   setLanguage: (language: Language) => void
   setCurrentProject: (path: string | null) => void
@@ -74,6 +76,8 @@ interface AppState {
   addSession: (session: Session) => void
   setCurrentSessionId: (id: string | null) => void
   addMessage: (sessionId: string, message: MessageLike) => void
+  /** Replace a session's whole transcript (history resume backfill). */
+  setMessages: (sessionId: string, messages: MessageLike[]) => void
   appendMessageContent: (sessionId: string, content: string) => void
   resolveUiRequest: (sessionId: string, requestId: string) => void
   setPackages: (packages: PackageInfo[]) => void
@@ -113,6 +117,18 @@ interface AppState {
   markSessionUnread: (sessionId: string) => void
   clearSessionUnread: (sessionId: string) => void
   setComposerPrefill: (text: string | null) => void
+  /** (Re)load the persisted session history of a project; null clears the list. */
+  loadHistorySessions: (projectDir: string | null) => Promise<void>
+  /** Drop one entry from the history list (after its file was deleted). */
+  removeHistorySession: (filePath: string) => void
+  /** Update one session's display title in place. */
+  setSessionTitle: (sessionId: string, title: string) => void
+  /**
+   * Auto-name a session from its first user message when it still carries the
+   * default title (project dir basename). No-op once the session has a real
+   * name or more than one user message.
+   */
+  maybeNameSession: (sessionId: string, text: string) => Promise<void>
   setSetupComplete: (complete: boolean) => void
   setInstallStatus: (status: InstallStatus) => void
   /** (Re)load model config + available models from the main process. */
@@ -150,6 +166,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   archivedSessionIds: [],
   unreadSessionIds: {},
   composerPrefill: null,
+  historySessions: [],
 
   setTheme: (theme) => {
     set({ theme })
@@ -197,6 +214,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       [sessionId]: [...(state.messages[sessionId] || []), message]
     }
   })),
+  setMessages: (sessionId, messages) =>
+    set((state) => ({ messages: { ...state.messages, [sessionId]: messages } })),
   appendMessageContent: (sessionId, content) => set((state) => {
     const list = state.messages[sessionId] || []
     if (list.length === 0) {
@@ -304,6 +323,36 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearSessionUnread: (sessionId) =>
     set((state) => ({ unreadSessionIds: { ...state.unreadSessionIds, [sessionId]: false } })),
   setComposerPrefill: (composerPrefill) => set({ composerPrefill }),
+  loadHistorySessions: async (projectDir) => {
+    if (!projectDir) {
+      set({ historySessions: [] })
+      return
+    }
+    const list = await window.electronAPI.listSessionHistory(projectDir)
+    // Ignore a stale response when the project was switched meanwhile
+    if (get().currentProject === projectDir) set({ historySessions: list })
+  },
+  removeHistorySession: (filePath) =>
+    set((state) => ({
+      historySessions: state.historySessions.filter((h) => h.filePath !== filePath)
+    })),
+  setSessionTitle: (sessionId, title) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, title } : s))
+    })),
+  maybeNameSession: async (sessionId, text) => {
+    const state = get()
+    const session = state.sessions.find((s) => s.id === sessionId)
+    if (!session) return
+    const projectName = session.cwd.split('/').filter(Boolean).pop() || ''
+    if (session.title.trim() && session.title !== projectName) return
+    const list = state.messages[sessionId] || []
+    if (list.filter((m) => m.role === 'user').length !== 1) return
+    const name = text.replace(/\s+/g, ' ').trim().slice(0, 24)
+    if (!name) return
+    const ok = await window.electronAPI.setSessionName(sessionId, name)
+    if (ok) get().setSessionTitle(sessionId, name)
+  },
   setSetupComplete: (setupComplete) => {
     set({ setupComplete })
     window.electronAPI.setStore('setupComplete', setupComplete)
@@ -398,6 +447,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               if (sent) {
                 const list = get().messages[event.sessionId] || []
                 void get().createCheckpointForMessage(event.sessionId, list.length - 1, next.text)
+                void get().maybeNameSession(event.sessionId, next.text)
               }
             })
         } else if (event.sessionId !== get().currentSessionId) {

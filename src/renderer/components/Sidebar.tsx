@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   SquarePen,
@@ -18,8 +18,10 @@ import {
   Archive,
   ArchiveRestore,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Loader2
 } from 'lucide-react'
+import { HistorySessionInfo } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
@@ -43,6 +45,7 @@ export default function Sidebar() {
     pinnedSessionIds,
     archivedSessionIds,
     unreadSessionIds,
+    historySessions,
     setCurrentProject,
     setCurrentSessionId,
     setSessions,
@@ -50,12 +53,20 @@ export default function Sidebar() {
     setLanguage,
     setTheme,
     togglePinSession,
-    setSessionArchived
+    setSessionArchived,
+    addSession,
+    setMessages,
+    loadHistorySessions,
+    removeHistorySession
   } = useAppStore()
 
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [archiveOpen, setArchiveOpen] = useState(false)
+  const [resumingPath, setResumingPath] = useState<string | null>(null)
+  const [restoreFailedPath, setRestoreFailedPath] = useState<string | null>(null)
+  const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null)
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     window.electronAPI.getStore('recentProjects').then((projects) => {
@@ -65,6 +76,11 @@ export default function Sidebar() {
       }
     })
   }, [currentProject, setCurrentProject])
+
+  // Load the persisted session history on startup and whenever the project changes
+  useEffect(() => {
+    void loadHistorySessions(currentProject)
+  }, [currentProject, loadHistorySessions])
 
   const handleNewChat = async () => {
     const id = await createSessionForCurrentProject()
@@ -85,6 +101,51 @@ export default function Sidebar() {
     if (currentSessionId === id) {
       setCurrentSessionId(null)
     }
+    // The killed session's file may now appear in the on-disk history
+    void loadHistorySessions(currentProject)
+  }
+
+  const handleResumeHistory = async (info: HistorySessionInfo) => {
+    if (!currentProject || resumingPath) return
+    setResumingPath(info.filePath)
+    setRestoreFailedPath(null)
+    try {
+      const result = await window.electronAPI.resumeSession(currentProject, info.filePath)
+      if (!result) {
+        setRestoreFailedPath(info.filePath)
+        console.error('Failed to resume session:', info.filePath)
+        return
+      }
+      const { session, messages: restored } = result
+      // The main process titles a resumed session after the project dir;
+      // prefer the richer title from the history entry when there is one.
+      const projectName = currentProject.split('/').filter(Boolean).pop()
+      const title =
+        (!session.title || session.title === projectName) && info.title !== 'Untitled'
+          ? info.title
+          : session.title
+      addSession({ ...session, title })
+      setMessages(session.id, restored)
+      setCurrentSessionId(session.id)
+      navigate('/')
+    } finally {
+      setResumingPath(null)
+    }
+  }
+
+  const handleDeleteHistory = async (info: HistorySessionInfo) => {
+    if (confirmDeletePath !== info.filePath) {
+      setConfirmDeletePath(info.filePath)
+      if (confirmTimer.current) clearTimeout(confirmTimer.current)
+      confirmTimer.current = setTimeout(() => setConfirmDeletePath(null), 3000)
+      return
+    }
+    setConfirmDeletePath(null)
+    if (confirmTimer.current) clearTimeout(confirmTimer.current)
+    const ok = await window.electronAPI.deleteSessionFile(info.filePath)
+    // Only the history entry goes away — a live session resumed from this
+    // file keeps running untouched.
+    if (ok) removeHistorySession(info.filePath)
   }
 
   const pinnedSet = useMemo(() => new Set(pinnedSessionIds), [pinnedSessionIds])
@@ -114,6 +175,16 @@ export default function Sidebar() {
     () => filteredSessions.filter((s) => archivedSet.has(s.id)),
     [filteredSessions, archivedSet]
   )
+
+  // History entries whose file a live session was resumed from are hidden;
+  // the search box filters the history list by title too.
+  const visibleHistory = useMemo(() => {
+    const resumed = new Set(sessions.map((s) => s.resumeFrom).filter(Boolean))
+    let list = historySessions.filter((h) => !resumed.has(h.filePath))
+    const q = query.trim().toLowerCase()
+    if (q) list = list.filter((h) => h.title.toLowerCase().includes(q))
+    return list
+  }, [historySessions, sessions, query])
 
   const navRow = (active: boolean) =>
     `group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] transition-all duration-150 ease-standard ${
@@ -204,6 +275,53 @@ export default function Sidebar() {
         >
           <Trash2 size={12} />
         </button>
+      </div>
+    )
+  }
+
+  const renderHistoryRow = (info: HistorySessionInfo) => {
+    const resuming = resumingPath === info.filePath
+    const confirming = confirmDeletePath === info.filePath
+    const failed = restoreFailedPath === info.filePath
+    return (
+      <div
+        key={info.filePath}
+        onClick={() => void handleResumeHistory(info)}
+        title={info.filePath}
+        className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-[7px] transition-colors duration-150 hover:bg-overlay ${
+          resuming ? 'pointer-events-none opacity-60' : ''
+        }`}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] leading-5 text-cream-faint">
+            {info.title === 'Untitled' ? t('history.untitled') : info.title}
+          </div>
+          <div
+            className={`truncate font-mono text-[10px] leading-4 ${
+              failed ? 'text-red-500' : 'text-cream-faint/70'
+            }`}
+          >
+            {failed ? t('history.restoreFailed') : formatRelativeTime(info.timestamp, language)}
+          </div>
+        </div>
+        {resuming ? (
+          <Loader2 size={12} className="shrink-0 animate-spin text-cream-faint" />
+        ) : (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              void handleDeleteHistory(info)
+            }}
+            title={confirming ? t('history.deleteConfirm') : t('history.delete')}
+            className={
+              confirming
+                ? 'shrink-0 rounded-md bg-red-500/15 p-1 text-red-500 transition-all'
+                : `${iconBtn} hover:bg-red-500/15 hover:text-red-500`
+            }
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
       </div>
     )
   }
@@ -312,6 +430,15 @@ export default function Sidebar() {
               {t('sidebar.archived', { count: archivedSessions.length })}
             </button>
             {archiveOpen && <div className="space-y-0.5">{archivedSessions.map(renderSessionRow)}</div>}
+          </div>
+        )}
+
+        {visibleHistory.length > 0 && (
+          <div className="mt-4">
+            <div className="px-2 pb-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-cream-faint">
+              {t('history.title')}
+            </div>
+            <div className="space-y-0.5">{visibleHistory.map(renderHistoryRow)}</div>
           </div>
         )}
       </div>

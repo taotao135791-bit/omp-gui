@@ -32,7 +32,9 @@ import {
   followUp,
   setThinkingLevel,
   exportHtml,
-  getSessionState
+  getSessionState,
+  setSessionName,
+  resumeSession
 } from './omp'
 import {
   listPackages,
@@ -56,6 +58,7 @@ import {
   getCheckpoint
 } from './checkpoints'
 import { getGitInfo, getFileDiff } from './gitinfo'
+import { listSessionHistory, deleteSessionFile } from './sessionHistory'
 import { defaultExportFileName } from './exportPath'
 import { listProjectFiles } from './projectFiles'
 import { maybeNotifyTurnFinished, maybeNotifyUiRequest } from './notify'
@@ -289,6 +292,41 @@ export function registerIpc() {
     async (_event: IpcMainInvokeEvent, sessionId: string) => {
       if (typeof sessionId !== 'string' || !sessionId) return null
       return getSessionState(sessionId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_LIST_SESSION_HISTORY,
+    async (_event: IpcMainInvokeEvent, projectDir: string) => {
+      if (typeof projectDir !== 'string' || !projectDir.trim()) return []
+      return listSessionHistory(path.resolve(projectDir))
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_RESUME_SESSION,
+    async (_event: IpcMainInvokeEvent, projectDir: string, filePath: string) => {
+      if (typeof projectDir !== 'string' || !projectDir.trim()) return null
+      if (typeof filePath !== 'string' || !filePath.trim()) return null
+      const resolved = path.resolve(projectDir)
+      fsGuard.addRoot(resolved)
+      return resumeSession(resolved, broadcastSessionEvent, filePath)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_DELETE_SESSION_FILE,
+    async (_event: IpcMainInvokeEvent, filePath: string) => {
+      if (typeof filePath !== 'string' || !filePath.trim()) return false
+      return deleteSessionFile(filePath)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_SET_SESSION_NAME,
+    async (_event: IpcMainInvokeEvent, sessionId: string, name: string) => {
+      if (typeof sessionId !== 'string' || !sessionId || typeof name !== 'string') return false
+      return setSessionName(sessionId, name)
     }
   )
 

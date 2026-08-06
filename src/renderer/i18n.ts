@@ -27,6 +27,13 @@ const en = {
   'sidebar.unarchive': 'Unarchive',
   'sidebar.archived': 'Archived ({count})',
 
+  // Session history (persisted pi sessions)
+  'history.title': 'History',
+  'history.untitled': 'Untitled',
+  'history.delete': 'Delete session file',
+  'history.deleteConfirm': 'Confirm?',
+  'history.restoreFailed': 'Failed to restore session',
+
   // Chat panel
   'chat.noActiveSession': 'No active session',
   'chat.noProject': 'No project selected',
@@ -297,6 +304,12 @@ const zh: Record<I18nKey, string> = {
   'sidebar.archive': '归档',
   'sidebar.unarchive': '取消归档',
   'sidebar.archived': '已归档（{count}）',
+
+  'history.title': '历史会话',
+  'history.untitled': '未命名会话',
+  'history.delete': '删除会话记录',
+  'history.deleteConfirm': '确认删除？',
+  'history.restoreFailed': '恢复会话失败',
 
   'chat.noActiveSession': '没有活动会话',
   'chat.noProject': '未选择项目',

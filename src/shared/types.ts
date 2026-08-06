@@ -12,6 +12,8 @@ export interface Session {
   title: string
   createdAt: number
   status: 'idle' | 'running' | 'error'
+  /** Session file this session was resumed from, if any. */
+  resumeFrom?: string
 }
 
 export type SessionEvent =
@@ -139,6 +141,36 @@ export type SelectImageResult =
 
 /** How a prompt sent mid-stream is queued by pi. */
 export type StreamingBehavior = 'steer' | 'followUp'
+
+/**
+ * A chat message as rendered by the GUI. Mirrors the renderer's MessageLike;
+ * defined here so the main process can rebuild transcripts for resumed sessions.
+ */
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  /** system messages only: 'info' renders neutral instead of the error style. */
+  variant?: 'info'
+  toolCall?: {
+    tool: string
+    input: unknown
+    output?: unknown
+    isError?: boolean
+  }
+}
+
+/** A persisted pi session file discovered under the agent's sessions dir. */
+export interface HistorySessionInfo {
+  /** Session uuid from the file header. */
+  uuid: string
+  filePath: string
+  /** First user message, truncated to 80 chars; 'Untitled' when absent. */
+  title: string
+  /** Session start time, epoch ms. */
+  timestamp: number
+  cwd: string
+}
 
 /**
  * Legacy three-tier tool access, still used by the current renderer UI.

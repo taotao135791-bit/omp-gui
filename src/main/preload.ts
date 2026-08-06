@@ -22,7 +22,9 @@ import {
   StreamingBehavior,
   ThinkingLevel,
   SelectImageResult,
-  UpdaterStatus
+  UpdaterStatus,
+  ChatMessage,
+  HistorySessionInfo
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -77,6 +79,17 @@ export interface ElectronAPI {
   exportHtml: (sessionId: string, outputPath?: string) => Promise<string | null>
   /** Live RPC get_state snapshot of a session; null when unavailable. */
   getSessionState: (sessionId: string) => Promise<SessionState | null>
+  /** Persisted sessions of a project (pi session files), newest first. */
+  listSessionHistory: (projectDir: string) => Promise<HistorySessionInfo[]>
+  /** Resume a persisted session file; returns the live session + transcript. */
+  resumeSession: (
+    projectDir: string,
+    filePath: string
+  ) => Promise<{ session: Session; messages: ChatMessage[] } | null>
+  /** Delete a persisted session file (guarded to pi's sessions root). */
+  deleteSessionFile: (filePath: string) => Promise<boolean>
+  /** Set a session's display name (single line, max 60 chars). */
+  setSessionName: (sessionId: string, name: string) => Promise<boolean>
   /** Snapshot the session's project as a git checkpoint; null for non-git dirs. */
   checkpointCreate: (
     sessionId: string,
@@ -185,6 +198,14 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.OMP_EXPORT_HTML, sessionId, outputPath),
   getSessionState: (sessionId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SESSION_STATE, sessionId),
+  listSessionHistory: (projectDir: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_SESSION_HISTORY, projectDir),
+  resumeSession: (projectDir: string, filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_RESUME_SESSION, projectDir, filePath),
+  deleteSessionFile: (filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_DELETE_SESSION_FILE, filePath),
+  setSessionName: (sessionId: string, name: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_SET_SESSION_NAME, sessionId, name),
   checkpointCreate: (sessionId: string, msgIndex: number, promptPreview: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_CREATE, sessionId, msgIndex, promptPreview),
   checkpointList: (sessionId: string) =>
