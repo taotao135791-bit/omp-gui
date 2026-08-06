@@ -61,6 +61,15 @@ pnpm build       # type-check + bundle
 pnpm package     # electron-builder → release/
 ```
 
+When cutting a GitHub release, upload **all** updater assets, not just the dmgs — electron-updater needs the rest:
+
+```bash
+gh release create vX.Y.Z \
+  release/OMP-GUI-arm64.dmg release/OMP-GUI-x64.dmg \
+  release/OMP-GUI-arm64.zip release/OMP-GUI-x64.zip \
+  release/latest-mac.yml release/*.blockmap
+```
+
 ## Project Structure
 
 ```
