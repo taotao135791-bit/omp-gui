@@ -43,7 +43,7 @@ export default function UsageMonitor({ sessionId }: UsageMonitorProps) {
 
   if (compacting) {
     return (
-      <div className="pointer-events-none flex items-center gap-1.5 rounded-full border border-line bg-ink-850/90 px-2.5 py-1 font-mono text-[10px] text-accent shadow-card backdrop-blur">
+      <div className="pointer-events-none flex items-center gap-1.5 rounded-full border border-line bg-ink-850/90 px-3 py-1 font-mono text-[11px] tabular-nums text-accent shadow-card backdrop-blur">
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
         {t('usage.compacting')}
       </div>
@@ -64,14 +64,14 @@ export default function UsageMonitor({ sessionId }: UsageMonitorProps) {
 
   return (
     <div
-      className="pointer-events-none flex items-center gap-2 rounded-full border border-line bg-ink-850/90 px-2.5 py-1 font-mono text-[10px] text-cream-faint shadow-card backdrop-blur"
+      className="pointer-events-none flex items-center gap-2 rounded-full border border-line bg-ink-850/90 px-3 py-1 font-mono text-[11px] tabular-nums text-cream-faint shadow-card backdrop-blur"
       title={t('usage.tooltip')}
     >
       <span>
         {formatTokens(tokens.total)} {t('usage.tokens')}
       </span>
       {cacheBase > 0 && (
-        <span className={cacheHit >= 50 ? 'text-emerald-600 dark:text-emerald-400' : ''}>
+        <span className={cacheHit >= 50 ? 'text-accent' : ''}>
           {t('usage.cache')} {cacheHit}%
         </span>
       )}

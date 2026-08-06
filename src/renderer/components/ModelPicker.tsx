@@ -55,19 +55,19 @@ export default function ModelPicker() {
           setOpen((v) => !v)
           if (!open) loadModelState()
         }}
-        className="focus-ring flex items-center gap-1.5 rounded-lg border border-transparent px-2 py-1.5 text-[11px] font-medium text-cream-dim transition-colors hover:border-line hover:bg-overlay hover:text-cream"
+        className="focus-ring flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[12px] font-medium text-cream-dim transition-all hover:border-ink-600 hover:text-cream"
         title={t('composer.model')}
       >
-        <Cpu size={13} />
+        <Cpu size={12} />
         <span className="max-w-36 truncate">{label}</span>
         <ChevronUp size={11} className={`transition ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-30 mb-1.5 max-h-80 w-64 overflow-y-auto rounded-xl border border-line bg-ink-900 p-1 shadow-pop">
+        <div className="absolute bottom-full left-0 z-30 mb-1.5 max-h-80 w-64 overflow-y-auto rounded-xl border border-line bg-ink-850 p-1 shadow-pop">
           <button
             onClick={() => pick('', '')}
-            className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-cream transition hover:bg-ink-800"
+            className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream transition hover:bg-overlay"
           >
             <span>{t('composer.modelAuto')}</span>
             {!provider && <Check size={12} className="text-accent" />}
@@ -82,7 +82,7 @@ export default function ModelPicker() {
                 <button
                   key={`${m.provider}/${m.id}`}
                   onClick={() => pick(m.provider, m.id)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-cream transition hover:bg-ink-800"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream transition hover:bg-overlay"
                 >
                   <span className="min-w-0">
                     <span className="block truncate">{m.name}</span>
@@ -104,7 +104,7 @@ export default function ModelPicker() {
                 setOpen(false)
                 navigate('/settings')
               }}
-              className="mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-cream-dim transition hover:bg-ink-800 hover:text-cream"
+              className="mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream-dim transition hover:bg-overlay hover:text-cream"
             >
               <KeyRound size={12} />
               {t('composer.noModels')}

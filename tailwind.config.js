@@ -37,7 +37,8 @@ module.exports = {
       },
       boxShadow: {
         pop: 'var(--shadow-pop)',
-        card: 'var(--shadow-card)'
+        card: 'var(--shadow-card)',
+        composer: 'var(--shadow-composer)'
       },
       transitionTimingFunction: {
         standard: 'var(--ease)'

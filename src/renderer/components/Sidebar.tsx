@@ -187,10 +187,10 @@ export default function Sidebar() {
   }, [historySessions, sessions, query])
 
   const navRow = (active: boolean) =>
-    `group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] transition-all duration-150 ease-standard ${
+    `group flex h-8 w-full items-center gap-2.5 rounded-lg border px-2.5 text-[13px] transition-all duration-150 ease-standard ${
       active
-        ? 'bg-overlay-strong font-medium text-cream'
-        : 'text-cream-dim hover:bg-overlay hover:text-cream'
+        ? 'border-line bg-ink-850 font-medium text-cream shadow-card'
+        : 'border-transparent text-cream-dim hover:bg-overlay hover:text-cream'
     }`
 
   const iconBtn =
@@ -209,8 +209,8 @@ export default function Sidebar() {
           setCurrentSessionId(session.id)
           navigate('/')
         }}
-        className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-[7px] transition-colors duration-150 ${
-          active ? 'bg-overlay-strong' : 'hover:bg-overlay'
+        className={`group flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-[6px] transition-all duration-150 ease-standard ${
+          active ? 'border-line bg-ink-850 shadow-card' : 'border-transparent hover:bg-overlay'
         }`}
       >
         <span
@@ -225,14 +225,10 @@ export default function Sidebar() {
           }`}
         />
         <div className="min-w-0 flex-1">
-          <div
-            className={`truncate text-[13px] leading-5 ${
-              active ? 'font-medium text-cream' : 'text-cream-dim'
-            }`}
-          >
+          <div className="truncate text-[13px] font-medium leading-5 text-cream">
             {session.title}
           </div>
-          <div className="truncate font-mono text-[10px] leading-4 text-cream-faint">
+          <div className="truncate text-[11px] leading-4 text-cream-faint">
             {formatRelativeTime(session.createdAt, language)}
           </div>
         </div>
@@ -246,7 +242,7 @@ export default function Sidebar() {
             className={
               pinned
                 ? 'shrink-0 rounded-md p-1 text-accent transition-all hover:bg-overlay-strong'
-                : `${iconBtn} hover:bg-overlay-strong hover:text-cream`
+                : `${iconBtn} hover:bg-overlay-strong hover:text-cream-dim`
             }
           >
             {pinned ? <PinOff size={12} /> : <Pin size={12} />}
@@ -260,7 +256,7 @@ export default function Sidebar() {
               setSessionArchived(session.id, !archived)
             }}
             title={archived ? t('sidebar.unarchive') : t('sidebar.archive')}
-            className={`${iconBtn} hover:bg-overlay-strong hover:text-cream`}
+            className={`${iconBtn} hover:bg-overlay-strong hover:text-cream-dim`}
           >
             {archived ? <ArchiveRestore size={12} /> : <Archive size={12} />}
           </button>
@@ -288,16 +284,16 @@ export default function Sidebar() {
         key={info.filePath}
         onClick={() => void handleResumeHistory(info)}
         title={info.filePath}
-        className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-[7px] transition-colors duration-150 hover:bg-overlay ${
+        className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-[6px] transition-colors duration-150 hover:bg-overlay ${
           resuming ? 'pointer-events-none opacity-60' : ''
         }`}
       >
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] leading-5 text-cream-faint">
+          <div className="truncate text-[13px] leading-5 text-cream-dim">
             {info.title === 'Untitled' ? t('history.untitled') : info.title}
           </div>
           <div
-            className={`truncate font-mono text-[10px] leading-4 ${
+            className={`truncate text-[11px] leading-4 ${
               failed ? 'text-red-500' : 'text-cream-faint/70'
             }`}
           >
@@ -350,13 +346,19 @@ export default function Sidebar() {
 
       {searchOpen && (
         <div className="px-3 pb-2.5">
-          <input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('sidebar.searchSessions')}
-            className="w-full rounded-lg border border-line bg-ink-850 px-2.5 py-1.5 text-xs text-cream shadow-card placeholder-cream-faint outline-none transition-colors focus:border-line-strong"
-          />
+          <div className="relative">
+            <Search
+              size={12}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cream-faint"
+            />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('sidebar.searchSessions')}
+              className="h-7 w-full rounded-full border border-line bg-ink-850 pl-7 pr-2.5 text-[12px] text-cream placeholder-cream-faint outline-none transition-colors focus:border-accent/50"
+            />
+          </div>
         </div>
       )}
 
@@ -395,7 +397,7 @@ export default function Sidebar() {
       )}
 
       <div className="mt-5 px-2.5">
-        <div className="px-2 pb-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-cream-faint">
+        <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
           {t('sidebar.project')}
         </div>
         <button onClick={handleSelectProject} className={`${navRow(false)} font-mono text-xs`}>
@@ -405,7 +407,7 @@ export default function Sidebar() {
       </div>
 
       <div className="mt-5 flex-1 overflow-y-auto px-2.5 pb-2">
-        <div className="px-2 pb-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-cream-faint">
+        <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
           {t('sidebar.sessions')}
         </div>
         {pinnedSessions.length === 0 && normalSessions.length === 0 ? (
@@ -424,9 +426,13 @@ export default function Sidebar() {
           <div className="mt-2">
             <button
               onClick={() => setArchiveOpen(!archiveOpen)}
-              className="flex w-full items-center gap-1 px-2 pb-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-cream-faint transition-colors hover:text-cream-dim"
+              className="flex w-full items-center gap-1 px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint transition-colors hover:text-cream-dim"
             >
-              {archiveOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+              {archiveOpen ? (
+                <ChevronDown size={11} strokeWidth={1.5} />
+              ) : (
+                <ChevronRight size={11} strokeWidth={1.5} />
+              )}
               {t('sidebar.archived', { count: archivedSessions.length })}
             </button>
             {archiveOpen && <div className="space-y-0.5">{archivedSessions.map(renderSessionRow)}</div>}
@@ -435,7 +441,7 @@ export default function Sidebar() {
 
         {visibleHistory.length > 0 && (
           <div className="mt-4">
-            <div className="px-2 pb-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-cream-faint">
+            <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
               {t('history.title')}
             </div>
             <div className="space-y-0.5">{visibleHistory.map(renderHistoryRow)}</div>
@@ -455,15 +461,15 @@ export default function Sidebar() {
         >
           <Settings size={15} />
         </button>
-        <div className="ml-0.5 flex rounded-lg border border-line bg-overlay p-0.5">
+        <div className="ml-0.5 flex rounded-full border border-line bg-ink-800 p-0.5">
           {(['zh', 'en'] as const).map((lang) => (
             <button
               key={lang}
               onClick={() => setLanguage(lang)}
-              className={`rounded-md px-2 py-0.5 text-[10.5px] font-medium transition-colors ${
+              className={`rounded-full border px-2 py-0.5 text-[10.5px] font-medium transition-colors ${
                 language === lang
-                  ? 'bg-ink-850 text-cream shadow-card'
-                  : 'text-cream-dim hover:text-cream'
+                  ? 'border-line bg-ink-850 text-cream shadow-card'
+                  : 'border-transparent text-cream-dim hover:text-cream'
               }`}
             >
               {lang === 'zh' ? '中' : 'EN'}

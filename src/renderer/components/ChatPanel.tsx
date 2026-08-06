@@ -13,39 +13,34 @@ import Logo from './Logo'
 
 interface Suggestion {
   icon: typeof Compass
-  iconClass: string
-  chipClass: string
   labelKey: I18nKey
+  descKey: I18nKey
   promptKey: I18nKey
 }
 
 const SUGGESTIONS: Suggestion[] = [
   {
     icon: Compass,
-    iconClass: 'text-sky-600 dark:text-sky-400',
-    chipClass: 'bg-sky-500/10',
     labelKey: 'chat.suggest.explore',
+    descKey: 'chat.suggest.explore.desc',
     promptKey: 'chat.suggest.explore.prompt'
   },
   {
     icon: Hammer,
-    iconClass: 'text-violet-600 dark:text-violet-400',
-    chipClass: 'bg-violet-500/10',
     labelKey: 'chat.suggest.build',
+    descKey: 'chat.suggest.build.desc',
     promptKey: 'chat.suggest.build.prompt'
   },
   {
     icon: GitPullRequest,
-    iconClass: 'text-emerald-600 dark:text-emerald-400',
-    chipClass: 'bg-emerald-500/10',
     labelKey: 'chat.suggest.review',
+    descKey: 'chat.suggest.review.desc',
     promptKey: 'chat.suggest.review.prompt'
   },
   {
     icon: Bug,
-    iconClass: 'text-orange-600 dark:text-orange-400',
-    chipClass: 'bg-orange-500/10',
     labelKey: 'chat.suggest.fix',
+    descKey: 'chat.suggest.fix.desc',
     promptKey: 'chat.suggest.fix.prompt'
   }
 ]
@@ -224,31 +219,34 @@ export default function ChatPanel() {
       <div className="relative min-h-0 flex-1">
         <div className="relative h-full overflow-y-auto">
         {showHero ? (
-          <div className="flex h-full flex-col items-center justify-center px-8 pb-10">
-            <div className="flex w-full max-w-2xl flex-col items-center">
+          <div className="flex h-full flex-col items-center justify-center px-8 pb-[14vh]">
+            <div className="flex w-full max-w-[640px] flex-col items-center">
               <div className="rise" style={{ animationDelay: '0ms' }}>
-                <Logo size={52} />
+                <Logo size={40} />
               </div>
               <h2
-                className="rise mb-9 mt-5 font-serif text-[30px] font-medium tracking-tight text-cream"
+                className="rise mb-8 mt-4 text-[26px] font-semibold tracking-[-0.01em] text-cream"
                 style={{ animationDelay: '60ms' }}
               >
                 {t('chat.hero.title')}
               </h2>
-              <div className="grid w-full grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="grid w-full grid-cols-2 gap-3">
                 {SUGGESTIONS.map((s, i) => (
                   <button
                     key={s.labelKey}
                     onClick={() => handleSend(t(s.promptKey))}
                     disabled={cliAvailable === false}
                     style={{ animationDelay: `${120 + i * 70}ms` }}
-                    className="rise group flex min-h-[104px] flex-col items-start gap-3 rounded-xl border border-line bg-ink-850 p-3.5 text-left shadow-card transition-all duration-200 ease-standard hover:-translate-y-0.5 hover:border-line-strong hover:shadow-pop disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+                    className="rise group flex flex-col items-start gap-2.5 rounded-[14px] border border-line bg-ink-850 p-4 text-left transition-all duration-150 ease-standard hover:-translate-y-px hover:border-ink-600 hover:shadow-card disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
                   >
-                    <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${s.chipClass}`}>
-                      <s.icon size={15} className={s.iconClass} strokeWidth={1.8} />
+                    <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-accent-soft">
+                      <s.icon size={16} className="text-accent" strokeWidth={1.8} />
                     </span>
-                    <span className="text-[13px] font-medium leading-5 text-cream-dim transition-colors group-hover:text-cream">
+                    <span className="text-[13px] font-medium leading-5 text-cream">
                       {t(s.labelKey)}
+                    </span>
+                    <span className="-mt-1.5 truncate text-[12px] leading-5 text-cream-faint">
+                      {t(s.descKey)}
                     </span>
                   </button>
                 ))}
@@ -256,16 +254,13 @@ export default function ChatPanel() {
             </div>
           </div>
         ) : (
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-[760px]">
             <MessageList messages={sessionMessages} sessionId={currentSessionId} />
             {showThinking && (
-              <div className="msg-in flex items-center gap-3 px-4 pb-6">
-                <Logo size={22} className="shrink-0" />
-                <div className="flex items-center gap-1">
-                  <span className="think-dot h-1.5 w-1.5 rounded-full bg-cream-dim" />
-                  <span className="think-dot h-1.5 w-1.5 rounded-full bg-cream-dim" />
-                  <span className="think-dot h-1.5 w-1.5 rounded-full bg-cream-dim" />
-                </div>
+              <div className="msg-in flex items-center gap-1 px-6 pb-6">
+                <span className="think-dot h-1.5 w-1.5 rounded-full bg-cream-dim" />
+                <span className="think-dot h-1.5 w-1.5 rounded-full bg-cream-dim" />
+                <span className="think-dot h-1.5 w-1.5 rounded-full bg-cream-dim" />
               </div>
             )}
           </div>

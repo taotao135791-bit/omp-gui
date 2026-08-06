@@ -167,7 +167,7 @@ export default function SetupWizard() {
               />
               <button
                 onClick={handleCopy}
-                className="rounded-lg border border-line px-3 py-2 text-xs text-cream-dim transition hover:bg-overlay-strong hover:text-cream"
+                className="shrink-0 whitespace-nowrap rounded-lg border border-line px-3 py-2 text-xs text-cream-dim transition hover:bg-overlay-strong hover:text-cream"
               >
                 {copied ? t('setup.copied') : t('setup.copy')}
               </button>

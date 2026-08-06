@@ -206,14 +206,19 @@ export default function PackagesPage() {
     }
   })
 
-  const zoneClass = (zone: DropZone, base: string) =>
-    `${base} transition ${
+  // Border color is chosen by state (not overridden) so the highlight wins
+  // regardless of utility order in the generated CSS.
+  const zoneClass = (zone: DropZone, base: string) => {
+    const state =
       overZone === zone
         ? zone === 'trash'
           ? 'border-red-500/60 bg-red-500/10'
-          : 'border-accent bg-accent/5'
-        : ''
-    }`
+          : 'border-accent/60 bg-accent-soft'
+        : zone === 'trash'
+          ? 'border-red-500/40'
+          : 'border-line-strong'
+    return `${base} transition ${state}`
+  }
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
@@ -225,7 +230,7 @@ export default function PackagesPage() {
         </div>
         <button
           onClick={refresh}
-          className="app-no-drag flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-xs text-cream-dim transition hover:border-ink-600 hover:text-cream"
+          className="app-no-drag flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition hover:border-ink-600 hover:text-cream"
         >
           <RotateCcw size={11} />
           {t('plugins.refresh')}
@@ -233,10 +238,10 @@ export default function PackagesPage() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-5 pb-20">
-        <div className="mx-auto max-w-2xl space-y-4">
+        <div className="mx-auto max-w-[760px] space-y-4">
           {/* Install */}
-          <section className="rounded-lg border border-line bg-ink-850 p-4">
-            <div className="mb-2.5 text-[11px] font-medium uppercase tracking-wider text-cream-faint">
+          <section className="rounded-[16px] border border-line bg-ink-850 p-4 shadow-card">
+            <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
               {t('plugins.installTitle')}
             </div>
             <div className="flex gap-2">
@@ -249,13 +254,13 @@ export default function PackagesPage() {
                 }}
                 placeholder={t('plugins.installPlaceholder')}
                 disabled={pending !== null}
-                className="flex-1 rounded-md border border-line bg-ink-900 px-3 py-2 font-mono text-xs text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/40 disabled:opacity-50"
+                className="min-w-0 flex-1 rounded-lg border border-line bg-ink-900 px-3 py-2 font-mono text-[13px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50 focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50"
               />
               <button
                 onClick={() => handlePick('folder')}
                 disabled={pending !== null}
                 title={t('plugins.browseFolder')}
-                className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-2 text-xs text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+                className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
               >
                 <FolderOpen size={12} />
                 {t('plugins.browseFolder')}
@@ -264,7 +269,7 @@ export default function PackagesPage() {
                 onClick={() => handlePick('file')}
                 disabled={pending !== null}
                 title={t('plugins.browseFile')}
-                className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-2 text-xs text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+                className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
               >
                 <FileCode size={12} />
                 {t('plugins.browseFile')}
@@ -272,7 +277,7 @@ export default function PackagesPage() {
               <button
                 onClick={() => handleInstall()}
                 disabled={!source.trim() || pending !== null}
-                className="flex items-center gap-1.5 rounded-md bg-cream px-3 py-2 text-xs font-medium text-ink-950 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex shrink-0 items-center gap-1.5 rounded-full bg-cream px-4 py-2 text-[12px] font-medium whitespace-nowrap text-ink-950 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Plus size={12} />
                 {pending?.kind === 'install' ? t('plugins.installing') : t('plugins.install')}
@@ -280,7 +285,7 @@ export default function PackagesPage() {
             </div>
             {log && log.text && (
               <pre
-                className={`mt-3 max-h-36 overflow-y-auto rounded-md border px-3 py-2 font-mono text-[11px] leading-5 whitespace-pre-wrap ${
+                className={`mt-3 max-h-36 overflow-y-auto rounded-lg border px-3 py-2 font-mono text-[11px] leading-5 whitespace-pre-wrap ${
                   log.ok
                     ? 'border-line bg-ink-900 text-cream-dim'
                     : 'border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-300'
@@ -292,7 +297,7 @@ export default function PackagesPage() {
           </section>
 
           {/* How to assemble */}
-          <section className="rounded-lg border border-line bg-ink-850 px-4 py-3">
+          <section className="rounded-[16px] border border-line bg-ink-850 px-4 py-3 shadow-card">
             <div className="flex items-start gap-2.5">
               <Info size={13} className="mt-0.5 shrink-0 text-accent" />
               <div className="space-y-1 text-xs leading-5 text-cream-dim">
@@ -309,13 +314,13 @@ export default function PackagesPage() {
             {...zoneDropProps('chassis')}
             className={zoneClass(
               'chassis',
-              'rounded-xl border border-dashed border-line bg-ink-850/60 p-4'
+              'rounded-[18px] border-[1.5px] border-dashed bg-ink-850/60 p-4'
             )}
           >
             <div className="mb-3 flex items-center gap-2.5">
               <Logo size={28} className="shrink-0" />
               <span className="text-[13px] font-semibold text-cream">{t('plugins.core')}</span>
-              <span className="rounded-full bg-accent/15 px-2 py-0.5 font-mono text-[10px] text-accent">
+              <span className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] text-accent">
                 {t('plugins.mounted', { count: mounted.length })}
               </span>
             </div>
@@ -349,10 +354,10 @@ export default function PackagesPage() {
           {/* Rack — detached parts */}
           <section
             {...zoneDropProps('rack')}
-            className={zoneClass('rack', 'rounded-xl border border-dashed border-line p-4')}
+            className={zoneClass('rack', 'rounded-[18px] border-[1.5px] border-dashed p-4')}
           >
             <div className="mb-3 flex items-center gap-2 px-1">
-              <span className="text-[11px] font-medium uppercase tracking-wider text-cream-faint">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
                 {t('plugins.rack')}
               </span>
               <span className="rounded-full bg-overlay-strong px-2 py-0.5 font-mono text-[10px] text-cream-dim">
@@ -392,7 +397,7 @@ export default function PackagesPage() {
             {...zoneDropProps('trash')}
             className={zoneClass(
               'trash',
-              'pointer-events-auto flex items-center gap-2 rounded-xl border border-dashed border-red-500/40 bg-ink-850 px-6 py-3 text-xs font-medium text-red-600 dark:text-red-300'
+              'pointer-events-auto flex items-center gap-2 rounded-xl border-[1.5px] border-dashed bg-ink-850 px-6 py-3 text-xs font-medium text-red-600 dark:text-red-300'
             )}
           >
             <Trash2 size={14} />
@@ -449,8 +454,8 @@ function PartCard({
         setDragging(false)
         onDragStateChange(null)
       }}
-      className={`group rounded-lg border bg-ink-850 p-3.5 transition ${
-        dragging ? 'border-accent/50 opacity-50' : 'border-line hover:border-ink-600'
+      className={`group rounded-xl border bg-ink-850 p-3.5 transition ${
+        dragging ? 'border-accent/50 opacity-50' : 'border-line hover:border-ink-600 hover:shadow-card'
       } ${pkg.enabled ? '' : 'opacity-70'}`}
     >
       <div className="flex items-start gap-2.5">
@@ -460,13 +465,18 @@ function PartCard({
         />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                pkg.enabled ? 'bg-emerald-500' : 'bg-cream-faint/50'
+              }`}
+            />
             <span className="text-[13px] font-semibold text-cream">{pkg.name}</span>
             {pkg.version && (
               <span className="rounded-full bg-overlay-strong px-1.5 py-0.5 font-mono text-[10px] text-cream-dim">
                 {pkg.version}
               </span>
             )}
-            <span className="rounded-full bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] uppercase text-accent">
+            <span className="rounded-full bg-accent-soft px-1.5 py-0.5 font-mono text-[10px] uppercase text-accent">
               {pkg.kind === 'local' ? t('plugins.kind.local') : pkg.kind}
             </span>
             {pkg.pinned && (
@@ -504,7 +514,7 @@ function PartCard({
               onClick={onUpdate}
               disabled={pending !== null}
               title={updating ? t('plugins.updating') : t('plugins.update')}
-              className="rounded-md border border-line p-1.5 text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+              className="rounded-md p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream disabled:opacity-50"
             >
               <ArrowUpCircle size={13} />
             </button>
@@ -519,10 +529,10 @@ function PartCard({
                   ? t('plugins.uninstallConfirm')
                   : t('plugins.uninstall')
             }
-            className={`rounded-md border p-1.5 transition disabled:opacity-50 ${
+            className={`rounded-md p-1.5 transition disabled:opacity-50 ${
               confirmRemove
-                ? 'border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-300'
-                : 'border-line text-cream-dim hover:border-red-500/40 hover:text-red-500'
+                ? 'bg-red-500/10 text-red-600 dark:text-red-300'
+                : 'text-cream-faint hover:bg-red-500/10 hover:text-red-500'
             }`}
           >
             <Trash2 size={13} />
@@ -608,7 +618,7 @@ function DiscoverSection({
       {/* Curated picks */}
       {curated !== null &&
         (curated.length === 0 ? (
-          <div className="rounded-lg border border-line bg-ink-850 px-4 py-3 text-xs text-cream-faint">
+          <div className="rounded-[16px] border border-line bg-ink-850 px-4 py-3 text-xs text-cream-faint">
             {t('plugins.curatedEmpty')}
           </div>
         ) : (
@@ -631,8 +641,8 @@ function DiscoverSection({
         ))}
 
       {/* Community search */}
-      <div className="rounded-lg border border-line bg-ink-850 p-4">
-        <div className="mb-2.5 text-[11px] font-medium uppercase tracking-wider text-cream-faint">
+      <div className="rounded-[16px] border border-line bg-ink-850 p-4 shadow-card">
+        <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
           {t('plugins.community')}
         </div>
         <div className="relative">
@@ -645,7 +655,7 @@ function DiscoverSection({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('plugins.communityPlaceholder')}
-            className="w-full rounded-md border border-line bg-ink-900 py-2 pr-3 pl-8 text-xs text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/40"
+            className="w-full rounded-full border border-line bg-ink-900 py-2 pr-3 pl-8 text-[12px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50 focus:shadow-[0_0_0_3px_var(--accent-soft)]"
           />
         </div>
         {searching && <div className="mt-3 text-xs text-cream-faint">{t('plugins.searching')}</div>}
@@ -670,7 +680,7 @@ function DiscoverSection({
       {/* Build your own */}
       <button
         onClick={handleBuildOwn}
-        className="flex w-full items-center gap-3 rounded-xl border border-dashed border-line px-4 py-3.5 text-left transition hover:border-accent/50 hover:bg-accent/5"
+        className="flex w-full items-center gap-3 rounded-[16px] border border-dashed border-line px-4 py-3.5 text-left transition hover:border-accent/60 hover:bg-accent-soft"
       >
         <Hammer size={15} className="shrink-0 text-accent" />
         <div className="min-w-0">
@@ -695,36 +705,43 @@ function CommunityPackageCard({
 }) {
   const t = useT()
   return (
-    <div className="flex flex-col rounded-lg border border-line bg-ink-850 p-3.5">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-cream">
-          {pkg.name}
-        </span>
-        {pkg.version && (
-          <span className="rounded-full bg-overlay-strong px-1.5 py-0.5 font-mono text-[10px] text-cream-dim">
-            {pkg.version}
+    <div className="flex gap-3 rounded-[14px] border border-line bg-ink-850 p-3.5 transition-all duration-150 ease-standard hover:border-ink-600 hover:shadow-card">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-accent-soft">
+        <Puzzle size={15} strokeWidth={1.8} className="text-accent" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-cream">
+            {pkg.name}
           </span>
+          {pkg.version && (
+            <span className="rounded-full bg-overlay-strong px-1.5 py-0.5 font-mono text-[10px] text-cream-dim">
+              {pkg.version}
+            </span>
+          )}
+        </div>
+        {pkg.description && (
+          <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-cream-dim">
+            {pkg.description}
+          </div>
         )}
-      </div>
-      {pkg.description && (
-        <div className="mt-1 line-clamp-2 text-xs leading-5 text-cream-dim">{pkg.description}</div>
-      )}
-      <div className="mt-2.5 flex justify-end">
-        {installed ? (
-          <span className="flex items-center gap-1 rounded-md bg-accent/15 px-2 py-1 text-[10.5px] font-medium text-accent">
-            <Check size={10} />
-            {t('plugins.installed')}
-          </span>
-        ) : (
-          <button
-            onClick={onInstall}
-            disabled={disabled}
-            className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[10.5px] text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
-          >
-            <Plus size={10} />
-            {t('plugins.install')}
-          </button>
-        )}
+        <div className="mt-2.5 flex justify-end">
+          {installed ? (
+            <span className="flex items-center gap-1 rounded-full bg-accent-soft px-2 py-1 text-[10.5px] font-medium text-accent">
+              <Check size={10} />
+              {t('plugins.installed')}
+            </span>
+          ) : (
+            <button
+              onClick={onInstall}
+              disabled={disabled}
+              className="flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-[10.5px] text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+            >
+              <Plus size={10} />
+              {t('plugins.install')}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )

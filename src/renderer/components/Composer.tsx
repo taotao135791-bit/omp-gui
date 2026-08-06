@@ -385,7 +385,7 @@ export default function Composer({
     <div className="px-4 pb-4 pt-2">
       <div className="relative mx-auto max-w-3xl">
         {menuOpen && (
-          <div className="absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl border border-line bg-ink-900 p-1 shadow-pop">
+          <div className="absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl border border-line bg-ink-850 p-1 shadow-pop">
             <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-cream-faint">
               {t('composer.slashTitle')}
             </div>
@@ -415,7 +415,7 @@ export default function Composer({
           </div>
         )}
         {atOpen && (
-          <div className="absolute bottom-full left-0 right-0 z-20 mb-2 max-h-72 overflow-y-auto rounded-xl border border-line bg-ink-900 p-1 shadow-pop">
+          <div className="absolute bottom-full left-0 right-0 z-20 mb-2 max-h-72 overflow-y-auto rounded-xl border border-line bg-ink-850 p-1 shadow-pop">
             <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-cream-faint">
               {t('composer.atTitle')}
             </div>
@@ -451,19 +451,21 @@ export default function Composer({
           </div>
         )}
         <div
-          className={`rounded-2xl border bg-ink-850 p-2 shadow-card transition-all duration-200 ease-standard focus-within:shadow-pop ${
-            disabled ? 'border-line' : 'border-line focus-within:border-accent/50'
+          className={`rounded-[16px] border border-line bg-ink-850 p-2 shadow-composer transition-all duration-200 ease-standard ${
+            disabled
+              ? ''
+              : 'focus-within:border-accent/50 focus-within:shadow-[var(--shadow-composer),0_0_0_3px_var(--accent-soft)]'
           }`}
         >
           {queue.length > 0 && (
-            <div className="flex flex-col gap-1 px-1.5 pb-1.5">
-              <div className="px-1 text-[10px] font-medium uppercase tracking-[0.08em] text-cream-faint">
+            <div className="flex flex-col gap-1.5 px-1.5 pb-2 pt-0.5">
+              <div className="px-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-cream-faint">
                 {t('composer.queued')} · {queue.length}
               </div>
               {queue.map((m, i) => (
                 <div
                   key={m.id}
-                  className="flex items-center gap-2 rounded-lg border border-line bg-ink-900 px-2 py-1.5"
+                  className="flex items-center gap-2 rounded-full border border-line bg-overlay px-3 py-1"
                 >
                   <span className="shrink-0 font-mono text-[10px] text-cream-faint">{i + 1}</span>
                   <span
@@ -478,14 +480,14 @@ export default function Composer({
                   <button
                     onClick={() => handleSteerNow(m)}
                     title={t('composer.steerNow')}
-                    className="focus-ring shrink-0 rounded p-1 text-accent transition-colors hover:bg-overlay"
+                    className="focus-ring shrink-0 rounded-full p-1 text-accent transition-colors hover:bg-overlay-strong"
                   >
                     <Zap size={11} />
                   </button>
                   <button
                     onClick={() => currentSessionId && removeQueuedMessage(currentSessionId, m.id)}
                     title={t('composer.remove')}
-                    className="focus-ring shrink-0 rounded p-1 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
+                    className="focus-ring shrink-0 rounded-full p-1 text-cream-faint transition-colors hover:bg-overlay-strong hover:text-cream"
                   >
                     <X size={11} />
                   </button>
@@ -494,11 +496,11 @@ export default function Composer({
             </div>
           )}
           {images.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-1.5 pb-1.5">
+            <div className="flex flex-wrap gap-1.5 px-1.5 pb-2 pt-0.5">
               {images.map((img) => (
                 <div
                   key={img.id}
-                  className="relative h-14 w-14 overflow-hidden rounded-lg border border-line bg-ink-900"
+                  className="relative h-14 w-14 overflow-hidden rounded-[10px] border border-line bg-ink-900"
                 >
                   <img src={img.previewUrl} alt="" className="h-full w-full object-cover" />
                   <button
@@ -537,20 +539,20 @@ export default function Composer({
             className="max-h-40 w-full resize-none bg-transparent px-2.5 py-1.5 text-[15px] leading-6 text-cream placeholder-cream-faint outline-none"
           />
           <div className="flex items-center justify-between px-1 pb-0.5 pt-0.5">
-            <div className="flex items-center gap-0.5">
+            <div className="flex items-center gap-1.5">
               <button
                 onClick={handleAttachFile}
                 title={t('composer.attach')}
-                className="focus-ring rounded-lg p-1.5 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
+                className="focus-ring flex h-7 w-7 items-center justify-center rounded-full border border-line text-cream-dim transition-all hover:border-ink-600 hover:text-cream"
               >
-                <Paperclip size={14} />
+                <Paperclip size={12} />
               </button>
               <button
                 onClick={handlePickImage}
                 title={t('composer.attachImage')}
-                className="focus-ring rounded-lg p-1.5 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
+                className="focus-ring flex h-7 w-7 items-center justify-center rounded-full border border-line text-cream-dim transition-all hover:border-ink-600 hover:text-cream"
               >
-                <ImageIcon size={14} />
+                <ImageIcon size={12} />
               </button>
               <ModelPicker />
               <ThinkingPicker sessionId={currentSessionId} />
@@ -561,7 +563,7 @@ export default function Composer({
                   onClick={handleSend}
                   disabled={!canSend}
                   title={t('composer.queue')}
-                  className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-150 active:scale-95 ${
+                  className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-150 active:scale-95 ${
                     canSend
                       ? 'bg-accent text-white shadow-card hover:bg-accent-bright'
                       : 'cursor-not-allowed bg-overlay-strong text-cream-faint'
@@ -572,7 +574,7 @@ export default function Composer({
                 <button
                   onClick={onStop}
                   title={t('composer.stop')}
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-cream text-ink-950 shadow-card transition-all duration-150 hover:opacity-85 active:scale-95"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-cream text-ink-950 shadow-card transition-all duration-150 hover:opacity-85 active:scale-95"
                 >
                   <Square size={11} fill="currentColor" />
                 </button>
@@ -582,7 +584,7 @@ export default function Composer({
                 onClick={handleSend}
                 disabled={!canSend}
                 title={t('composer.send')}
-                className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-150 active:scale-95 ${
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-150 active:scale-95 ${
                   canSend
                     ? 'bg-accent text-white shadow-card hover:bg-accent-bright'
                     : 'cursor-not-allowed bg-overlay-strong text-cream-faint'

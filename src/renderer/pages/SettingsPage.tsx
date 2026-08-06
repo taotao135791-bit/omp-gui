@@ -16,8 +16,8 @@ import { I18nKey, useT } from '../i18n'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-line bg-ink-850 shadow-card">
-      <div className="border-b border-line px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-cream-faint">
+    <section className="overflow-hidden rounded-[16px] border border-line bg-ink-850 shadow-card">
+      <div className="border-b border-line px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
         {title}
       </div>
       <div className="divide-y divide-line">{children}</div>
@@ -28,24 +28,24 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <span className="text-[13px] text-cream">{label}</span>
+      <span className="text-[13px] font-medium text-cream">{label}</span>
       {children}
     </div>
   )
 }
 
 function Note({ children }: { children: React.ReactNode }) {
-  return <p className="px-4 py-2.5 text-[11px] leading-5 text-cream-faint">{children}</p>
+  return <p className="px-4 py-2.5 text-[12px] leading-5 text-cream-faint">{children}</p>
 }
 
 const selectCls =
-  'h-8 rounded-lg border border-line bg-ink-900 px-2 text-xs text-cream outline-none transition-colors focus:border-accent dark:bg-ink-800'
+  'rounded-full border border-line bg-transparent px-3 py-1 text-[12px] font-medium text-cream-dim outline-none transition-colors hover:border-ink-600 hover:text-cream focus:border-accent/50'
 
 const inputCls =
-  'h-8 w-56 rounded-lg border border-line bg-ink-900 px-2.5 text-xs text-cream outline-none transition-colors placeholder:text-cream-faint focus:border-accent dark:bg-ink-800'
+  'w-56 rounded-lg border border-line bg-ink-900 px-3 py-2 text-[13px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50 focus:shadow-[0_0_0_3px_var(--accent-soft)]'
 
 const buttonCls =
-  'flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-xs text-cream-dim transition-colors hover:border-line-strong hover:text-cream disabled:opacity-50'
+  'flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-ink-600 hover:text-cream disabled:opacity-50'
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 
@@ -202,8 +202,10 @@ export default function SettingsPage() {
   }
 
   const seg = (active: boolean) =>
-    `rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-      active ? 'bg-ink-850 text-cream shadow-card dark:bg-ink-800' : 'text-cream-dim hover:text-cream'
+    `flex h-[26px] items-center rounded-full border px-2.5 text-[12px] font-medium transition-colors ${
+      active
+        ? 'border-line bg-ink-850 text-cream shadow-card'
+        : 'border-transparent text-cream-dim hover:text-cream'
     }`
 
   return (
@@ -213,7 +215,7 @@ export default function SettingsPage() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-5">
-        <div className="mx-auto max-w-xl space-y-4">
+        <div className="mx-auto max-w-[680px] space-y-4">
           <Section title={t('settings.model')}>
             <Row label={t('settings.provider')}>
               <select
@@ -241,7 +243,7 @@ export default function SettingsPage() {
                       </span>
                       <button
                         onClick={removeKey}
-                        className="flex h-8 items-center gap-1 rounded-lg border border-line px-2.5 text-xs text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500"
+                        className="flex items-center gap-1 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500"
                       >
                         {t('settings.clearKey')}
                       </button>
@@ -343,7 +345,7 @@ export default function SettingsPage() {
 
           <Section title={t('settings.permissions')}>
             <Row label={t('settings.permissionMode')}>
-              <div className="flex rounded-lg border border-line bg-overlay p-0.5">
+              <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
                 {PERMISSION_MODES.map((mode) => (
                   <button
                     key={mode.value}
@@ -359,7 +361,7 @@ export default function SettingsPage() {
             <Row label={t('settings.projectTrust')}>
               <div className="flex items-center gap-2">
                 <ShieldCheck size={13} className="text-cream-faint" />
-                <div className="flex rounded-lg border border-line bg-overlay p-0.5">
+                <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
                   <button
                     onClick={() => changeTrust('ask')}
                     className={seg((modelConfig?.projectTrust ?? 'ask') === 'ask')}
@@ -386,7 +388,7 @@ export default function SettingsPage() {
 
           <Section title={t('settings.skills')}>
             <Row label={t('settings.machineSkills')}>
-              <div className="flex rounded-lg border border-line bg-overlay p-0.5">
+              <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
                 <button onClick={() => changeMachineSkills(true)} className={seg(machineSkills)}>
                   {t('settings.on')}
                 </button>
@@ -404,7 +406,7 @@ export default function SettingsPage() {
 
           <Section title={t('settings.appearance')}>
             <Row label={t('settings.theme')}>
-              <div className="flex rounded-lg border border-line bg-overlay p-0.5">
+              <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
                 <button onClick={() => setTheme('light')} className={seg(theme === 'light')}>
                   <span className="flex items-center gap-1">
                     <Sun size={11} />
@@ -422,7 +424,7 @@ export default function SettingsPage() {
             <Row label={t('settings.language')}>
               <div className="flex items-center gap-2">
                 <Languages size={13} className="text-cream-faint" />
-                <div className="flex rounded-lg border border-line bg-overlay p-0.5">
+                <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
                   <button onClick={() => setLanguage('zh')} className={seg(language === 'zh')}>
                     中文
                   </button>
@@ -436,7 +438,7 @@ export default function SettingsPage() {
 
           <Section title={t('settings.notifications')}>
             <Row label={t('settings.notifyCompletion')}>
-              <div className="flex rounded-lg border border-line bg-overlay p-0.5">
+              <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
                 <button onClick={() => changeNotifications(true)} className={seg(notifications)}>
                   {t('settings.on')}
                 </button>
@@ -493,7 +495,7 @@ export default function SettingsPage() {
             <Row label={t('settings.clearRecent')}>
               <button
                 onClick={clearRecent}
-                className="flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-xs text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500"
+                className="flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500"
               >
                 {cleared ? (
                   <>

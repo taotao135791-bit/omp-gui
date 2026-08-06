@@ -4,7 +4,6 @@ import { MessageLike, useAppStore } from '../store'
 import { useT } from '../i18n'
 import Markdown from './Markdown'
 import ToolCallCard from './ToolCallCard'
-import Logo from './Logo'
 
 interface MessageItemProps {
   message: MessageLike
@@ -88,7 +87,7 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
     return (
       <div className="msg-in group flex justify-end">
         <div className="relative max-w-[85%]">
-          <div className="whitespace-pre-wrap rounded-2xl rounded-br-md bg-ink-700 px-3.5 py-2 text-[15px] leading-7 text-cream">
+          <div className="whitespace-pre-wrap rounded-[18px] rounded-br-[6px] bg-ink-700 px-4 py-2.5 text-[14px] leading-[1.75] text-cream">
             {message.content}
           </div>
           <div className="absolute -left-7 top-1 flex flex-col gap-1">
@@ -131,50 +130,48 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
 
   const isInfo = isSystem && message.variant === 'info'
 
-  return (
-    <div className="msg-in group flex gap-2.5">
-      {isSystem ? (
-        isInfo ? (
-          <div className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-overlay text-cream-dim">
-            <Info size={12} />
-          </div>
-        ) : (
-          <div className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-red-500/12 text-red-500 dark:text-red-300">
-            <AlertTriangle size={12} />
-          </div>
-        )
-      ) : (
-        <Logo size={22} className="shrink-0" />
-      )}
-      <div className="relative min-w-0 flex-1 pt-px">
-        {message.toolCall ? (
-          <ToolCallCard toolCall={message.toolCall} />
-        ) : isSystem ? (
-          isInfo ? (
-            <div className="rounded-xl border border-line bg-overlay px-3 py-2 text-sm leading-6 text-cream-dim">
-              {message.content}
-            </div>
+  // System/info messages collapse to a small centered pill — no big boxes.
+  if (isSystem) {
+    return (
+      <div className="msg-in flex justify-center">
+        <div
+          className={`flex max-w-full items-center gap-1.5 rounded-full px-3 py-1 text-[12px] leading-5 ${
+            isInfo
+              ? 'bg-overlay text-cream-dim'
+              : 'bg-red-500/[0.08] text-red-600 dark:text-red-300'
+          }`}
+        >
+          {isInfo ? (
+            <Info size={11} className="shrink-0" />
           ) : (
-            <div className="rounded-xl border border-red-500/20 bg-red-500/[0.06] px-3 py-2 text-sm leading-6 text-red-600 dark:text-red-200">
-              {message.content}
-            </div>
-          )
-        ) : (
-          <>
-            <Markdown content={message.content} />
-            {message.content && (
-              <button
-                onClick={copyContent}
-                title={t('msg.copy')}
-                className="mt-1 flex items-center gap-1 rounded-md px-1 py-0.5 text-[10.5px] text-cream-faint opacity-0 transition-all hover:bg-overlay hover:text-cream group-hover:opacity-100"
-              >
-                {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
-                {copied ? t('msg.copied') : t('msg.copy')}
-              </button>
-            )}
-          </>
-        )}
+            <AlertTriangle size={11} className="shrink-0" />
+          )}
+          <span className="min-w-0">{message.content}</span>
+        </div>
       </div>
+    )
+  }
+
+  // Assistant text spans the column edge to edge — no avatar, no bubble.
+  return (
+    <div className="msg-in group">
+      {message.toolCall ? (
+        <ToolCallCard toolCall={message.toolCall} />
+      ) : (
+        <>
+          <Markdown content={message.content} />
+          {message.content && (
+            <button
+              onClick={copyContent}
+              title={t('msg.copy')}
+              className="mt-1 flex items-center gap-1 rounded-md px-1 py-0.5 text-[10.5px] text-cream-faint opacity-0 transition-all hover:bg-overlay hover:text-cream group-hover:opacity-100"
+            >
+              {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+              {copied ? t('msg.copied') : t('msg.copy')}
+            </button>
+          )}
+        </>
+      )}
     </div>
   )
 }

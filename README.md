@@ -2,6 +2,8 @@
 
 A desktop GUI for [Oh My Pi](https://omp.sh) / [Pi](https://github.com/badlogic/pi-mono) — a Codex-style coding agent you assemble yourself.
 
+![OMP GUI](docs/screenshot.png)
+
 ## Download
 
 **macOS** — download, open the DMG, drag OMP GUI into Applications:

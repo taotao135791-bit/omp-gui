@@ -9,11 +9,11 @@
     --bg-sidebar: 244 243 240;
     --bg-elev: 255 255 255;
     --bg-sunken: 240 239 236;
-    --bubble: 233 231 227;
+    --bubble: 238 234 228;
     --text: 28 27 25;
     --text-dim: 110 107 100;
     --text-faint: 164 160 152;
-    --line: rgba(28, 27, 25, 0.08);
+    --line: rgba(28, 27, 25, 0.06);
     --line-strong: rgba(28, 27, 25, 0.14);
     --overlay: rgba(28, 27, 25, 0.04);
     --overlay-strong: rgba(28, 27, 25, 0.07);
@@ -23,6 +23,7 @@
     --accent-soft: rgba(217, 119, 87, 0.12);
     --shadow-pop: 0 1px 2px rgba(28, 27, 25, 0.05), 0 12px 32px rgba(28, 27, 25, 0.12);
     --shadow-card: 0 1px 2px rgba(28, 27, 25, 0.04), 0 4px 16px rgba(28, 27, 25, 0.05);
+    --shadow-composer: 0 2px 8px rgba(28, 27, 25, 0.04), 0 12px 32px rgba(28, 27, 25, 0.08);
     --ease: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
@@ -45,6 +46,7 @@
     --accent-soft: rgba(224, 138, 106, 0.14);
     --shadow-pop: 0 2px 6px rgba(0, 0, 0, 0.3), 0 16px 40px rgba(0, 0, 0, 0.45);
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 6px 20px rgba(0, 0, 0, 0.24);
+    --shadow-composer: 0 2px 8px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.42);
   }
 
   html, body, #root {
@@ -64,6 +66,11 @@
 
   ::selection {
     @apply bg-accent/20 text-cream;
+  }
+
+  /* Uniform micro-transition for buttons/cards; utility classes override per-property */
+  button {
+    transition: all 120ms var(--ease);
   }
 
   ::-webkit-scrollbar {
@@ -87,7 +94,7 @@
 @layer components {
   /* Markdown body — hand-rolled, no typography plugin */
   .md {
-    @apply text-[15px] leading-7 text-cream/90;
+    @apply text-[14px] leading-[1.85] text-cream/90;
   }
   .md > * + * {
     @apply mt-3;
@@ -98,7 +105,7 @@
   .md h1 { @apply text-lg; }
   .md h2 { @apply text-base; }
   .md h3, .md h4 { @apply text-[15px]; }
-  .md p { @apply leading-7; }
+  .md p { @apply leading-[1.85]; }
   .md ul { @apply list-disc space-y-1 pl-5 marker:text-cream-faint; }
   .md ol { @apply list-decimal space-y-1 pl-5 marker:text-cream-faint; }
   .md a {
@@ -154,12 +161,12 @@
   }
 
   .msg-in {
-    animation: msg-in 0.22s var(--ease);
+    animation: msg-in 0.18s ease-out;
   }
   @keyframes msg-in {
     from {
       opacity: 0;
-      transform: translateY(5px);
+      transform: translateY(4px);
     }
     to {
       opacity: 1;

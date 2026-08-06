@@ -5,15 +5,15 @@ import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { useGitInfo } from '../lib/useGitInfo'
 
-const STATUS_BADGE: Record<GitFileChange['status'], { letter: string; className: string }> = {
-  M: { letter: 'M', className: 'bg-amber-500/15 text-amber-600 dark:text-amber-300' },
-  A: { letter: 'A', className: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300' },
-  D: { letter: 'D', className: 'bg-red-500/15 text-red-600 dark:text-red-300' },
-  untracked: { letter: 'U', className: 'bg-overlay text-cream-faint' }
+const STATUS_DOT: Record<GitFileChange['status'], string> = {
+  M: 'bg-amber-500',
+  A: 'bg-emerald-500',
+  D: 'bg-red-500',
+  untracked: 'bg-cream-faint/50'
 }
 
 function diffLineClass(line: string): string {
-  if (line.startsWith('@@')) return 'bg-accent/10 text-accent'
+  if (line.startsWith('@@')) return 'bg-overlay text-cream-faint'
   if (
     line.startsWith('diff --git') ||
     line.startsWith('index ') ||
@@ -22,7 +22,7 @@ function diffLineClass(line: string): string {
   ) {
     return 'text-cream-faint'
   }
-  if (line.startsWith('+')) return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
+  if (line.startsWith('+')) return 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
   if (line.startsWith('-')) return 'bg-red-500/10 text-red-600 dark:text-red-300'
   return 'text-cream-dim'
 }
@@ -86,7 +86,7 @@ export default function ChangesPanel() {
           {refreshButton}
         </div>
         <div className="flex-1 overflow-auto py-1">
-          <div className="min-w-max font-mono text-[11px] leading-5">
+          <div className="min-w-max font-mono text-[11px] leading-[1.7]">
             {diffView.text.split('\n').map((line, i) => (
               <div key={i} className={`whitespace-pre px-2 ${diffLineClass(line)}`}>
                 {line === '' ? ' ' : line}
@@ -118,41 +118,36 @@ export default function ChangesPanel() {
           {refreshButton}
         </div>
         <div className="flex-1 overflow-y-auto py-1">
-          {info.files.map((file) => {
-            const badge = STATUS_BADGE[file.status]
-            return (
-              <button
-                key={file.path}
-                onClick={() => void openDiff(file.path)}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition hover:bg-overlay"
-              >
-                <span
-                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[9px] font-bold ${badge.className}`}
-                >
-                  {badge.letter}
-                </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-cream">
-                  {file.path}
-                </span>
-                {loadingDiff === file.path ? (
-                  <Loader2 size={11} className="shrink-0 animate-spin text-cream-faint" />
-                ) : (
-                  <>
-                    {file.additions !== null && (
-                      <span className="shrink-0 font-mono text-[10px] text-emerald-500">
-                        +{file.additions}
-                      </span>
-                    )}
-                    {file.deletions !== null && (
-                      <span className="shrink-0 font-mono text-[10px] text-red-500">
-                        -{file.deletions}
-                      </span>
-                    )}
-                  </>
-                )}
-              </button>
-            )
-          })}
+          {info.files.map((file) => (
+            <button
+              key={file.path}
+              onClick={() => void openDiff(file.path)}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition hover:bg-overlay"
+            >
+              <span
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[file.status]}`}
+              />
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-cream">
+                {file.path}
+              </span>
+              {loadingDiff === file.path ? (
+                <Loader2 size={11} className="shrink-0 animate-spin text-cream-faint" />
+              ) : (
+                <>
+                  {file.additions !== null && (
+                    <span className="shrink-0 font-mono text-[10px] text-emerald-500">
+                      +{file.additions}
+                    </span>
+                  )}
+                  {file.deletions !== null && (
+                    <span className="shrink-0 font-mono text-[10px] text-red-500">
+                      -{file.deletions}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+          ))}
         </div>
       </>
     )

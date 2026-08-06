@@ -32,44 +32,44 @@ export default function RightPanel() {
   return (
     <aside className="flex w-72 shrink-0 flex-col border-l border-line bg-ink-900">
       <div className="flex h-11 items-center justify-between border-b border-line px-3">
-        <div className="flex gap-1">
+        <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
           <button
             onClick={() => setActiveRightTab('files')}
-            className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
+            className={`flex h-[24px] items-center gap-1 rounded-full border px-2 text-[11px] font-medium transition-colors ${
               activeRightTab === 'files'
-                ? 'bg-overlay-strong text-cream'
-                : 'text-cream-dim hover:bg-overlay'
+                ? 'border-line bg-ink-850 text-cream shadow-card'
+                : 'border-transparent text-cream-dim hover:text-cream'
             }`}
           >
-            <FileText size={12} />
+            <FileText size={11} />
             {t('panel.files')}
           </button>
           <button
             onClick={() => setActiveRightTab('preview')}
-            className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
+            className={`flex h-[24px] items-center gap-1 rounded-full border px-2 text-[11px] font-medium transition-colors ${
               activeRightTab === 'preview'
-                ? 'bg-overlay-strong text-cream'
-                : 'text-cream-dim hover:bg-overlay'
+                ? 'border-line bg-ink-850 text-cream shadow-card'
+                : 'border-transparent text-cream-dim hover:text-cream'
             }`}
           >
-            <Eye size={12} />
+            <Eye size={11} />
             {t('panel.preview')}
           </button>
           <button
             onClick={() => setActiveRightTab('changes')}
-            className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition ${
+            className={`flex h-[24px] items-center gap-1 rounded-full border px-2 text-[11px] font-medium transition-colors ${
               activeRightTab === 'changes'
-                ? 'bg-overlay-strong text-cream'
-                : 'text-cream-dim hover:bg-overlay'
+                ? 'border-line bg-ink-850 text-cream shadow-card'
+                : 'border-transparent text-cream-dim hover:text-cream'
             }`}
           >
-            <FileDiff size={12} />
+            <FileDiff size={11} />
             {t('panel.changes')}
           </button>
         </div>
         <button
           onClick={() => setRightPanelOpen(false)}
-          className="rounded-md p-1 text-cream-faint transition hover:bg-overlay-strong hover:text-cream"
+          className="rounded-md p-1 text-cream-faint transition hover:bg-overlay hover:text-cream"
         >
           <X size={14} />
         </button>

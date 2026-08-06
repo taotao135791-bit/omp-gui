@@ -79,10 +79,10 @@ export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
       <button
         onClick={() => setOpen((v) => !v)}
         disabled={!sessionId}
-        className="focus-ring flex items-center gap-1.5 rounded-lg border border-transparent px-2 py-1.5 text-[11px] font-medium text-cream-dim transition-colors hover:border-line hover:bg-overlay hover:text-cream disabled:cursor-not-allowed disabled:opacity-40"
+        className="focus-ring flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[12px] font-medium text-cream-dim transition-all hover:border-ink-600 hover:text-cream disabled:cursor-not-allowed disabled:opacity-40"
         title={t('composer.thinking')}
       >
-        <Brain size={13} />
+        <Brain size={12} />
         <span>
           {t('composer.thinking')} · {current ? t(current.labelKey) : '—'}
         </span>
@@ -90,12 +90,12 @@ export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
       </button>
 
       {open && sessionId && (
-        <div className="absolute bottom-full left-0 z-30 mb-1.5 w-32 rounded-xl border border-line bg-ink-900 p-1 shadow-pop">
+        <div className="absolute bottom-full left-0 z-30 mb-1.5 w-32 rounded-xl border border-line bg-ink-850 p-1 shadow-pop">
           {LEVELS.map((l) => (
             <button
               key={l.id}
               onClick={() => pick(l.id)}
-              className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] text-cream transition hover:bg-ink-800"
+              className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream transition hover:bg-overlay"
             >
               <span>{t(l.labelKey)}</span>
               {level === l.id && <Check size={12} className="text-accent" />}

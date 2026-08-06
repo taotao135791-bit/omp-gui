@@ -77,7 +77,7 @@ export default function FileTree() {
       <div key={node.path}>
         <div
           onClick={() => toggleNode(node, parentList, setParentList)}
-          className={`flex cursor-pointer items-center gap-1.5 py-1 pr-2 font-mono text-xs transition ${
+          className={`flex h-7 cursor-pointer items-center gap-1.5 rounded-md pr-2 font-mono text-[12px] transition ${
             isSelected ? 'bg-accent/10 text-accent' : 'text-cream-dim hover:bg-overlay hover:text-cream'
           }`}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
@@ -88,9 +88,9 @@ export default function FileTree() {
             <span className="w-3" />
           )}
           {node.isDirectory ? (
-            <Folder size={12} className="text-accent/70" />
+            <Folder size={13} className="text-accent/70" />
           ) : (
-            <File size={12} className="text-cream-faint" />
+            <File size={13} className="text-cream-faint" />
           )}
           <span className="truncate">{node.name}</span>
         </div>
@@ -117,7 +117,7 @@ export default function FileTree() {
   }
 
   return (
-    <div className="py-2">
+    <div className="px-1.5 py-2">
       {tree.map((node) => renderNode(node, tree, setTree))}
     </div>
   )
