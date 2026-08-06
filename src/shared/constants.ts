@@ -54,6 +54,7 @@ export const IPC_CHANNELS = {
   UPDATER_CHECK: 'updater:check',
   UPDATER_DOWNLOAD: 'updater:download',
   UPDATER_QUIT_INSTALL: 'updater:quit-install',
+  UPDATER_OPEN_PAGE: 'updater:open-release-page',
   NOTIFY_SELECT_SESSION: 'notify:select-session'
 } as const
 

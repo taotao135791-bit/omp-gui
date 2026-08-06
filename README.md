@@ -90,4 +90,6 @@ omp-gui/
 
 - The GUI detects `omp` first and falls back to `pi` if omp is not installed.
 - If no CLI is found, the "New Chat" button is disabled and a setup wizard offers auto-install.
-- pi itself has no built-in tool approval prompts; the GUI's permission modes work by passing `--exclude-tools` to new sessions.
+- pi itself has no built-in tool approval prompts; coarse permission modes work by passing `--exclude-tools` to new sessions, and the "Ask" mode's per-call prompts come from the bundled `resources/omp-approval` extension, which hooks pi's `tool_call` event and asks through the GUI's dialog bridge.
+- Auto-update runs through electron-updater against GitHub Releases. The dmgs are unsigned (no Apple Developer ID), so macOS refuses in-app installs — when that happens Settings → About offers the download page as a one-click fallback.
+- Completion and approval-waiting notifications are standard macOS notifications; the first one triggers the system's permission prompt, which decides whether later ones arrive.

@@ -30,3 +30,33 @@ export function maybeNotifyTurnFinished(event: SessionEvent): void {
   })
   notification.show()
 }
+
+/**
+ * Desktop notification when an extension dialog (typically the approval
+ * prompt) is waiting for input while the window is unfocused — otherwise an
+ * ask-mode session would stall silently in the background.
+ */
+export function maybeNotifyUiRequest(event: SessionEvent): void {
+  if (event.type !== 'ui_request') return
+  if (getStore('notifications') === false) return
+
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win && !win.isDestroyed() && win.isFocused()) return
+
+  const zh = getStore('language') !== 'en'
+  const title = getSession(event.sessionId)?.title || 'OMP GUI'
+  const detail = (event.title || '').slice(0, 100)
+  const body = zh
+    ? `等待你的操作：${detail || '插件请求'}`
+    : `Waiting for input: ${detail || 'plugin request'}`
+
+  const notification = new Notification({ title, body, silent: false })
+  notification.on('click', () => {
+    if (win && !win.isDestroyed()) {
+      win.show()
+      win.focus()
+      win.webContents.send(IPC_CHANNELS.NOTIFY_SELECT_SESSION, event.sessionId)
+    }
+  })
+  notification.show()
+}

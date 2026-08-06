@@ -120,11 +120,14 @@ export async function getGitInfo(projectDir: string): Promise<GitInfo | null> {
   for (const entry of parsePorcelain(statusRaw)) {
     seen.add(entry.path)
     const counts = numstat.get(entry.path)
+    // Untracked files have no numstat row — count their lines for the +N badge.
+    const untrackedAdds =
+      entry.status === 'untracked' ? countFileLines(path.join(projectDir, entry.path)) : null
     files.push({
       path: entry.path,
       status: entry.status,
-      additions: counts?.additions ?? null,
-      deletions: counts?.deletions ?? null
+      additions: counts?.additions ?? untrackedAdds,
+      deletions: counts?.deletions ?? (entry.status === 'untracked' ? 0 : null)
     })
   }
   // Files in the numstat but not in status (shouldn't happen) — keep them.
@@ -141,6 +144,20 @@ export async function getGitInfo(projectDir: string): Promise<GitInfo | null> {
     totalDeletions += f.deletions ?? 0
   }
   return { branch, files, totalAdditions, totalDeletions }
+}
+
+/** Line count for an untracked file's +N badge; null for unreadable/binary/huge files. */
+function countFileLines(abs: string): number | null {
+  try {
+    const buf = readFileSync(abs)
+    if (buf.length > 2 * 1024 * 1024) return null
+    if (buf.includes(0)) return null // binary
+    let n = 0
+    for (const b of buf) if (b === 10) n++
+    return buf.length > 0 && buf[buf.length - 1] !== 10 ? n + 1 : n
+  } catch {
+    return null
+  }
 }
 
 /** Resolve user-supplied filePath and refuse anything outside projectDir. */

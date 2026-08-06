@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { IPC_CHANNELS } from '../shared/constants'
 import { UpdaterStatus } from '../shared/types'
@@ -80,4 +80,13 @@ export async function updaterDownload(): Promise<UpdaterStatus> {
 export function updaterQuitAndInstall(): void {
   if (!app.isPackaged) return
   autoUpdater.quitAndInstall()
+}
+
+/**
+ * Open the GitHub releases page in the browser — the manual fallback when
+ * in-app update can't run (e.g. unsigned builds, where Squirrel.Mac refuses
+ * to install).
+ */
+export async function updaterOpenReleasePage(): Promise<void> {
+  await shell.openExternal('https://github.com/taotao135791-bit/omp-gui/releases/latest')
 }

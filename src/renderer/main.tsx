@@ -5,10 +5,9 @@ import App from './App'
 import { useAppStore } from './store'
 import './index.css'
 
-// Dev-only handle for E2E driving via CDP (stripped from production builds)
-if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV) {
-  ;(window as unknown as { __store: typeof useAppStore }).__store = useAppStore
-}
+// Handle for E2E driving via CDP and power-user debugging (read-only intent;
+// exposed in production too so automation works against packaged builds)
+;(window as unknown as { __store: typeof useAppStore }).__store = useAppStore
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

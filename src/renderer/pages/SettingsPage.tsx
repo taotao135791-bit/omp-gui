@@ -564,6 +564,12 @@ export default function SettingsPage() {
                     <button onClick={checkUpdates} className={buttonCls}>
                       {t('settings.updateRetry')}
                     </button>
+                    <button
+                      onClick={() => window.electronAPI.updaterOpenReleasePage()}
+                      className={buttonCls}
+                    >
+                      {t('settings.updateOpenPage')}
+                    </button>
                   </>
                 )}
                 {updater.status === 'dev' && (

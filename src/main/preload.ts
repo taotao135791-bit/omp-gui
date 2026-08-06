@@ -107,6 +107,8 @@ export interface ElectronAPI {
   /** Download the available update; progress arrives via onUpdaterStatus. */
   updaterDownload: () => Promise<UpdaterStatus>
   updaterQuitAndInstall: () => Promise<void>
+  /** Open the releases page in the browser — manual fallback for unsigned builds. */
+  updaterOpenReleasePage: () => Promise<void>
   onUpdaterStatus: (callback: (status: UpdaterStatus) => void) => () => void
   /** Fired when a completion notification is clicked; selects the session. */
   onNotifySelectSession: (callback: (sessionId: string) => void) => () => void
@@ -206,6 +208,7 @@ const api: ElectronAPI = {
   updaterCheck: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_CHECK),
   updaterDownload: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_DOWNLOAD),
   updaterQuitAndInstall: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_QUIT_INSTALL),
+  updaterOpenReleasePage: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_OPEN_PAGE),
   onUpdaterStatus: (callback: (status: UpdaterStatus) => void) => {
     const handler = (_event: IpcRendererEvent, status: UpdaterStatus) => callback(status)
     ipcRenderer.on(IPC_CHANNELS.UPDATER_STATUS, handler)

@@ -58,12 +58,13 @@ import {
 import { getGitInfo, getFileDiff } from './gitinfo'
 import { defaultExportFileName } from './exportPath'
 import { listProjectFiles } from './projectFiles'
-import { maybeNotifyTurnFinished } from './notify'
+import { maybeNotifyTurnFinished, maybeNotifyUiRequest } from './notify'
 import {
   getUpdaterStatus,
   updaterCheck,
   updaterDownload,
-  updaterQuitAndInstall
+  updaterQuitAndInstall,
+  updaterOpenReleasePage
 } from './updater'
 
 const fsGuard = new FsGuard()
@@ -87,6 +88,7 @@ function broadcastSessionEvent(event: SessionEvent): void {
     }
   }
   maybeNotifyTurnFinished(event)
+  maybeNotifyUiRequest(event)
 }
 
 /** Accept only well-formed prompt images from the renderer. */
@@ -363,6 +365,10 @@ export function registerIpc() {
 
   ipcMain.handle(IPC_CHANNELS.UPDATER_QUIT_INSTALL, async () => {
     updaterQuitAndInstall()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_OPEN_PAGE, async () => {
+    await updaterOpenReleasePage()
   })
 
   ipcMain.handle(
