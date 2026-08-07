@@ -190,6 +190,39 @@ describe('parseRpcLine', () => {
       event: { type: 'message', sessionId: 's1', role: 'assistant', content: 'not json at all' }
     })
   })
+
+  it('surfaces provider errors from the final assistant message', () => {
+    const line = JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: 'OpenAI API error (401): invalid_api_key'
+      }
+    })
+    expect(parseRpcLine(line, 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'error', sessionId: 's1', message: 'OpenAI API error (401): invalid_api_key' }
+    })
+  })
+
+  it('ignores message_end for normal and aborted turns', () => {
+    for (const stopReason of ['stop', 'length', 'aborted']) {
+      const line = JSON.stringify({
+        type: 'message_end',
+        message: { role: 'assistant', content: [], stopReason }
+      })
+      expect(parseRpcLine(line, 's1')).toEqual({ kind: 'none' })
+    }
+    // user message_end
+    expect(
+      parseRpcLine(
+        JSON.stringify({ type: 'message_end', message: { role: 'user', content: [] } }),
+        's1'
+      )
+    ).toEqual({ kind: 'none' })
+  })
 })
 
 describe('extensionUiCancel', () => {

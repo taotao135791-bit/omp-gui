@@ -128,9 +128,17 @@ export default function ChatPanel() {
   }
 
   const handleStop = async () => {
-    if (currentSessionId) {
-      await window.electronAPI.abortSession(currentSessionId)
+    const sid = currentSessionId
+    if (!sid) return
+    const store = useAppStore.getState()
+    // Cancel pending dialogs first: an unanswered select/confirm holds the
+    // turn open, and aborting underneath it wedges the session as busy
+    // forever (no agent_end ever arrives).
+    for (const req of store.uiRequests[sid] || []) {
+      await window.electronAPI.respondUi(sid, req.id, { cancelled: true })
+      store.resolveUiRequest(sid, req.id)
     }
+    await window.electronAPI.abortSession(sid)
   }
 
   const handleCompact = async () => {

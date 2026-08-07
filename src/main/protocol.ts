@@ -80,6 +80,28 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
       return { kind: 'none' }
     }
 
+    case 'message_end': {
+      // Provider/transport failures don't produce an error event and pi exits
+      // 0 regardless — the failure only shows up as stopReason:'error' with
+      // errorMessage on the final assistant message. Surface it or the user
+      // sees a silent dead turn.
+      const msg = payload.message as
+        | { role?: string; stopReason?: string; errorMessage?: string }
+        | undefined
+      if (msg?.role === 'assistant' && msg.stopReason === 'error' && msg.errorMessage) {
+        return {
+          kind: 'event',
+          event: {
+            type: 'error',
+            sessionId,
+            // First line only — provider errors often append a raw JSON body.
+            message: msg.errorMessage.split('\n')[0].slice(0, 300)
+          }
+        }
+      }
+      return { kind: 'none' }
+    }
+
     case 'tool_execution_start':
       return {
         kind: 'event',

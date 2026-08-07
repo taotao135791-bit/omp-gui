@@ -1,11 +1,30 @@
 import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
+import { readdirSync, unlinkSync } from 'node:fs'
 import { getStore, setStore } from './store'
 import { registerIpc } from './ipc'
 import { syncMachineSkills } from './piSettings'
 import { initUpdater } from './updater'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+
+/**
+ * Approval configs are per-session files; sessions never outlive the app,
+ * so anything left in userData at startup is an orphan from a crashed or
+ * force-killed run. Safe to sweep before the first session spawns.
+ */
+function cleanStaleApprovalConfigs() {
+  try {
+    const dir = app.getPath('userData')
+    for (const name of readdirSync(dir)) {
+      if (name.startsWith('omp-approval-config-') && name.endsWith('.json')) {
+        unlinkSync(path.join(dir, name))
+      }
+    }
+  } catch {
+    // userData missing or unreadable — nothing to clean
+  }
+}
 
 function createWindow() {
   // Clamp persisted sizes in case the store holds corrupt values
@@ -49,6 +68,7 @@ app.whenReady().then(() => {
   // Keep pi's skill overrides in line with the GUI toggle — pi loads
   // ~/.agents/skills (other agents' skills) into every session by default.
   syncMachineSkills(getStore('machineSkills'))
+  cleanStaleApprovalConfigs()
   createWindow()
   initUpdater()
 
