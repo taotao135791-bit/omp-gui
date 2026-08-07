@@ -451,7 +451,7 @@ export default function Sidebar() {
         )}
       </div>
 
-      <div className="mt-5 flex-1 overflow-y-auto px-2.5 pb-2">
+      <div className="mt-5 flex-1 overflow-y-auto px-2.5 pb-4">
         <div className="flex items-center justify-between px-2 pb-1.5">
           <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
             {t('sidebar.sessions')}

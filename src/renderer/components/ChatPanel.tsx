@@ -271,8 +271,10 @@ export default function ChatPanel() {
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} onScroll={handleTranscriptScroll} className="relative h-full overflow-y-auto">
         {showHero ? (
-          <div className="flex h-full flex-col items-center justify-center px-8 pb-[14vh]">
-            <div className="flex w-full max-w-[640px] flex-col items-center">
+          // my-auto instead of justify-center: with justify-center a hero
+          // taller than the viewport gets its top clipped above the fold.
+          <div className="flex h-full flex-col items-center px-8 pb-[14vh]">
+            <div className="my-auto flex w-full max-w-[640px] flex-col items-center">
               <div className="rise" style={{ animationDelay: '0ms' }}>
                 <Logo size={40} />
               </div>
