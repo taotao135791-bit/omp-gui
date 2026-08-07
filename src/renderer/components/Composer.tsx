@@ -457,7 +457,7 @@ export default function Composer({
           className={`rounded-[16px] border border-line bg-ink-850 p-2 shadow-composer transition-all duration-200 ease-standard ${
             disabled
               ? ''
-              : 'focus-within:border-accent/50 focus-within:shadow-[var(--shadow-composer),0_0_0_3px_var(--accent-soft)]'
+              : 'focus-within:border-accent/40 focus-within:shadow-[var(--shadow-composer),0_0_0_2px_var(--accent-soft)]'
           }`}
         >
           {queue.length > 0 && (

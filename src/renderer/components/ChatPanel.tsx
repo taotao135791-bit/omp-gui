@@ -269,7 +269,7 @@ export default function ChatPanel() {
           // Hero and composer form ONE centered block — cards prefill the
           // composer sitting right below them, Codex-style.
           <div className="flex h-full flex-col items-center px-8">
-            <div className="my-auto flex w-full max-w-[640px] flex-col items-center py-6">
+            <div className="my-auto flex w-full max-w-[640px] flex-col items-center pb-[9vh] pt-6">
               <div className="rise" style={{ animationDelay: '0ms' }}>
                 <Logo size={48} />
               </div>
