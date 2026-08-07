@@ -45,6 +45,7 @@ export default function Sidebar() {
     pinnedSessionIds,
     archivedSessionIds,
     unreadSessionIds,
+    uiRequests,
     historySessions,
     recentProjects,
     setCurrentProject,
@@ -231,6 +232,9 @@ export default function Sidebar() {
     const active = currentSessionId === session.id
     const running = Boolean(busy[session.id])
     const unread = !active && Boolean(unreadSessionIds[session.id])
+    // A background session waiting on an approval/plugin dialog needs the
+    // user — outranks the plain working dot.
+    const waiting = !active && (uiRequests[session.id] || []).length > 0
     const pinned = pinnedSet.has(session.id)
     const archived = archivedSet.has(session.id)
     return (
@@ -246,13 +250,15 @@ export default function Sidebar() {
       >
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-            running
-              ? 'animate-pulse bg-amber-400'
-              : unread
-                ? 'bg-accent'
-                : active
-                  ? 'bg-cream-faint'
-                  : 'bg-line-strong'
+            waiting
+              ? 'animate-pulse bg-red-400'
+              : running
+                ? 'animate-pulse bg-amber-400'
+                : unread
+                  ? 'bg-accent'
+                  : active
+                    ? 'bg-cream-faint'
+                    : 'bg-line-strong'
           }`}
         />
         <div className="min-w-0 flex-1">
