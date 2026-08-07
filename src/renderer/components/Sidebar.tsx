@@ -71,6 +71,7 @@ export default function Sidebar() {
   const [resumingPath, setResumingPath] = useState<string | null>(null)
   const [restoreFailedPath, setRestoreFailedPath] = useState<string | null>(null)
   const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null)
+  const [confirmDeleteSessionId, setConfirmDeleteSessionId] = useState<string | null>(null)
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -294,10 +295,27 @@ export default function Sidebar() {
         <button
           onClick={(e) => {
             e.stopPropagation()
+            // Two-stage confirm: deleting kills the live pi process.
+            if (confirmDeleteSessionId !== session.id) {
+              setConfirmDeleteSessionId(session.id)
+              if (confirmTimer.current) clearTimeout(confirmTimer.current)
+              confirmTimer.current = setTimeout(() => setConfirmDeleteSessionId(null), 3000)
+              return
+            }
+            if (confirmTimer.current) clearTimeout(confirmTimer.current)
+            setConfirmDeleteSessionId(null)
             handleDeleteSession(session.id)
           }}
-          title={t('sidebar.deleteSession')}
-          className={`${iconBtn} hover:bg-red-500/15 hover:text-red-500`}
+          title={
+            confirmDeleteSessionId === session.id
+              ? t('sidebar.deleteConfirm')
+              : t('sidebar.deleteSession')
+          }
+          className={
+            confirmDeleteSessionId === session.id
+              ? 'shrink-0 rounded-md bg-red-500/15 p-1 text-red-500 transition-all'
+              : `${iconBtn} hover:bg-red-500/15 hover:text-red-500`
+          }
         >
           <Trash2 size={12} />
         </button>

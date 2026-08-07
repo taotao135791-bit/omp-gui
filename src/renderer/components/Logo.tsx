@@ -1,18 +1,15 @@
-import { useId } from 'react'
-
 interface LogoProps {
   size?: number
   className?: string
 }
 
 /**
- * OMP GUI brand mark: a terracotta squircle with a geometric π drawn as
- * strokes — no font rendering, so it scales cleanly from 16px sidebar use
- * to the 1024px app icon. Colors follow the theme accent variables.
+ * OMP GUI brand mark: a π assembled from modular bars — top beam plus two
+ * legs with visible assembly seams, echoing the "assemble your pi" idea.
+ * Pure geometry (no font, no enclosing square), so it scales from the 14px
+ * sidebar row to the 1024px app icon without going mushy.
  */
 export default function Logo({ size = 20, className }: LogoProps) {
-  const id = useId()
-  const gradientId = `omp-logo-${id.replace(/[^a-zA-Z0-9]/g, '')}`
   return (
     <svg
       width={size}
@@ -22,20 +19,11 @@ export default function Logo({ size = 20, className }: LogoProps) {
       role="img"
       aria-label="OMP GUI"
     >
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="rgb(var(--accent-bright))" />
-          <stop offset="1" stopColor="rgb(var(--accent-deep))" />
-        </linearGradient>
-      </defs>
-      <rect width="24" height="24" rx="6.5" fill={`url(#${gradientId})`} />
-      <path
-        d="M7 8.2h10M9.9 8.2v5.4c0 1.6-.8 2.4-2.1 2.7M14.1 8.2V17"
-        fill="none"
-        stroke="#fff"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-      />
+      {/* top beam */}
+      <rect x="5.4" y="6.2" width="13.2" height="2.5" rx="1.25" fill="rgb(var(--accent-deep))" />
+      {/* legs — the seam below the beam is the assembly joint */}
+      <rect x="8.1" y="9.9" width="2.5" height="6.4" rx="1.25" fill="rgb(var(--accent))" />
+      <rect x="13.4" y="9.9" width="2.5" height="7.6" rx="1.25" fill="rgb(var(--accent))" />
     </svg>
   )
 }

@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { FolderOpen, Compass, Hammer, GitPullRequest, Bug, Download, Loader2, ChevronRight, ChevronDown } from 'lucide-react'
+import { FolderOpen, Download, Loader2, ChevronRight, ChevronDown, ArrowUpRight } from 'lucide-react'
 import { PromptImage, SlashCommand } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
@@ -11,7 +11,6 @@ import GitChip from './GitChip'
 import Logo from './Logo'
 
 interface Suggestion {
-  icon: typeof Compass
   labelKey: I18nKey
   descKey: I18nKey
   promptKey: I18nKey
@@ -19,25 +18,21 @@ interface Suggestion {
 
 const SUGGESTIONS: Suggestion[] = [
   {
-    icon: Compass,
     labelKey: 'chat.suggest.explore',
     descKey: 'chat.suggest.explore.desc',
     promptKey: 'chat.suggest.explore.prompt'
   },
   {
-    icon: Hammer,
     labelKey: 'chat.suggest.build',
     descKey: 'chat.suggest.build.desc',
     promptKey: 'chat.suggest.build.prompt'
   },
   {
-    icon: GitPullRequest,
     labelKey: 'chat.suggest.review',
     descKey: 'chat.suggest.review.desc',
     promptKey: 'chat.suggest.review.prompt'
   },
   {
-    icon: Bug,
     labelKey: 'chat.suggest.fix',
     descKey: 'chat.suggest.fix.desc',
     promptKey: 'chat.suggest.fix.prompt'
@@ -276,32 +271,35 @@ export default function ChatPanel() {
           <div className="flex h-full flex-col items-center px-8 pb-[14vh]">
             <div className="my-auto flex w-full max-w-[640px] flex-col items-center">
               <div className="rise" style={{ animationDelay: '0ms' }}>
-                <Logo size={40} />
+                <Logo size={48} />
               </div>
               <h2
-                className="rise mb-8 mt-4 text-[26px] font-semibold tracking-[-0.01em] text-cream"
+                className="rise mb-9 mt-5 font-serif text-[27px] font-medium tracking-[0.01em] text-cream"
                 style={{ animationDelay: '60ms' }}
               >
                 {t('chat.hero.title')}
               </h2>
-              <div className="grid w-full grid-cols-2 gap-3">
+              <div className="grid w-full grid-cols-2 gap-2.5">
                 {SUGGESTIONS.map((s, i) => (
                   <button
                     key={s.labelKey}
                     onClick={() => handleSend(t(s.promptKey))}
                     disabled={cliAvailable === false}
                     style={{ animationDelay: `${120 + i * 70}ms` }}
-                    className="rise group flex flex-col items-start gap-2.5 rounded-[14px] border border-line bg-ink-850 p-4 text-left transition-all duration-150 ease-standard hover:-translate-y-px hover:border-ink-600 hover:shadow-card disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+                    className="rise group flex items-center justify-between gap-3 rounded-[12px] border border-line bg-ink-850 px-4 py-3.5 text-left transition-all duration-150 ease-standard hover:border-ink-600 hover:shadow-card disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-accent-soft">
-                      <s.icon size={16} className="text-accent" strokeWidth={1.8} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-medium leading-5 text-cream">
+                        {t(s.labelKey)}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[12px] leading-5 text-cream-faint">
+                        {t(s.descKey)}
+                      </span>
                     </span>
-                    <span className="text-[13px] font-medium leading-5 text-cream">
-                      {t(s.labelKey)}
-                    </span>
-                    <span className="-mt-1.5 truncate text-[12px] leading-5 text-cream-faint">
-                      {t(s.descKey)}
-                    </span>
+                    <ArrowUpRight
+                      size={14}
+                      className="shrink-0 text-cream-faint opacity-0 transition-all duration-150 group-hover:translate-x-0 group-hover:text-accent group-hover:opacity-100 -translate-x-1"
+                    />
                   </button>
                 ))}
               </div>
