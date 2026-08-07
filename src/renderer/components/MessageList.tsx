@@ -1,7 +1,7 @@
 import { ReactNode } from 'react'
 import MessageItem from './MessageItem'
-import ToolCallCard from './ToolCallCard'
-import { MessageLike } from '../store'
+import { ToolGroup } from './TurnRow'
+import { MessageLike, useAppStore } from '../store'
 
 interface MessageListProps {
   messages: MessageLike[]
@@ -20,6 +20,20 @@ function gapBefore(prev: MessageLike | undefined, nextIsUser: boolean): string {
 }
 
 export default function MessageList({ messages, sessionId = null }: MessageListProps) {
+  const streaming = useAppStore((s) => (sessionId ? Boolean(s.busy[sessionId]) : false))
+  const activity = useAppStore((s) => (sessionId ? s.turnActivity[sessionId] : undefined))
+  const summary = useAppStore((s) => (sessionId ? s.turnSummaries[sessionId] : undefined))
+
+  // Turn boundary marker: groups after the last user message belong to the
+  // current (or just-finished) turn and get the live row / frozen summary.
+  const lastUserIdx = messages.reduce((acc, m, i) => (m.role === 'user' ? i : acc), -1)
+  // The frozen summary (with elapsed time) pins to the LAST tool group of the
+  // turn — earlier groups in the same turn show derived counts only.
+  const lastToolIdx = messages.reduce(
+    (acc, m, i) => (m.toolCall && i > lastUserIdx ? i : acc),
+    -1
+  )
+
   const nodes: ReactNode[] = []
   let prev: MessageLike | undefined
   let i = 0
@@ -29,20 +43,23 @@ export default function MessageList({ messages, sessionId = null }: MessageListP
     // separators — a list, not a stack of boxes (Claude Code style).
     if (message.toolCall) {
       const run: MessageLike[] = []
+      const runStart = i
       let j = i
       while (j < messages.length && messages[j].toolCall) {
         run.push(messages[j])
         j++
       }
+      const isLastRun = j === messages.length
+      const inCurrentTurn = runStart > lastUserIdx
+      const isTurnsLastGroup = lastToolIdx >= runStart && lastToolIdx < j
       nodes.push(
         <div key={message.id} className={gapBefore(prev, false)}>
-          <div className="msg-in overflow-hidden rounded-xl border border-line bg-ink-850/50">
-            <div className="divide-y divide-line">
-              {run.map((m) => (
-                <ToolCallCard key={m.id} toolCall={m.toolCall!} />
-              ))}
-            </div>
-          </div>
+          <ToolGroup
+            run={run}
+            streaming={streaming}
+            activity={streaming && isLastRun && inCurrentTurn ? activity : undefined}
+            summary={!streaming && isTurnsLastGroup ? summary : undefined}
+          />
         </div>
       )
       prev = messages[j - 1]

@@ -14,11 +14,15 @@ export interface Session {
   status: 'idle' | 'running' | 'error'
   /** Session file this session was resumed from, if any. */
   resumeFrom?: string
+  /** pi's on-disk session file (backfilled after spawn; used to dedup history). */
+  sessionFile?: string
 }
 
 export type SessionEvent =
   | { type: 'connected'; sessionId: string }
   | { type: 'message'; sessionId: string; role: 'user' | 'assistant' | 'system'; content: string }
+  /** Streaming thinking delta of the in-flight assistant message. */
+  | { type: 'thinking'; sessionId: string; delta: string }
   | { type: 'tool_call'; sessionId: string; tool: string; input: unknown; output?: unknown }
   | { type: 'tool_result'; sessionId: string; tool: string; output: unknown; isError: boolean }
   | { type: 'status'; sessionId: string; status: 'working' | 'idle' }
@@ -152,6 +156,8 @@ export interface ChatMessage {
   content: string
   /** system messages only: 'info' renders neutral instead of the error style. */
   variant?: 'info'
+  /** Thinking text of an assistant message (collapsible block in the UI). */
+  thinking?: string
   toolCall?: {
     tool: string
     input: unknown
@@ -276,6 +282,8 @@ export interface SessionState {
   pendingMessageCount: number
   sessionId: string
   sessionName?: string
+  /** pi's on-disk session JSONL path. */
+  sessionFile?: string
   messageCount: number
   thinkingLevel: string
   model?: unknown

@@ -7,12 +7,97 @@ export interface MessageLike {
   content: string
   /** system messages only: 'info' renders neutral instead of the error style. */
   variant?: 'info'
+  /** Assistant thinking text, streamed via thinking deltas (collapsible block). */
+  thinking?: string
+  /** First thinking delta of this message; elapsed time renders from these. */
+  thinkingStartTs?: number
+  /** Thinking end (first text delta / tool call / turn end); unset while streaming. */
+  thinkingEndTs?: number
+  /** Images the user attached to this message (in-memory only, dataURL-grade). */
+  images?: { data: string; mimeType: string }[]
   toolCall?: {
     tool: string
     input: unknown
     output?: unknown
     isError?: boolean
   }
+}
+
+/** Verb buckets the turn-progress row aggregates tool calls into. */
+export type TurnVerb = 'read' | 'search' | 'run' | 'edit' | 'call'
+
+export interface TurnCounts {
+  /** read/ls calls */
+  filesRead: number
+  /** grep/find calls */
+  searches: number
+  /** bash calls */
+  commands: number
+  /** edit/write calls */
+  edits: number
+  /** every other tool */
+  toolCalls: number
+}
+
+/** Live per-turn progress, reset on agent_start and frozen into a summary on agent_end. */
+export interface TurnActivity {
+  /** agent_start timestamp; the summary's elapsed time derives from it. */
+  startedAt: number
+  counts: TurnCounts
+  lastAction?: { verb: TurnVerb; target: string }
+}
+
+/** Frozen counters of the last finished turn of a session. */
+export interface TurnSummary {
+  elapsedMs: number
+  counts: TurnCounts
+}
+
+export function emptyTurnCounts(): TurnCounts {
+  return { filesRead: 0, searches: 0, commands: 0, edits: 0, toolCalls: 0 }
+}
+
+/** Bucket a tool name into its turn-progress verb. */
+export function classifyTool(tool: string): TurnVerb {
+  const name = tool.toLowerCase()
+  if (name === 'read' || name === 'ls') return 'read'
+  if (name === 'grep' || name === 'find') return 'search'
+  if (name === 'bash') return 'run'
+  if (name === 'edit' || name === 'write') return 'edit'
+  return 'call'
+}
+
+function countField(verb: TurnVerb): keyof TurnCounts {
+  switch (verb) {
+    case 'read':
+      return 'filesRead'
+    case 'search':
+      return 'searches'
+    case 'run':
+      return 'commands'
+    case 'edit':
+      return 'edits'
+    default:
+      return 'toolCalls'
+  }
+}
+
+/**
+ * Short label of what a tool call acts on, for the live turn row:
+ * bash → first command line (40 chars), file/search tools → path/pattern,
+ * everything else → the tool name.
+ */
+function toolTarget(tool: string, input: unknown): string {
+  const name = tool.toLowerCase()
+  if (input && typeof input === 'object') {
+    const obj = input as Record<string, unknown>
+    if (name === 'bash' && typeof obj.command === 'string') {
+      return obj.command.split('\n', 1)[0].slice(0, 40)
+    }
+    const target = obj.path ?? obj.pattern ?? obj.query
+    if (typeof target === 'string' && target) return target
+  }
+  return tool
 }
 
 /** A message parked while the session is busy; drained FIFO on idle. */
@@ -59,6 +144,10 @@ interface AppState {
   compacting: Record<string, boolean>
   /** sessionId -> latest known token/context usage */
   stats: Record<string, SessionStats>
+  /** sessionId -> live turn-progress counters (present while a turn runs) */
+  turnActivity: Record<string, TurnActivity>
+  /** sessionId -> frozen counters of the last finished turn */
+  turnSummaries: Record<string, TurnSummary>
   /** Sidebar: pinned sessions, listed first (persisted in electron-store). */
   pinnedSessionIds: string[]
   /** Sidebar: archived sessions, folded into the archive group (persisted). */
@@ -67,6 +156,8 @@ interface AppState {
   unreadSessionIds: Record<string, boolean>
   /** One-shot composer prefill (e.g. "build your own plugin" from the packages page). */
   composerPrefill: string | null
+  /** Sidebar: recent project folders, MRU first (persisted in electron-store). */
+  recentProjects: string[]
   /** Persisted session files of the current project (pi history), newest first. */
   historySessions: HistorySessionInfo[]
   setTheme: (theme: 'dark' | 'light') => void
@@ -79,6 +170,10 @@ interface AppState {
   /** Replace a session's whole transcript (history resume backfill). */
   setMessages: (sessionId: string, messages: MessageLike[]) => void
   appendMessageContent: (sessionId: string, content: string) => void
+  /** Append a thinking delta to the in-flight assistant message. */
+  appendThinking: (sessionId: string, delta: string) => void
+  /** Stamp thinkingEndTs on the session's last message if its thinking is open. */
+  finalizeThinking: (sessionId: string) => void
   resolveUiRequest: (sessionId: string, requestId: string) => void
   setPackages: (packages: PackageInfo[]) => void
   updatePackageEnabled: (source: string, enabled: boolean) => void
@@ -117,12 +212,17 @@ interface AppState {
   markSessionUnread: (sessionId: string) => void
   clearSessionUnread: (sessionId: string) => void
   setComposerPrefill: (text: string | null) => void
+  /** Replace the recent-projects list (startup load; does not persist). */
+  setRecentProjects: (paths: string[]) => void
+  /** Drop one path from the recent-projects list and persist the new list. */
+  removeRecentProject: (path: string) => void
   /** (Re)load the persisted session history of a project; null clears the list. */
   loadHistorySessions: (projectDir: string | null) => Promise<void>
   /** Drop one entry from the history list (after its file was deleted). */
   removeHistorySession: (filePath: string) => void
   /** Update one session's display title in place. */
   setSessionTitle: (sessionId: string, title: string) => void
+  setSessionFile: (sessionId: string, sessionFile: string) => void
   /**
    * Auto-name a session from its first user message when it still carries the
    * default title (project dir basename). No-op once the session has a real
@@ -162,10 +262,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   queuedMessages: {},
   compacting: {},
   stats: {},
+  turnActivity: {},
+  turnSummaries: {},
   pinnedSessionIds: [],
   archivedSessionIds: [],
   unreadSessionIds: {},
   composerPrefill: null,
+  recentProjects: [],
   historySessions: [],
 
   setTheme: (theme) => {
@@ -177,7 +280,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'
     window.electronAPI.setStore('language', language)
   },
-  setCurrentProject: (currentProject) => set({ currentProject }),
+  setCurrentProject: (currentProject) =>
+    set((state) => {
+      if (!currentProject) return { currentProject }
+      // Keep the MRU recent-projects list in sync (dedup, cap 10, persisted)
+      const recentProjects = [
+        currentProject,
+        ...state.recentProjects.filter((p) => p !== currentProject)
+      ].slice(0, 10)
+      const changed =
+        recentProjects.length !== state.recentProjects.length ||
+        recentProjects.some((p, i) => p !== state.recentProjects[i])
+      if (changed) window.electronAPI.setStore('recentProjects', recentProjects)
+      return { currentProject, recentProjects }
+    }),
   setSessions: (sessions) =>
     set((state) => {
       // Prune pin/archive/unread entries of sessions that no longer exist
@@ -195,10 +311,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       )
       return { sessions, pinnedSessionIds, archivedSessionIds, unreadSessionIds }
     }),
-  addSession: (session) => set((state) => ({
-    sessions: [session, ...state.sessions],
-    currentSessionId: session.id
-  })),
+  addSession: (session) => {
+    set((state) => ({
+      sessions: [session, ...state.sessions],
+      currentSessionId: session.id
+    }))
+    // Backfill the on-disk session file so the history list can dedup it
+    // (resumed sessions already carry resumeFrom).
+    if (!session.resumeFrom && !session.sessionFile) {
+      window.electronAPI.getSessionState(session.id).then((st) => {
+        if (st?.sessionFile) get().setSessionFile(session.id, st.sessionFile)
+      })
+    }
+  },
+  setSessionFile: (sessionId, sessionFile) =>
+    set((state) => ({
+      sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, sessionFile } : s))
+    })),
   setCurrentSessionId: (currentSessionId) =>
     set((state) => ({
       currentSessionId,
@@ -236,9 +365,58 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
     const updated = [...list]
-    updated[updated.length - 1] = { ...last, content: last.content + content }
+    updated[updated.length - 1] = {
+      ...last,
+      content: last.content + content,
+      // The first text delta after a thinking run closes it (for the elapsed time)
+      ...(last.thinking && last.thinkingEndTs === undefined
+        ? { thinkingEndTs: Date.now() }
+        : {})
+    }
     return { messages: { ...state.messages, [sessionId]: updated } }
   }),
+  appendThinking: (sessionId, delta) =>
+    set((state) => {
+      const list = state.messages[sessionId] || []
+      const now = Date.now()
+      const last = list[list.length - 1]
+      // Thinking streams before its message's text; once text started (or the
+      // previous thinking run closed), a fresh message carries the new run.
+      if (last && last.role === 'assistant' && !last.toolCall && !last.content && last.thinkingEndTs === undefined) {
+        const updated = [...list]
+        updated[updated.length - 1] = {
+          ...last,
+          thinking: (last.thinking ?? '') + delta,
+          thinkingStartTs: last.thinkingStartTs ?? now
+        }
+        return { messages: { ...state.messages, [sessionId]: updated } }
+      }
+      return {
+        messages: {
+          ...state.messages,
+          [sessionId]: [
+            ...list,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant' as const,
+              content: '',
+              thinking: delta,
+              thinkingStartTs: now
+            }
+          ]
+        }
+      }
+    }),
+  finalizeThinking: (sessionId) =>
+    set((state) => {
+      const list = state.messages[sessionId] || []
+      const last = list[list.length - 1]
+      if (!last || last.role !== 'assistant' || last.toolCall) return state
+      if (!last.thinking || last.thinkingEndTs !== undefined) return state
+      const updated = [...list]
+      updated[updated.length - 1] = { ...last, thinkingEndTs: Date.now() }
+      return { messages: { ...state.messages, [sessionId]: updated } }
+    }),
   resolveUiRequest: (sessionId, requestId) =>
     set((state) => ({
       uiRequests: {
@@ -323,6 +501,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearSessionUnread: (sessionId) =>
     set((state) => ({ unreadSessionIds: { ...state.unreadSessionIds, [sessionId]: false } })),
   setComposerPrefill: (composerPrefill) => set({ composerPrefill }),
+  setRecentProjects: (recentProjects) => set({ recentProjects }),
+  removeRecentProject: (path) =>
+    set((state) => {
+      const recentProjects = state.recentProjects.filter((p) => p !== path)
+      window.electronAPI.setStore('recentProjects', recentProjects)
+      return { recentProjects }
+    }),
   loadHistorySessions: async (projectDir) => {
     if (!projectDir) {
       set({ historySessions: [] })
@@ -391,7 +576,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       } else {
         get().appendMessageContent(event.sessionId, event.content)
       }
+    } else if (event.type === 'thinking') {
+      get().appendThinking(event.sessionId, event.delta)
     } else if (event.type === 'tool_call') {
+      // A tool call ends any open thinking run of the previous message
+      get().finalizeThinking(event.sessionId)
       get().addMessage(event.sessionId, {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -400,6 +589,26 @@ export const useAppStore = create<AppState>((set, get) => ({
           tool: event.tool,
           input: event.input,
           output: event.output
+        }
+      })
+      // Turn-progress aggregation: bucket the tool and remember the last action
+      const verb = classifyTool(event.tool)
+      const field = countField(verb)
+      const target = toolTarget(event.tool, event.input)
+      set((state) => {
+        const activity = state.turnActivity[event.sessionId] ?? {
+          startedAt: Date.now(),
+          counts: emptyTurnCounts()
+        }
+        return {
+          turnActivity: {
+            ...state.turnActivity,
+            [event.sessionId]: {
+              ...activity,
+              counts: { ...activity.counts, [field]: activity.counts[field] + 1 },
+              lastAction: { verb, target }
+            }
+          }
         }
       })
     } else if (event.type === 'tool_result') {
@@ -428,7 +637,39 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else if (event.type === 'status') {
       const wasBusy = Boolean(get().busy[event.sessionId])
       const working = event.status === 'working'
-      set((state) => ({ busy: { ...state.busy, [event.sessionId]: working } }))
+      if (working) {
+        // agent_start: fresh turn-progress counters
+        set((state) => ({
+          busy: { ...state.busy, [event.sessionId]: true },
+          turnActivity: {
+            ...state.turnActivity,
+            [event.sessionId]: { startedAt: Date.now(), counts: emptyTurnCounts() }
+          }
+        }))
+      } else {
+        // agent_end: close any open thinking run and freeze the turn summary
+        get().finalizeThinking(event.sessionId)
+        set((state) => {
+          const activity = state.turnActivity[event.sessionId]
+          const turnActivity = { ...state.turnActivity }
+          delete turnActivity[event.sessionId]
+          return {
+            busy: { ...state.busy, [event.sessionId]: false },
+            turnActivity,
+            ...(activity
+              ? {
+                  turnSummaries: {
+                    ...state.turnSummaries,
+                    [event.sessionId]: {
+                      elapsedMs: Date.now() - activity.startedAt,
+                      counts: activity.counts
+                    }
+                  }
+                }
+              : {})
+          }
+        })
+      }
       // working→idle with a non-empty queue: send the next queued message.
       // The wasBusy guard plus the optimistic busy=true below keep a stray or
       // repeated 'idle' from draining more than one message per real turn.
@@ -438,7 +679,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           get().addMessage(event.sessionId, {
             id: crypto.randomUUID(),
             role: 'user',
-            content: next.text
+            content: next.text,
+            images: next.images?.map(({ data, mimeType }) => ({ data, mimeType }))
           })
           set((state) => ({ busy: { ...state.busy, [event.sessionId]: true } }))
           void window.electronAPI
@@ -475,12 +717,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       // A dead session can't answer dialogs — drop them
       set((state) => ({ uiRequests: { ...state.uiRequests, [event.sessionId]: [] } }))
     } else if (event.type === 'closed') {
-      set((state) => ({
-        busy: { ...state.busy, [event.sessionId]: false },
-        compacting: { ...state.compacting, [event.sessionId]: false },
-        uiRequests: { ...state.uiRequests, [event.sessionId]: [] },
-        queuedMessages: { ...state.queuedMessages, [event.sessionId]: [] }
-      }))
+      set((state) => {
+        const turnActivity = { ...state.turnActivity }
+        delete turnActivity[event.sessionId]
+        return {
+          busy: { ...state.busy, [event.sessionId]: false },
+          compacting: { ...state.compacting, [event.sessionId]: false },
+          uiRequests: { ...state.uiRequests, [event.sessionId]: [] },
+          queuedMessages: { ...state.queuedMessages, [event.sessionId]: [] },
+          turnActivity
+        }
+      })
     }
   }
 }))

@@ -484,6 +484,20 @@ export async function setThinkingLevel(sessionId: string, level: ThinkingLevel):
   return Boolean(res && res.success === true)
 }
 
+/**
+ * Rewrite the approval extension config of a live session. The extension
+ * re-reads the file (mtime-cached) on every tool call, so 'ask' ↔ 'off'
+ * flips apply mid-session. no-bash/readonly are spawn-time --exclude-tools
+ * and stay untouched here (their approval config is inert 'off' anyway).
+ */
+export function updateApprovalConfig(sessionId: string, mode: PermissionMode): boolean {
+  const entry = sessions.get(sessionId)
+  if (!entry) return false
+  const { approval } = resolvePermissionMode(mode)
+  writeApprovalConfig(sessionId, approval)
+  return true
+}
+
 /** Export the session transcript as HTML; resolves the saved file path. */
 export async function exportHtml(sessionId: string, outputPath?: string): Promise<string | null> {
   const res = await querySession(

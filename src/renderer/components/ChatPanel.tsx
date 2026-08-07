@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { FolderOpen, Compass, Hammer, GitPullRequest, Bug, Download, Loader2 } from 'lucide-react'
+import { FolderOpen, Compass, Hammer, GitPullRequest, Bug, Download, Loader2, ChevronRight } from 'lucide-react'
 import { PromptImage, SlashCommand } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
@@ -7,7 +7,6 @@ import { createSessionForCurrentProject } from '../lib/session'
 import MessageList from './MessageList'
 import Composer from './Composer'
 import ExtensionUiDialog from './ExtensionUiDialog'
-import UsageMonitor from './UsageMonitor'
 import GitChip from './GitChip'
 import Logo from './Logo'
 
@@ -97,7 +96,8 @@ export default function ChatPanel() {
     useAppStore.getState().addMessage(sessionId, {
       id: crypto.randomUUID(),
       role: 'user',
-      content: text.trim()
+      content: text.trim(),
+      images: images?.map(({ data, mimeType }) => ({ data, mimeType }))
     })
     // Optimistic: show the working state until agent_end / error lands
     useAppStore.getState().setBusy(sessionId, true)
@@ -161,18 +161,24 @@ export default function ChatPanel() {
   return (
     <div className="relative flex h-full flex-col">
       {/* status bar, doubles as window drag region */}
-      <header className="app-drag flex h-12 shrink-0 items-center gap-2.5 border-b border-line px-4 text-xs">
-        <span className="max-w-[240px] truncate text-[13px] font-medium tracking-tight text-cream">
+      <header className="app-drag flex h-12 shrink-0 items-center gap-2 border-b border-line px-4 text-xs">
+        {/* breadcrumb: project / branch / session title */}
+        {projectName && (
+          <>
+            <span
+              className="flex min-w-0 items-center gap-1.5 text-cream-dim"
+              title={currentProject ?? undefined}
+            >
+              <FolderOpen size={12} className="shrink-0" />
+              <span className="max-w-[160px] truncate text-[12px] font-medium">{projectName}</span>
+            </span>
+            <ChevronRight size={10} className="shrink-0 text-cream-faint" />
+          </>
+        )}
+        <GitChip trailing={<ChevronRight size={10} className="shrink-0 text-cream-faint" />} />
+        <span className="min-w-0 truncate text-[13px] font-semibold tracking-tight text-cream">
           {currentSession ? currentSession.title : t('chat.noActiveSession')}
         </span>
-        {/* The chip duplicates the title while the session is untitled — show it only when it adds the project path context */}
-        {projectName && projectName !== currentSession?.title && (
-          <span className="flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-overlay px-2 py-[3px] text-cream-dim">
-            <FolderOpen size={11} className="shrink-0" />
-            <span className="truncate font-mono text-[11px]">{projectName}</span>
-          </span>
-        )}
-        <GitChip />
         <span className="ml-auto flex shrink-0 items-center gap-2.5 text-cream-dim">
           {currentSessionId && (
             <button
@@ -204,8 +210,8 @@ export default function ChatPanel() {
           )}
           {isBusy ? (
             <>
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-              <span className="font-medium text-accent">{t('chat.working')}</span>
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+              <span className="font-medium text-amber-500">{t('chat.running')}</span>
             </>
           ) : (
             <>
@@ -267,11 +273,6 @@ export default function ChatPanel() {
         )}
         <div ref={bottomRef} />
         </div>
-        {currentSessionId && (
-          <div className="absolute bottom-3 right-4 z-10">
-            <UsageMonitor sessionId={currentSessionId} />
-          </div>
-        )}
       </div>
 
       {!currentProject && (

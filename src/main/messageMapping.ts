@@ -13,7 +13,8 @@ import { ChatMessage } from '../shared/types'
  *   ({ tool, input }); a matching toolResult fills output/isError later
  * - toolResult                  → merged into its toolCall card by toolCallId;
  *   an orphan result becomes a card without input (mirrors the store fallback)
- * - thinking blocks             → skipped
+ * - thinking blocks             → joined into the assistant message's
+ *   `thinking` field (same message the surrounding text blocks merge into)
  * Pure functions so they can be unit-tested without Electron.
  */
 
@@ -90,6 +91,17 @@ export function mapAgentMessages(messages: AgentMessage[]): ChatMessage[] {
           } else {
             out.push({ id: crypto.randomUUID(), role: 'assistant', content: text })
           }
+        } else if (block?.type === 'thinking') {
+          const text = (block as { thinking?: unknown }).thinking
+          if (typeof text !== 'string' || !text.trim()) continue
+          // Fold into the same assistant message the text blocks merge into,
+          // so the thinking block renders above its reply.
+          let current = appendableAssistantText(out)
+          if (!current) {
+            current = { id: crypto.randomUUID(), role: 'assistant', content: '' }
+            out.push(current)
+          }
+          current.thinking = current.thinking ? `${current.thinking}\n${text}` : text
         } else if (block?.type === 'toolCall') {
           const call = block as AgentToolCallBlock
           out.push({
@@ -102,7 +114,7 @@ export function mapAgentMessages(messages: AgentMessage[]): ChatMessage[] {
             pendingTools.set(call.id, out.length - 1)
           }
         }
-        // thinking and unknown blocks are skipped
+        // unknown blocks are skipped
       }
       continue
     }

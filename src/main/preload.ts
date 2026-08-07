@@ -21,6 +21,7 @@ import {
   SessionState,
   StreamingBehavior,
   ThinkingLevel,
+  PermissionMode,
   SelectImageResult,
   UpdaterStatus,
   ChatMessage,
@@ -75,6 +76,8 @@ export interface ElectronAPI {
   followUp: (sessionId: string, message: string, images?: PromptImage[]) => Promise<boolean>
   /** Change the thinking level of a live session. */
   setThinkingLevel: (sessionId: string, level: ThinkingLevel) => Promise<boolean>
+  /** Rewrite a live session's approval-extension config (permission mode hot-swap). */
+  updateApprovalConfig: (sessionId: string, mode: PermissionMode) => Promise<boolean>
   /** Export the session transcript as HTML; resolves the saved path (null on failure). */
   exportHtml: (sessionId: string, outputPath?: string) => Promise<string | null>
   /** Live RPC get_state snapshot of a session; null when unavailable. */
@@ -194,6 +197,8 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.OMP_FOLLOW_UP, sessionId, message, images),
   setThinkingLevel: (sessionId: string, level: ThinkingLevel) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SET_THINKING, sessionId, level),
+  updateApprovalConfig: (sessionId: string, mode: PermissionMode) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_UPDATE_APPROVAL_CONFIG, sessionId, mode),
   exportHtml: (sessionId: string, outputPath?: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_EXPORT_HTML, sessionId, outputPath),
   getSessionState: (sessionId: string) =>

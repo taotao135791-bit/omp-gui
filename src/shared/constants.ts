@@ -42,6 +42,7 @@ export const IPC_CHANNELS = {
   OMP_STEER: 'omp:steer',
   OMP_FOLLOW_UP: 'omp:follow-up',
   OMP_SET_THINKING: 'omp:set-thinking',
+  OMP_UPDATE_APPROVAL_CONFIG: 'omp:update-approval-config',
   OMP_EXPORT_HTML: 'omp:export-html',
   OMP_SESSION_STATE: 'omp:session-state',
   OMP_LIST_SESSION_HISTORY: 'omp:list-session-history',

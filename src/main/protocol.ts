@@ -71,6 +71,12 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
           event: { type: 'message', sessionId, role: 'assistant', content: ev.delta }
         }
       }
+      if (ev?.type === 'thinking_delta' && typeof ev.delta === 'string') {
+        return {
+          kind: 'event',
+          event: { type: 'thinking', sessionId, delta: ev.delta }
+        }
+      }
       return { kind: 'none' }
     }
 

@@ -9,6 +9,7 @@ import {
   ExtensionUiAnswer,
   ModelConfig,
   CheckpointInfo,
+  PermissionMode,
   PromptImage,
   StreamingBehavior,
   ThinkingLevel,
@@ -31,6 +32,7 @@ import {
   steer,
   followUp,
   setThinkingLevel,
+  updateApprovalConfig,
   exportHtml,
   getSessionState,
   setSessionName,
@@ -129,6 +131,8 @@ function sanitizeDialogFilters(value: unknown): { name: string; extensions: stri
 }
 
 const THINKING_LEVELS: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+
+const PERMISSION_MODES: PermissionMode[] = ['full', 'no-bash', 'readonly', 'ask']
 
 export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.OMP_DETECT, async (_event: IpcMainInvokeEvent, force?: boolean) => {
@@ -267,6 +271,15 @@ export function registerIpc() {
       if (typeof sessionId !== 'string' || !sessionId) return false
       if (!THINKING_LEVELS.includes(level)) return false
       return setThinkingLevel(sessionId, level)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_UPDATE_APPROVAL_CONFIG,
+    async (_event: IpcMainInvokeEvent, sessionId: string, mode: PermissionMode) => {
+      if (typeof sessionId !== 'string' || !sessionId) return false
+      if (!PERMISSION_MODES.includes(mode)) return false
+      return updateApprovalConfig(sessionId, mode)
     }
   )
 

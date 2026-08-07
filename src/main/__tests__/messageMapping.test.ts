@@ -44,12 +44,33 @@ describe('mapAgentMessages', () => {
     expect(out[0].toolCall).toBeUndefined()
   })
 
-  it('maps assistant text and skips thinking blocks', () => {
+  it('maps thinking blocks into the assistant message thinking field', () => {
     const out = mapAgentMessages([
       assistant({ type: 'thinking', thinking: 'hmm' }, textBlock('answer'))
     ])
     expect(out).toHaveLength(1)
-    expect(out[0]).toMatchObject({ role: 'assistant', content: 'answer' })
+    expect(out[0]).toMatchObject({ role: 'assistant', content: 'answer', thinking: 'hmm' })
+  })
+
+  it('joins multiple thinking blocks with newlines', () => {
+    const out = mapAgentMessages([
+      assistant(
+        { type: 'thinking', thinking: 'first' },
+        { type: 'thinking', thinking: 'second' },
+        textBlock('answer')
+      )
+    ])
+    expect(out).toHaveLength(1)
+    expect(out[0].thinking).toBe('first\nsecond')
+  })
+
+  it('attaches a thinking-only message before a tool card', () => {
+    const out = mapAgentMessages([
+      assistant({ type: 'thinking', thinking: 'let me check' }, toolCallBlock('c1', 'read', { path: 'x' }))
+    ])
+    expect(out).toHaveLength(2)
+    expect(out[0]).toMatchObject({ role: 'assistant', content: '', thinking: 'let me check' })
+    expect(out[1].toolCall).toBeDefined()
   })
 
   it('merges consecutive assistant text blocks into one message', () => {
@@ -59,6 +80,7 @@ describe('mapAgentMessages', () => {
     ])
     expect(out).toHaveLength(1)
     expect(out[0].content).toBe('part one\n\npart two')
+    expect(out[0].thinking).toBe('...')
   })
 
   it('keeps user and assistant messages in order', () => {

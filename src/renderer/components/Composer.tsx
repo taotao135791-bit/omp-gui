@@ -14,6 +14,8 @@ import { QueuedMessage, useAppStore } from '../store'
 import { useT } from '../i18n'
 import ModelPicker from './ModelPicker'
 import ThinkingPicker from './ThinkingPicker'
+import PermissionPicker from './PermissionPicker'
+import UsageMonitor from './UsageMonitor'
 
 interface ComposerProps {
   onSend: (text: string, images?: PromptImage[]) => void
@@ -313,7 +315,8 @@ export default function Composer({
     useAppStore.getState().addMessage(currentSessionId, {
       id: crypto.randomUUID(),
       role: 'user',
-      content: m.text
+      content: m.text,
+      images: m.images?.map(({ data, mimeType }) => ({ data, mimeType }))
     })
     void window.electronAPI.steer(currentSessionId, m.text, m.images)
   }
@@ -534,7 +537,13 @@ export default function Composer({
             onInput={handleInput}
             onPaste={handlePaste}
             disabled={disabled}
-            placeholder={disabled ? t('composer.placeholderDisabled') : t('composer.placeholder')}
+            placeholder={
+              disabled
+                ? t('composer.placeholderDisabled')
+                : busy
+                  ? t('composer.placeholderBusy')
+                  : t('composer.placeholder')
+            }
             rows={1}
             className="max-h-40 w-full resize-none bg-transparent px-2.5 py-1.5 text-[15px] leading-6 text-cream placeholder-cream-faint outline-none"
           />
@@ -556,6 +565,7 @@ export default function Composer({
               </button>
               <ModelPicker />
               <ThinkingPicker sessionId={currentSessionId} />
+              <PermissionPicker />
             </div>
             {busy ? (
               <div className="flex items-center gap-1.5">
@@ -595,7 +605,13 @@ export default function Composer({
             )}
           </div>
         </div>
-        <div className="mt-1.5 text-center text-[10.5px] text-cream-faint">
+        <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-cream-faint">
+          <div className="min-w-0">
+            {currentSessionId && <UsageMonitor sessionId={currentSessionId} />}
+          </div>
+          <span className="shrink-0">{t('composer.shortcuts')}</span>
+        </div>
+        <div className="mt-1 text-center text-[10.5px] text-cream-faint">
           {t('composer.disclaimer')}
         </div>
       </div>

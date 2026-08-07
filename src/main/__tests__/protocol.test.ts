@@ -32,12 +32,26 @@ describe('parseRpcLine', () => {
     })
   })
 
-  it('ignores non-text message updates (thinking, toolcall)', () => {
+  it('maps thinking_delta message updates to thinking events', () => {
     const line = JSON.stringify({
       type: 'message_update',
+      message: {},
       assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'hmm' }
     })
-    expect(parseRpcLine(line, 's1')).toEqual({ kind: 'none' })
+    expect(parseRpcLine(line, 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'thinking', sessionId: 's1', delta: 'hmm' }
+    })
+  })
+
+  it('ignores non-text message updates (thinking start/end, toolcall)', () => {
+    for (const type of ['thinking_start', 'thinking_end', 'toolcall_delta']) {
+      const line = JSON.stringify({
+        type: 'message_update',
+        assistantMessageEvent: { type, contentIndex: 0 }
+      })
+      expect(parseRpcLine(line, 's1')).toEqual({ kind: 'none' })
+    }
   })
 
   it('maps tool_execution_start to tool_call', () => {

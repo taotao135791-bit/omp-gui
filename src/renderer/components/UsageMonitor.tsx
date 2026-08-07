@@ -13,10 +13,10 @@ interface UsageMonitorProps {
 }
 
 /**
- * Bottom-right corner monitor: token usage, prompt-cache hit rate and
- * context-window fill for the active session, plus a live indicator while
- * compaction runs. Backed by the RPC get_session_stats command; refreshes
- * after every turn and periodically while the agent works.
+ * Usage readout in the composer's status bar: token usage, prompt-cache hit
+ * rate and context-window fill for the active session, plus a live indicator
+ * while compaction runs. Backed by the RPC get_session_stats command;
+ * refreshes after every turn and periodically while the agent works.
  */
 export default function UsageMonitor({ sessionId }: UsageMonitorProps) {
   const t = useT()
@@ -43,7 +43,7 @@ export default function UsageMonitor({ sessionId }: UsageMonitorProps) {
 
   if (compacting) {
     return (
-      <div className="pointer-events-none flex items-center gap-1.5 rounded-full border border-line bg-ink-850/90 px-3 py-1 font-mono text-[11px] tabular-nums text-accent shadow-card backdrop-blur">
+      <div className="flex items-center gap-1.5 font-mono text-[11px] tabular-nums text-accent">
         <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
         {t('usage.compacting')}
       </div>
@@ -64,7 +64,7 @@ export default function UsageMonitor({ sessionId }: UsageMonitorProps) {
 
   return (
     <div
-      className="pointer-events-none flex items-center gap-2 rounded-full border border-line bg-ink-850/90 px-3 py-1 font-mono text-[11px] tabular-nums text-cream-faint shadow-card backdrop-blur"
+      className="flex items-center gap-2 font-mono text-[11px] tabular-nums text-cream-faint"
       title={t('usage.tooltip')}
     >
       <span>

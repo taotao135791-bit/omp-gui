@@ -46,6 +46,7 @@ export default function Sidebar() {
     archivedSessionIds,
     unreadSessionIds,
     historySessions,
+    recentProjects,
     setCurrentProject,
     setCurrentSessionId,
     setSessions,
@@ -57,12 +58,16 @@ export default function Sidebar() {
     addSession,
     setMessages,
     loadHistorySessions,
-    removeHistorySession
+    removeHistorySession,
+    setRecentProjects,
+    removeRecentProject
   } = useAppStore()
 
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [archiveOpen, setArchiveOpen] = useState(false)
+  const [projectsExpanded, setProjectsExpanded] = useState(false)
+  const [sessionsExpanded, setSessionsExpanded] = useState(false)
   const [resumingPath, setResumingPath] = useState<string | null>(null)
   const [restoreFailedPath, setRestoreFailedPath] = useState<string | null>(null)
   const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null)
@@ -70,12 +75,13 @@ export default function Sidebar() {
 
   useEffect(() => {
     window.electronAPI.getStore('recentProjects').then((projects) => {
+      setRecentProjects(projects)
       if (projects.length > 0 && !currentProject) {
         setCurrentProject(projects[0])
         window.electronAPI.setFsRoot(projects[0])
       }
     })
-  }, [currentProject, setCurrentProject])
+  }, [currentProject, setCurrentProject, setRecentProjects])
 
   // Load the persisted session history on startup and whenever the project changes
   useEffect(() => {
@@ -93,6 +99,13 @@ export default function Sidebar() {
       setCurrentProject(folder)
       window.electronAPI.setFsRoot(folder)
     }
+  }
+
+  // Switching projects reloads the session history via the currentProject effect
+  const handleSwitchProject = (path: string) => {
+    if (path === currentProject) return
+    setCurrentProject(path)
+    window.electronAPI.setFsRoot(path)
   }
 
   const handleDeleteSession = (id: string) => {
@@ -176,11 +189,28 @@ export default function Sidebar() {
     [filteredSessions, archivedSet]
   )
 
-  // History entries whose file a live session was resumed from are hidden;
-  // the search box filters the history list by title too.
+  // Long lists fold past a limit; pinned rows always show and search
+  // results never fold.
+  const SESSION_FOLD_LIMIT = 8
+  const searching = query.trim().length > 0
+  const sessionsOverLimit = !searching && normalSessions.length > SESSION_FOLD_LIMIT
+  const visibleNormalSessions =
+    sessionsOverLimit && !sessionsExpanded
+      ? normalSessions.slice(0, SESSION_FOLD_LIMIT)
+      : normalSessions
+
+  const PROJECT_FOLD_LIMIT = 5
+  const visibleProjects = projectsExpanded
+    ? recentProjects
+    : recentProjects.slice(0, PROJECT_FOLD_LIMIT)
+
+  // History entries whose file belongs to a live session (resumed from it or
+  // freshly created into it) are hidden; the search box filters by title too.
   const visibleHistory = useMemo(() => {
-    const resumed = new Set(sessions.map((s) => s.resumeFrom).filter(Boolean))
-    let list = historySessions.filter((h) => !resumed.has(h.filePath))
+    const live = new Set(
+      sessions.flatMap((s) => [s.resumeFrom, s.sessionFile]).filter(Boolean)
+    )
+    let list = historySessions.filter((h) => !live.has(h.filePath))
     const q = query.trim().toLowerCase()
     if (q) list = list.filter((h) => h.title.toLowerCase().includes(q))
     return list
@@ -332,35 +362,7 @@ export default function Sidebar() {
           <Logo size={22} className="shrink-0" />
           <span className="text-[13.5px] font-semibold tracking-tight text-cream">OMP GUI</span>
         </div>
-        <button
-          onClick={() => {
-            setSearchOpen(!searchOpen)
-            if (searchOpen) setQuery('')
-          }}
-          title={t('sidebar.searchSessions')}
-          className="app-no-drag focus-ring rounded-md p-1.5 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
-        >
-          {searchOpen ? <X size={14} /> : <Search size={14} />}
-        </button>
       </div>
-
-      {searchOpen && (
-        <div className="px-3 pb-2.5">
-          <div className="relative">
-            <Search
-              size={12}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cream-faint"
-            />
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t('sidebar.searchSessions')}
-              className="h-7 w-full rounded-full border border-line bg-ink-850 pl-7 pr-2.5 text-[12px] text-cream placeholder-cream-faint outline-none transition-colors focus:border-accent/50"
-            />
-          </div>
-        </div>
-      )}
 
       <nav className="space-y-0.5 px-2.5">
         <button
@@ -404,12 +406,90 @@ export default function Sidebar() {
           <FolderOpen size={13} className="shrink-0 text-cream-faint" />
           <span className="truncate">{currentProject || t('sidebar.selectProject')}</span>
         </button>
+        {recentProjects.length > 0 && (
+          <div className="mt-1 space-y-0.5">
+            {visibleProjects.map((path) => {
+              const name = path.split('/').filter(Boolean).pop() ?? path
+              return (
+                <div
+                  key={path}
+                  onClick={() => handleSwitchProject(path)}
+                  title={path}
+                  className={`${navRow(path === currentProject)} cursor-pointer`}
+                >
+                  <FolderOpen size={13} className="shrink-0 text-cream-faint" />
+                  <span className="truncate">{name}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      removeRecentProject(path)
+                    }}
+                    title={t('sidebar.removeRecent')}
+                    className={`${iconBtn} ml-auto hover:bg-overlay-strong hover:text-cream-dim`}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )
+            })}
+            {recentProjects.length > PROJECT_FOLD_LIMIT && (
+              <button
+                onClick={() => setProjectsExpanded(!projectsExpanded)}
+                className="flex w-full items-center gap-1 px-2 pb-1 pt-1.5 text-[11px] text-cream-faint transition-colors hover:text-cream-dim"
+              >
+                {projectsExpanded ? (
+                  <ChevronDown size={11} strokeWidth={1.5} />
+                ) : (
+                  <ChevronRight size={11} strokeWidth={1.5} />
+                )}
+                {projectsExpanded
+                  ? t('sidebar.showLess')
+                  : t('sidebar.showMore', { count: recentProjects.length - PROJECT_FOLD_LIMIT })}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="mt-5 flex-1 overflow-y-auto px-2.5 pb-2">
-        <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
-          {t('sidebar.sessions')}
+        <div className="flex items-center justify-between px-2 pb-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
+            {t('sidebar.sessions')}
+          </span>
+          <button
+            onClick={() => {
+              setSearchOpen(!searchOpen)
+              if (searchOpen) setQuery('')
+            }}
+            title={t('sidebar.searchSessions')}
+            className="rounded-md p-1 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
+          >
+            {searchOpen ? <X size={12} /> : <Search size={12} />}
+          </button>
         </div>
+        {searchOpen && (
+          <div className="px-2 pb-2">
+            <div className="relative">
+              <Search
+                size={12}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cream-faint"
+              />
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setSearchOpen(false)
+                    setQuery('')
+                  }
+                }}
+                placeholder={t('sidebar.searchSessions')}
+                className="h-7 w-full rounded-full border border-line bg-ink-850 pl-7 pr-2.5 text-[12px] text-cream placeholder-cream-faint outline-none transition-colors focus:border-accent/50"
+              />
+            </div>
+          </div>
+        )}
         {pinnedSessions.length === 0 && normalSessions.length === 0 ? (
           sessions.length === 0 || query.trim() ? (
             <div className="px-2 py-1.5 text-xs leading-5 text-cream-faint">
@@ -418,8 +498,23 @@ export default function Sidebar() {
           ) : null
         ) : (
           <div className="space-y-0.5">
-            {[...pinnedSessions, ...normalSessions].map(renderSessionRow)}
+            {[...pinnedSessions, ...visibleNormalSessions].map(renderSessionRow)}
           </div>
+        )}
+        {sessionsOverLimit && (
+          <button
+            onClick={() => setSessionsExpanded(!sessionsExpanded)}
+            className="flex w-full items-center gap-1 px-2 pb-1 pt-1.5 text-[11px] text-cream-faint transition-colors hover:text-cream-dim"
+          >
+            {sessionsExpanded ? (
+              <ChevronDown size={11} strokeWidth={1.5} />
+            ) : (
+              <ChevronRight size={11} strokeWidth={1.5} />
+            )}
+            {sessionsExpanded
+              ? t('sidebar.showLess')
+              : t('sidebar.showMore', { count: normalSessions.length - SESSION_FOLD_LIMIT })}
+          </button>
         )}
 
         {archivedSessions.length > 0 && (
