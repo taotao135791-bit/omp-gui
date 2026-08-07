@@ -548,11 +548,11 @@ export default function Composer({
             className="max-h-40 w-full resize-none bg-transparent px-2.5 py-1.5 text-[15px] leading-6 text-cream placeholder-cream-faint outline-none"
           />
           <div className="flex items-center justify-between px-1 pb-0.5 pt-0.5">
-            <div className="flex items-center gap-1.5">
+            <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <button
                 onClick={handleAttachFile}
                 title={t('composer.attach')}
-                className="focus-ring flex h-7 w-7 items-center justify-center rounded-full border border-line text-cream-dim transition-all hover:border-ink-600 hover:text-cream"
+                className="focus-ring flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line text-cream-dim transition-all hover:border-ink-600 hover:text-cream"
               >
                 <Paperclip size={12} />
               </button>
@@ -606,10 +606,12 @@ export default function Composer({
           </div>
         </div>
         <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-cream-faint">
-          <div className="min-w-0">
+          <div className="min-w-0 truncate">
             {currentSessionId && <UsageMonitor sessionId={currentSessionId} />}
           </div>
-          <span className="shrink-0">{t('composer.shortcuts')}</span>
+          <span className="hidden shrink-0 whitespace-nowrap min-[1100px]:inline">
+            {t('composer.shortcuts')}
+          </span>
         </div>
         <div className="mt-1 text-center text-[10.5px] text-cream-faint">
           {t('composer.disclaimer')}

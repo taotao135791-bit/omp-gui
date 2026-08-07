@@ -79,7 +79,7 @@ export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
       <button
         onClick={() => setOpen((v) => !v)}
         disabled={!sessionId}
-        className="focus-ring flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[12px] font-medium text-cream-dim transition-all hover:border-ink-600 hover:text-cream disabled:cursor-not-allowed disabled:opacity-40"
+        className="focus-ring flex shrink-0 items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[12px] font-medium whitespace-nowrap text-cream-dim transition-all hover:border-ink-600 hover:text-cream disabled:cursor-not-allowed disabled:opacity-40"
         title={t('composer.thinking')}
       >
         <Brain size={12} />

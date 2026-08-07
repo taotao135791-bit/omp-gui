@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { FolderOpen, Compass, Hammer, GitPullRequest, Bug, Download, Loader2, ChevronRight } from 'lucide-react'
+import { FolderOpen, Compass, Hammer, GitPullRequest, Bug, Download, Loader2, ChevronRight, ChevronDown } from 'lucide-react'
 import { PromptImage, SlashCommand } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
@@ -66,6 +66,14 @@ export default function ChatPanel() {
   )
   const pendingUi = currentSessionId ? (uiRequests[currentSessionId] || [])[0] : undefined
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // Only auto-scroll while the user is pinned to the bottom; scrolling up
+  // during streaming must not yank the view back down on every delta.
+  const pinnedRef = useRef(true)
+  const [showJump, setShowJump] = useState(false)
+  // Suppress the scroll handler while a programmatic jump animates — the
+  // intermediate positions would otherwise flip pinned off mid-flight.
+  const jumpingRef = useRef(false)
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
   const [exporting, setExporting] = useState(false)
   const [exportFailed, setExportFailed] = useState(false)
@@ -85,9 +93,39 @@ export default function ChatPanel() {
     }
   }, [currentSessionId])
 
+  // This WebView ignores behavior:'smooth' (scrollTo/scrollIntoView no-op),
+  // and rAF is throttled for occluded windows — so bottom-scroll is an
+  // instant scrollTop write. Reliability over animation.
+  const scrollToBottomNow = () => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (pinnedRef.current) scrollToBottomNow()
   }, [sessionMessages, isBusy])
+
+  const handleTranscriptScroll = () => {
+    if (jumpingRef.current) return
+    const el = scrollRef.current
+    if (!el) return
+    const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    pinnedRef.current = pinned
+    setShowJump(!pinned)
+  }
+
+  const jumpToBottom = () => {
+    pinnedRef.current = true
+    setShowJump(false)
+    jumpingRef.current = true
+    scrollToBottomNow()
+    // Recompute once the animation settles; if the stream is still appending,
+    // the pinned effect above keeps the view glued to the bottom meanwhile.
+    setTimeout(() => {
+      jumpingRef.current = false
+      handleTranscriptScroll()
+    }, 500)
+  }
 
   const handleSend = async (text: string, images?: PromptImage[]) => {
     if (!text.trim() || cliAvailable === false) return
@@ -231,7 +269,7 @@ export default function ChatPanel() {
       </header>
 
       <div className="relative min-h-0 flex-1">
-        <div className="relative h-full overflow-y-auto">
+        <div ref={scrollRef} onScroll={handleTranscriptScroll} className="relative h-full overflow-y-auto">
         {showHero ? (
           <div className="flex h-full flex-col items-center justify-center px-8 pb-[14vh]">
             <div className="flex w-full max-w-[640px] flex-col items-center">
@@ -281,6 +319,15 @@ export default function ChatPanel() {
         )}
         <div ref={bottomRef} />
         </div>
+        {showJump && (
+          <button
+            onClick={jumpToBottom}
+            title={t('chat.jumpToBottom')}
+            className="absolute bottom-4 right-5 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-line bg-ink-850 text-cream-dim shadow-pop transition-all hover:text-cream"
+          >
+            <ChevronDown size={14} />
+          </button>
+        )}
       </div>
 
       {!currentProject && (

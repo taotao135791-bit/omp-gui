@@ -54,7 +54,7 @@ export default function PermissionPicker() {
     <div ref={rootRef} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="focus-ring flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[12px] font-medium text-cream-dim transition-all hover:border-ink-600 hover:text-cream"
+        className="focus-ring flex shrink-0 items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[12px] font-medium whitespace-nowrap text-cream-dim transition-all hover:border-ink-600 hover:text-cream"
         title={t('composer.permissions')}
       >
         <Shield size={12} />
