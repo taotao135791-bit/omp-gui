@@ -1,43 +1,14 @@
 import { useRef, useEffect, useState } from 'react'
-import { FolderOpen, Download, Loader2, ChevronRight, ChevronDown, ArrowUpRight } from 'lucide-react'
+import { FolderOpen, Download, Loader2, ChevronRight, ChevronDown } from 'lucide-react'
 import { PromptImage, SlashCommand } from '@shared/types'
 import { useAppStore } from '../store'
-import { useT, I18nKey } from '../i18n'
+import { useT } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
 import MessageList from './MessageList'
 import Composer from './Composer'
 import ExtensionUiDialog from './ExtensionUiDialog'
 import GitChip from './GitChip'
 import Logo from './Logo'
-
-interface Suggestion {
-  labelKey: I18nKey
-  descKey: I18nKey
-  promptKey: I18nKey
-}
-
-const SUGGESTIONS: Suggestion[] = [
-  {
-    labelKey: 'chat.suggest.explore',
-    descKey: 'chat.suggest.explore.desc',
-    promptKey: 'chat.suggest.explore.prompt'
-  },
-  {
-    labelKey: 'chat.suggest.build',
-    descKey: 'chat.suggest.build.desc',
-    promptKey: 'chat.suggest.build.prompt'
-  },
-  {
-    labelKey: 'chat.suggest.review',
-    descKey: 'chat.suggest.review.desc',
-    promptKey: 'chat.suggest.review.prompt'
-  },
-  {
-    labelKey: 'chat.suggest.fix',
-    descKey: 'chat.suggest.fix.desc',
-    promptKey: 'chat.suggest.fix.prompt'
-  }
-]
 
 export default function ChatPanel() {
   const {
@@ -266,44 +237,20 @@ export default function ChatPanel() {
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} onScroll={handleTranscriptScroll} className="relative h-full overflow-y-auto">
         {showHero ? (
-          // Hero and composer form ONE centered block — cards prefill the
-          // composer sitting right below them, Codex-style.
+          // Hero and composer form ONE centered block: mark, serif title,
+          // composer — nothing else.
           <div className="flex h-full flex-col items-center px-8">
-            <div className="my-auto flex w-full max-w-[640px] flex-col items-center pb-[9vh] pt-6">
+            <div className="my-auto flex w-full max-w-[680px] flex-col items-center pb-[10vh] pt-6">
               <div className="rise" style={{ animationDelay: '0ms' }}>
-                <Logo size={48} />
+                <Logo size={52} />
               </div>
               <h2
-                className="rise mb-9 mt-5 font-serif text-[27px] font-medium tracking-[0.01em] text-cream"
+                className="rise mb-10 mt-6 font-serif text-[27px] font-medium tracking-[0.01em] text-cream"
                 style={{ animationDelay: '60ms' }}
               >
                 {t('chat.hero.title')}
               </h2>
-              <div className="grid w-full grid-cols-2 gap-2.5">
-                {SUGGESTIONS.map((s, i) => (
-                  <button
-                    key={s.labelKey}
-                    onClick={() => useAppStore.getState().setComposerPrefill(t(s.promptKey))}
-                    disabled={cliAvailable === false}
-                    style={{ animationDelay: `${120 + i * 70}ms` }}
-                    className="rise group flex items-center justify-between gap-3 rounded-[12px] border border-line bg-ink-850 px-4 py-3.5 text-left transition-all duration-150 ease-standard hover:border-ink-600 hover:shadow-card disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-[13px] font-medium leading-5 text-cream">
-                        {t(s.labelKey)}
-                      </span>
-                      <span className="mt-0.5 block truncate text-[12px] leading-5 text-cream-faint">
-                        {t(s.descKey)}
-                      </span>
-                    </span>
-                    <ArrowUpRight
-                      size={14}
-                      className="shrink-0 -translate-x-1 text-cream-faint opacity-0 transition-all duration-150 group-hover:translate-x-0 group-hover:text-accent group-hover:opacity-100"
-                    />
-                  </button>
-                ))}
-              </div>
-              <div className="rise mt-5 w-full" style={{ animationDelay: '420ms' }}>
+              <div className="rise w-full" style={{ animationDelay: '140ms' }}>
                 {!currentProject && (
                   <div className="mb-2 flex justify-center">
                     <button
