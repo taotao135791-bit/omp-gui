@@ -266,10 +266,10 @@ export default function ChatPanel() {
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} onScroll={handleTranscriptScroll} className="relative h-full overflow-y-auto">
         {showHero ? (
-          // my-auto instead of justify-center: with justify-center a hero
-          // taller than the viewport gets its top clipped above the fold.
-          <div className="flex h-full flex-col items-center px-8 pb-[14vh]">
-            <div className="my-auto flex w-full max-w-[640px] flex-col items-center">
+          // Hero and composer form ONE centered block — cards prefill the
+          // composer sitting right below them, Codex-style.
+          <div className="flex h-full flex-col items-center px-8">
+            <div className="my-auto flex w-full max-w-[640px] flex-col items-center py-6">
               <div className="rise" style={{ animationDelay: '0ms' }}>
                 <Logo size={48} />
               </div>
@@ -283,7 +283,7 @@ export default function ChatPanel() {
                 {SUGGESTIONS.map((s, i) => (
                   <button
                     key={s.labelKey}
-                    onClick={() => handleSend(t(s.promptKey))}
+                    onClick={() => useAppStore.getState().setComposerPrefill(t(s.promptKey))}
                     disabled={cliAvailable === false}
                     style={{ animationDelay: `${120 + i * 70}ms` }}
                     className="rise group flex items-center justify-between gap-3 rounded-[12px] border border-line bg-ink-850 px-4 py-3.5 text-left transition-all duration-150 ease-standard hover:border-ink-600 hover:shadow-card disabled:cursor-not-allowed disabled:opacity-40"
@@ -298,10 +298,31 @@ export default function ChatPanel() {
                     </span>
                     <ArrowUpRight
                       size={14}
-                      className="shrink-0 text-cream-faint opacity-0 transition-all duration-150 group-hover:translate-x-0 group-hover:text-accent group-hover:opacity-100 -translate-x-1"
+                      className="shrink-0 -translate-x-1 text-cream-faint opacity-0 transition-all duration-150 group-hover:translate-x-0 group-hover:text-accent group-hover:opacity-100"
                     />
                   </button>
                 ))}
+              </div>
+              <div className="rise mt-5 w-full" style={{ animationDelay: '420ms' }}>
+                {!currentProject && (
+                  <div className="mb-2 flex justify-center">
+                    <button
+                      onClick={handleSelectProject}
+                      className="flex items-center gap-2 rounded-full border border-line bg-ink-850 px-3.5 py-1.5 text-xs text-cream-dim shadow-card transition-all duration-200 ease-standard hover:-translate-y-px hover:border-line-strong hover:text-cream"
+                    >
+                      <FolderOpen size={12} />
+                      {t('chat.selectProject')}
+                    </button>
+                  </div>
+                )}
+                <Composer
+                  onSend={handleSend}
+                  onStop={handleStop}
+                  busy={isBusy}
+                  disabled={cliAvailable === false}
+                  commands={slashCommands}
+                  onCompact={currentSessionId ? handleCompact : undefined}
+                />
               </div>
             </div>
           </div>
@@ -330,7 +351,7 @@ export default function ChatPanel() {
         )}
       </div>
 
-      {!currentProject && (
+      {!currentProject && !showHero && (
         <div className="flex justify-center pb-1">
           <button
             onClick={handleSelectProject}
@@ -342,14 +363,16 @@ export default function ChatPanel() {
         </div>
       )}
 
-      <Composer
-        onSend={handleSend}
-        onStop={handleStop}
-        busy={isBusy}
-        disabled={cliAvailable === false}
-        commands={slashCommands}
-        onCompact={currentSessionId ? handleCompact : undefined}
-      />
+      {!showHero && (
+        <Composer
+          onSend={handleSend}
+          onStop={handleStop}
+          busy={isBusy}
+          disabled={cliAvailable === false}
+          commands={slashCommands}
+          onCompact={currentSessionId ? handleCompact : undefined}
+        />
+      )}
 
       {pendingUi && currentSessionId && (
         <ExtensionUiDialog sessionId={currentSessionId} request={pendingUi} />
