@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import path from 'node:path'
 import { readdirSync, unlinkSync } from 'node:fs'
-import { getStore, setStore } from './store'
+import { getStore, setStore, applyFirstRunDefaults } from './store'
 import { registerIpc } from './ipc'
 import { syncMachineSkills } from './piSettings'
 import { initUpdater } from './updater'
@@ -65,6 +65,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   registerIpc()
+  applyFirstRunDefaults()
   // Keep pi's skill overrides in line with the GUI toggle — pi loads
   // ~/.agents/skills (other agents' skills) into every session by default.
   syncMachineSkills(getStore('machineSkills'))
