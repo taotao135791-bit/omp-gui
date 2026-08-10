@@ -4,6 +4,7 @@ import { Check, ChevronUp, Cpu, KeyRound } from 'lucide-react'
 import { PI_PROVIDERS } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
+import MenuPortal from './MenuPortal'
 
 /**
  * Codex-style model picker in the composer. Lists every model pi can
@@ -13,22 +14,13 @@ import { useT } from '../i18n'
 export default function ModelPicker() {
   const { models, modelConfig, loadModelState, selectModel } = useAppStore()
   const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const navigate = useNavigate()
   const t = useT()
 
   useEffect(() => {
     if (!modelConfig) loadModelState()
   }, [modelConfig, loadModelState])
-
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    return () => window.removeEventListener('pointerdown', onPointerDown)
-  }, [open])
 
   const provider = modelConfig?.defaultProvider ?? ''
   const modelId = modelConfig?.defaultModel ?? ''
@@ -49,8 +41,9 @@ export default function ModelPicker() {
   }
 
   return (
-    <div ref={rootRef} className="relative">
+    <div className="relative">
       <button
+        ref={triggerRef}
         onClick={() => {
           setOpen((v) => !v)
           if (!open) loadModelState()
@@ -63,55 +56,53 @@ export default function ModelPicker() {
         <ChevronUp size={11} className={`transition ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {open && (
-        <div className="absolute bottom-full left-0 z-30 mb-1.5 max-h-80 w-64 overflow-y-auto rounded-xl border border-line bg-ink-850 p-1 shadow-pop">
-          <button
-            onClick={() => pick('', '')}
-            className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream transition hover:bg-overlay"
-          >
-            <span>{t('composer.modelAuto')}</span>
-            {!provider && <Check size={12} className="text-accent" />}
-          </button>
+      <MenuPortal open={open} triggerRef={triggerRef} onClose={() => setOpen(false)} width={256} maxHeight={320}>
+        <button
+          onClick={() => pick('', '')}
+          className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream transition hover:bg-overlay"
+        >
+          <span>{t('composer.modelAuto')}</span>
+          {!provider && <Check size={12} className="text-accent" />}
+        </button>
 
-          {Array.from(groups.entries()).map(([pid, list]) => (
-            <div key={pid} className="mt-1">
-              <div className="px-2.5 pb-0.5 pt-1.5 text-[10px] font-medium uppercase tracking-wider text-cream-faint">
-                {providerLabel(pid)}
-              </div>
-              {list.map((m) => (
-                <button
-                  key={`${m.provider}/${m.id}`}
-                  onClick={() => pick(m.provider, m.id)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream transition hover:bg-overlay"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate">{m.name}</span>
-                    <span className="block truncate font-mono text-[10px] text-cream-faint">
-                      {m.id}
-                    </span>
-                  </span>
-                  {provider === m.provider && modelId === m.id && (
-                    <Check size={12} className="shrink-0 text-accent" />
-                  )}
-                </button>
-              ))}
+        {Array.from(groups.entries()).map(([pid, list]) => (
+          <div key={pid} className="mt-1">
+            <div className="px-2.5 pb-0.5 pt-1.5 text-[10px] font-medium uppercase tracking-wider text-cream-faint">
+              {providerLabel(pid)}
             </div>
-          ))}
+            {list.map((m) => (
+              <button
+                key={`${m.provider}/${m.id}`}
+                onClick={() => pick(m.provider, m.id)}
+                className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream transition hover:bg-overlay"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate">{m.name}</span>
+                  <span className="block truncate font-mono text-[10px] text-cream-faint">
+                    {m.id}
+                  </span>
+                </span>
+                {provider === m.provider && modelId === m.id && (
+                  <Check size={12} className="shrink-0 text-accent" />
+                )}
+              </button>
+            ))}
+          </div>
+        ))}
 
-          {models.length === 0 && (
-            <button
-              onClick={() => {
-                setOpen(false)
-                navigate('/settings')
-              }}
-              className="mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream-dim transition hover:bg-overlay hover:text-cream"
-            >
-              <KeyRound size={12} />
-              {t('composer.noModels')}
-            </button>
-          )}
-        </div>
-      )}
+        {models.length === 0 && (
+          <button
+            onClick={() => {
+              setOpen(false)
+              navigate('/settings')
+            }}
+            className="mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream-dim transition hover:bg-overlay hover:text-cream"
+          >
+            <KeyRound size={12} />
+            {t('composer.noModels')}
+          </button>
+        )}
+      </MenuPortal>
     </div>
   )
 }

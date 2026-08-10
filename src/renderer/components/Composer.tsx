@@ -386,7 +386,7 @@ export default function Composer({
 
   return (
     <div className="px-4 pb-4 pt-2">
-      <div className="relative mx-auto max-w-3xl">
+      <div className="relative mx-auto w-full max-w-3xl">
         {menuOpen && (
           <div className="absolute bottom-full left-0 right-0 z-20 mb-2 overflow-hidden rounded-xl border border-line bg-ink-850 p-1 shadow-pop">
             <div className="px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-[0.08em] text-cream-faint">
@@ -613,7 +613,7 @@ export default function Composer({
             {t('composer.shortcuts')}
           </span>
         </div>
-        <div className="mt-1 text-center text-[10.5px] text-cream-faint">
+        <div className="mt-1 truncate whitespace-nowrap text-center text-[10.5px] text-cream-faint">
           {t('composer.disclaimer')}
         </div>
       </div>
