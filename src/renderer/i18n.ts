@@ -211,6 +211,9 @@ const en = {
 
   // Code block
   'code.copy': 'Copy',
+  'mermaid.failed': "Diagram couldn't be rendered — showing the source.",
+  'mermaid.showCode': 'Code',
+  'mermaid.showDiagram': 'Diagram',
   'code.copied': 'Copied',
 
   // Right panel
@@ -506,6 +509,9 @@ const zh: Record<I18nKey, string> = {
   'tool.output': '输出',
 
   'code.copy': '复制',
+  'mermaid.failed': '图表渲染失败，已显示源码。',
+  'mermaid.showCode': '源码',
+  'mermaid.showDiagram': '图表',
   'code.copied': '已复制',
 
   'panel.files': '文件',
