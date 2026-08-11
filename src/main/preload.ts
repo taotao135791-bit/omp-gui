@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils, IpcRendererEvent } from 'electron'
 import { IPC_CHANNELS } from '../shared/constants'
 import {
+  CliCapabilities,
   CliInfo,
   Session,
   SessionEvent,
@@ -30,6 +31,8 @@ import {
 
 export interface ElectronAPI {
   detectCli: (force?: boolean) => Promise<CliInfo>
+  /** CLI version + RPC feature surface of the detected CLI. */
+  getCapabilities: () => Promise<CliCapabilities>
   listSessions: () => Promise<Session[]>
   createSession: (cwd: string) => Promise<Session>
   sendMessage: (
@@ -134,6 +137,7 @@ export interface ElectronAPI {
 
 const api: ElectronAPI = {
   detectCli: (force?: boolean) => ipcRenderer.invoke(IPC_CHANNELS.OMP_DETECT, force),
+  getCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_CAPABILITIES),
   listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_SESSIONS),
   createSession: (cwd: string) => ipcRenderer.invoke(IPC_CHANNELS.OMP_CREATE_SESSION, cwd),
   sendMessage: (

@@ -10,7 +10,7 @@ import {
   Sun,
   Trash2
 } from 'lucide-react'
-import { CliInfo, ModelConfig, PermissionMode, PI_PROVIDERS, PiModel, UpdaterStatus } from '@shared/types'
+import { CliCapabilities, CliInfo, ModelConfig, PermissionMode, PI_PROVIDERS, PiModel, UpdaterStatus } from '@shared/types'
 import { useAppStore } from '../store'
 import { I18nKey, useT } from '../i18n'
 
@@ -61,6 +61,7 @@ export default function SettingsPage() {
     useAppStore()
   const t = useT()
   const [cli, setCli] = useState<CliInfo | null>(null)
+  const [caps, setCaps] = useState<CliCapabilities | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [cleared, setCleared] = useState(false)
   const [version, setVersion] = useState('')
@@ -83,9 +84,13 @@ export default function SettingsPage() {
   // the credential-filtered list is only a fallback if the registry is unreadable.
   const catalogForProvider = provider ? catalog.filter((m) => m.provider === provider) : []
   const selectableModels = catalogForProvider.length > 0 ? catalogForProvider : providerModels
+  // Widened from the literal type `1` so a future protocol bump can render
+  // the unsupported state instead of being narrowed away by TS.
+  const ompProtocol: number | null = caps ? caps.protocol : null
 
   useEffect(() => {
     window.electronAPI.detectCli().then(setCli)
+    window.electronAPI.getCapabilities().then(setCaps)
     window.electronAPI.getAppVersion().then(setVersion)
     window.electronAPI.listCatalogModels().then(setCatalog)
     loadModelState()
@@ -108,6 +113,9 @@ export default function SettingsPage() {
     setDetecting(true)
     const info = await window.electronAPI.detectCli(true)
     setCli(info)
+    // detectCli(true) also drops the capabilities cache — re-probe so the
+    // About rows don't show a stale version after a CLI install/upgrade.
+    window.electronAPI.getCapabilities().then(setCaps)
     useAppStore.getState().setCliAvailable(info.available)
     setDetecting(false)
   }
@@ -586,7 +594,25 @@ export default function SettingsPage() {
               </Note>
             )}
             <Row label="Oh My Pi">
-              <span className="text-xs text-cream-dim">omp.sh · pi.dev</span>
+              <span className="font-mono text-xs text-cream-dim">
+                {caps?.cliVersion ? `v${caps.cliVersion}` : t('settings.ompNotDetected')}
+              </span>
+            </Row>
+            <Row label={t('settings.ompProtocol')}>
+              <span className="font-mono text-xs text-cream-dim">
+                {ompProtocol === null ? '—' : `v${ompProtocol}`}
+              </span>
+            </Row>
+            <Row label={t('settings.ompCompatibility')}>
+              {ompProtocol === null ? (
+                <span className="text-xs text-cream-faint">—</span>
+              ) : ompProtocol === 1 ? (
+                <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                  {t('settings.ompCompatSupported')}
+                </span>
+              ) : (
+                <span className="text-xs text-red-500">{t('settings.ompCompatUnsupported')}</span>
+              )}
             </Row>
           </Section>
         </div>

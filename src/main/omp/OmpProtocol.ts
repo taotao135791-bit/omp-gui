@@ -1,12 +1,18 @@
-import { ExtensionUiAnswer, SessionEvent } from '../shared/types'
+import { ExtensionUiAnswer, SessionEvent } from '../../shared/types'
 
 /**
- * Parser for pi/omp `--mode rpc` JSONL output.
+ * Parser for pi/omp `--mode rpc` JSONL output (moved from src/main/protocol.ts).
  *
- * Protocol (verified against pi-coding-agent dist/modes/rpc/rpc-types.d.ts):
+ * Protocol (verified against the installed pi-coding-agent 0.80.3, see
+ * docs/protocol-facts.md):
  * - Commands (stdin):   { id?, type: 'prompt', message: string, images? }
  * - Responses (stdout): { type: 'response', command, success, data | error }
  * - Events (stdout):    AgentSessionEvent objects streamed as they occur
+ * - Tool events carry a stable `toolCallId` and run parallel by default —
+ *   match call/result pairs by id, never by name+recency.
+ * - `agent_end` IS the terminal event of a run in 0.80.3 (no isTerminal
+ *   field); the parser surfaces `isTerminal: true` by default and passes an
+ *   explicit upstream `false` through for future versions.
  * - Extension UI:       { type: 'extension_ui_request', id, method, ... }
  *   - select:  title, options[], timeout?
  *   - confirm: title, message, timeout?
@@ -18,6 +24,32 @@ import { ExtensionUiAnswer, SessionEvent } from '../shared/types'
  */
 
 export type ExtensionUiMethod = 'select' | 'confirm' | 'input' | 'editor'
+
+/**
+ * Tool results arrive structured: `{content: [{type:'text', text}, ...]}`.
+ * Renderers want text — extract the text blocks; fall back to a compact
+ * JSON string for shapes we don't know (never "[object Object]").
+ */
+export function extractToolOutput(result: unknown): string {
+  if (result == null) return ''
+  if (typeof result === 'string') return result
+  if (typeof result === 'object') {
+    const content = (result as { content?: unknown }).content
+    if (Array.isArray(content)) {
+      const text = content
+        .map((c) => (c && typeof c === 'object' ? (c as { text?: unknown }).text : undefined))
+        .filter((t): t is string => typeof t === 'string')
+        .join('\n')
+      if (text) return text
+    }
+    try {
+      return JSON.stringify(result, null, 2)
+    } catch {
+      return String(result)
+    }
+  }
+  return String(result)
+}
 
 export type RpcParseResult =
   | { kind: 'event'; event: SessionEvent }
@@ -108,10 +140,16 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
         event: {
           type: 'tool_call',
           sessionId,
+          id: typeof payload.toolCallId === 'string' ? payload.toolCallId : undefined,
           tool: String(payload.toolName ?? 'tool'),
           input: payload.args
         }
       }
+
+    case 'tool_execution_update':
+      // partialResult streaming — noise for the GUI; the final result arrives
+      // via tool_execution_end.
+      return { kind: 'none' }
 
     case 'tool_execution_end':
       return {
@@ -119,8 +157,9 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
         event: {
           type: 'tool_result',
           sessionId,
+          id: typeof payload.toolCallId === 'string' ? payload.toolCallId : undefined,
           tool: String(payload.toolName ?? 'tool'),
-          output: payload.result,
+          output: extractToolOutput(payload.result),
           isError: Boolean(payload.isError)
         }
       }
@@ -182,7 +221,14 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
     case 'agent_end':
       return {
         kind: 'event',
-        event: { type: 'status', sessionId, status: 'idle' }
+        event: {
+          type: 'status',
+          sessionId,
+          status: 'idle',
+          // pi 0.80.3: agent_end IS terminal and carries no such field —
+          // default true, pass an explicit upstream false through untouched.
+          isTerminal: payload.isTerminal === false ? false : true
+        }
       }
 
     case 'compaction_start':
@@ -211,15 +257,4 @@ export function extensionUiCancel(id: string): string {
 /** Build the response line for an answered extension UI request. */
 export function extensionUiResponse(id: string, answer: ExtensionUiAnswer): string {
   return JSON.stringify({ type: 'extension_ui_response', id, ...answer }) + '\n'
-}
-
-/**
- * Split a stream chunk into complete lines, keeping the remainder in `buffer`.
- * Returns the complete lines and the new buffer content.
- */
-export function drainLines(buffer: string, chunk: string): { lines: string[]; rest: string } {
-  const combined = buffer + chunk
-  const parts = combined.split('\n')
-  const rest = parts.pop() || ''
-  return { lines: parts.filter((l) => l.trim().length > 0), rest }
 }

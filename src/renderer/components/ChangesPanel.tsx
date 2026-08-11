@@ -12,7 +12,7 @@ const STATUS_DOT: Record<GitFileChange['status'], string> = {
   untracked: 'bg-cream-faint/50'
 }
 
-function diffLineClass(line: string): string {
+export function diffLineClass(line: string): string {
   if (line.startsWith('@@')) return 'bg-overlay text-cream-faint'
   if (
     line.startsWith('diff --git') ||

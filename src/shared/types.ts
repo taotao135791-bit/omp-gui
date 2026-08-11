@@ -6,6 +6,42 @@ export interface CliInfo {
   available: boolean
 }
 
+/**
+ * Feature surface of the detected CLI, for the settings page. Statically
+ * known for pi 0.80.3 (docs/protocol-facts.md); probed via `--version` plus
+ * runtime get_state confirmations (src/main/omp/OmpCapabilities.ts).
+ */
+export interface CliCapabilities {
+  /** Parsed `pi --version` output; null when the probe failed. */
+  cliVersion: string | null
+  /** JSONL RPC framing version this host speaks. */
+  protocol: 1
+  steering: boolean
+  followUp: boolean
+  images: boolean
+  compaction: boolean
+  extensionUi: boolean
+  fork: boolean
+  thinking: boolean
+}
+
+/**
+ * Runtime lifecycle of a session's agent process, driven by RPC events
+ * (see src/main/omp/OmpSession.ts for the transition table).
+ *
+ * The renderer maps these to busy explicitly (working/waiting_for_user/
+ * aborting → busy; idle/failed → not busy) and ignores unknown values
+ * defensively. The main process currently only emits 'working' and 'idle'.
+ */
+export type SessionRuntimeState =
+  | 'starting'
+  | 'idle'
+  | 'working'
+  | 'waiting_for_user'
+  | 'aborting'
+  | 'failed'
+  | 'closed'
+
 export interface Session {
   id: string
   cwd: string
@@ -23,11 +59,18 @@ export type SessionEvent =
   | { type: 'message'; sessionId: string; role: 'user' | 'assistant' | 'system'; content: string }
   /** Streaming thinking delta of the in-flight assistant message. */
   | { type: 'thinking'; sessionId: string; delta: string }
-  | { type: 'tool_call'; sessionId: string; tool: string; input: unknown; output?: unknown }
-  | { type: 'tool_result'; sessionId: string; tool: string; output: unknown; isError: boolean }
-  | { type: 'status'; sessionId: string; status: 'working' | 'idle' }
+  /** `id` is pi's stable toolCallId — parallel tool runs must be matched by it. */
+  | { type: 'tool_call'; sessionId: string; id?: string; tool: string; input: unknown; output?: unknown }
+  | { type: 'tool_result'; sessionId: string; id?: string; tool: string; output: unknown; isError: boolean }
+  /**
+   * `isTerminal` is only meaningful on agent_end-derived idle events: pi
+   * 0.80.3 has no such field (agent_end is always terminal → true); a future
+   * upstream may send explicit `false` for non-terminal ends.
+   */
+  | { type: 'status'; sessionId: string; status: SessionRuntimeState; isTerminal?: boolean }
   | { type: 'compaction'; sessionId: string; phase: 'start' | 'end' }
-  | { type: 'error'; sessionId: string; message: string }
+  /** `recoverable` is false when the session process died (crash/exit). */
+  | { type: 'error'; sessionId: string; message: string; recoverable?: boolean }
   | {
       type: 'ui_request'
       sessionId: string

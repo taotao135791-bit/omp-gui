@@ -40,6 +40,8 @@ The app auto-detects an installed `omp`/`pi` CLI, or offers to install Oh My Pi 
 - **Slash commands** — type `/` in the composer for a searchable menu of everything the session offers (extension commands, prompt templates, skills from your installed packages), with keyboard navigation.
 - **Interactive plugin dialogs** — when an extension asks (select / confirm / input / editor), a real dialog pops up in the chat instead of hanging the agent.
 - **Tool call visualization** — `read`, `bash`, `edit` and custom tool calls rendered as expandable cards.
+- **Mermaid diagrams** — assistant responses with ```mermaid fenced blocks render as sandboxed SVG diagrams (flowcharts, sequence, state, gantt…), theme-aware, with a source/diagram toggle and graceful source fallback on parse errors.
+- **Hardened host** — strict JSONL transport with a 16 MB frame guard, an explicit session state machine (queue drains only on terminal completion), tool results matched by `toolCallId` (parallel-safe), and realpath-based filesystem sandboxing that stops symlink escapes. See `docs/architecture.md` and `docs/protocol-facts.md`.
 
 ## Tech Stack
 

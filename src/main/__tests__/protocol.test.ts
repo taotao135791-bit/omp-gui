@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseRpcLine, drainLines, extensionUiCancel, extensionUiResponse } from '../protocol'
+import { parseRpcLine, extensionUiCancel, extensionUiResponse } from '../omp/OmpProtocol'
 
 describe('parseRpcLine', () => {
   it('maps failed responses to error events', () => {
@@ -54,7 +54,7 @@ describe('parseRpcLine', () => {
     }
   })
 
-  it('maps tool_execution_start to tool_call', () => {
+  it('maps tool_execution_start to tool_call with its toolCallId', () => {
     const line = JSON.stringify({
       type: 'tool_execution_start',
       toolCallId: 't1',
@@ -63,16 +63,16 @@ describe('parseRpcLine', () => {
     })
     expect(parseRpcLine(line, 's1')).toEqual({
       kind: 'event',
-      event: { type: 'tool_call', sessionId: 's1', tool: 'bash', input: { command: 'ls' } }
+      event: { type: 'tool_call', sessionId: 's1', id: 't1', tool: 'bash', input: { command: 'ls' } }
     })
   })
 
-  it('maps tool_execution_end to tool_result with error flag', () => {
+  it('maps tool_execution_end to tool_result with toolCallId and error flag', () => {
     const line = JSON.stringify({
       type: 'tool_execution_end',
       toolCallId: 't1',
       toolName: 'bash',
-      result: { output: 'done' },
+      result: { content: [{ type: 'text', text: 'done\n' }] },
       isError: false
     })
     expect(parseRpcLine(line, 's1')).toEqual({
@@ -80,11 +80,57 @@ describe('parseRpcLine', () => {
       event: {
         type: 'tool_result',
         sessionId: 's1',
+        id: 't1',
         tool: 'bash',
-        output: { output: 'done' },
+        output: 'done\n',
         isError: false
       }
     })
+  })
+
+  it('extracts text from structured tool results and never emits [object Object]', () => {
+    const structured = JSON.stringify({
+      type: 'tool_execution_end',
+      toolCallId: 't2',
+      toolName: 'bash',
+      result: { content: [{ type: 'text', text: 'line1' }, { type: 'text', text: 'line2' }] },
+      isError: false
+    })
+    const ev = parseRpcLine(structured, 's1')
+    expect(ev.kind).toBe('event')
+    if (ev.kind === 'event' && ev.event.type === 'tool_result') {
+      expect(ev.event.output).toBe('line1\nline2')
+    }
+    // Unknown object shapes fall back to JSON text, not [object Object]
+    const odd = JSON.stringify({
+      type: 'tool_execution_end',
+      toolName: 'custom',
+      result: { weird: true },
+      isError: false
+    })
+    const ev2 = parseRpcLine(odd, 's1')
+    if (ev2.kind === 'event' && ev2.event.type === 'tool_result') {
+      expect(String(ev2.event.output)).toContain('weird')
+      expect(String(ev2.event.output)).not.toContain('[object Object]')
+    }
+  })
+
+  it('omits the toolCallId when upstream does not send one', () => {
+    const line = JSON.stringify({ type: 'tool_execution_start', toolName: 'read', args: {} })
+    expect(parseRpcLine(line, 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'tool_call', sessionId: 's1', tool: 'read', input: {} }
+    })
+  })
+
+  it('ignores tool_execution_update partial results', () => {
+    const line = JSON.stringify({
+      type: 'tool_execution_update',
+      toolCallId: 't1',
+      toolName: 'bash',
+      partialResult: { output: 'half' }
+    })
+    expect(parseRpcLine(line, 's1')).toEqual({ kind: 'none' })
   })
 
   it('maps extension notify requests to system messages', () => {
@@ -161,9 +207,21 @@ describe('parseRpcLine', () => {
       kind: 'event',
       event: { type: 'status', sessionId: 's1', status: 'working' }
     })
+    // pi 0.80.3: agent_end is terminal and carries no isTerminal field.
     expect(parseRpcLine(JSON.stringify({ type: 'agent_end' }), 's1')).toEqual({
       kind: 'event',
-      event: { type: 'status', sessionId: 's1', status: 'idle' }
+      event: { type: 'status', sessionId: 's1', status: 'idle', isTerminal: true }
+    })
+  })
+
+  it('passes an explicit agent_end isTerminal through (future upstream)', () => {
+    expect(parseRpcLine(JSON.stringify({ type: 'agent_end', isTerminal: false }), 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'status', sessionId: 's1', status: 'idle', isTerminal: false }
+    })
+    expect(parseRpcLine(JSON.stringify({ type: 'agent_end', isTerminal: true }), 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'status', sessionId: 's1', status: 'idle', isTerminal: true }
     })
   })
 
@@ -244,30 +302,5 @@ describe('extensionUiResponse', () => {
     expect(extensionUiResponse('c', { cancelled: true })).toBe(
       '{"type":"extension_ui_response","id":"c","cancelled":true}\n'
     )
-  })
-})
-
-describe('drainLines', () => {
-  it('splits complete lines and keeps the remainder', () => {
-    const { lines, rest } = drainLines('', 'a\nb\npart')
-    expect(lines).toEqual(['a', 'b'])
-    expect(rest).toBe('part')
-  })
-
-  it('combines with the previous buffer', () => {
-    const { lines, rest } = drainLines('hel', 'lo\nworld\n')
-    expect(lines).toEqual(['hello', 'world'])
-    expect(rest).toBe('')
-  })
-
-  it('skips blank lines', () => {
-    const { lines } = drainLines('', 'a\n\n  \nb\n')
-    expect(lines).toEqual(['a', 'b'])
-  })
-
-  it('handles a chunk with no newline', () => {
-    const { lines, rest } = drainLines('x', 'yz')
-    expect(lines).toEqual([])
-    expect(rest).toBe('xyz')
   })
 })

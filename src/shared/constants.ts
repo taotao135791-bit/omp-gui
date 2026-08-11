@@ -2,6 +2,7 @@ export const APP_NAME = 'OMP GUI'
 
 export const IPC_CHANNELS = {
   OMP_DETECT: 'omp:detect',
+  OMP_CAPABILITIES: 'omp:capabilities',
   OMP_CREATE_SESSION: 'omp:create-session',
   OMP_SEND_MESSAGE: 'omp:send-message',
   OMP_KILL_SESSION: 'omp:kill-session',

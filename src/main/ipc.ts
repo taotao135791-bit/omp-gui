@@ -18,6 +18,7 @@ import {
 import {
   detectCli,
   invalidateCliCache,
+  getCapabilities,
   createSession,
   sendMessage,
   killSession,
@@ -138,6 +139,11 @@ export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.OMP_DETECT, async (_event: IpcMainInvokeEvent, force?: boolean) => {
     if (force) invalidateCliCache()
     return detectCli()
+  })
+
+  // CLI version + RPC feature surface for the settings page.
+  ipcMain.handle(IPC_CHANNELS.OMP_CAPABILITIES, async () => {
+    return getCapabilities()
   })
 
   ipcMain.handle(

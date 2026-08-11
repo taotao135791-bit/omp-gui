@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo } from '@shared/types'
+import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 
 export interface MessageLike {
   id: string
@@ -15,12 +16,7 @@ export interface MessageLike {
   thinkingEndTs?: number
   /** Images the user attached to this message (in-memory only, dataURL-grade). */
   images?: { data: string; mimeType: string }[]
-  toolCall?: {
-    tool: string
-    input: unknown
-    output?: unknown
-    isError?: boolean
-  }
+  toolCall?: ToolCallRecord
 }
 
 /** Verb buckets the turn-progress row aggregates tool calls into. */
@@ -80,6 +76,19 @@ function countField(verb: TurnVerb): keyof TurnCounts {
     default:
       return 'toolCalls'
   }
+}
+
+/**
+ * Session status → busy mapping. 'waiting_for_user'/'aborting' keep the turn
+ * open, so they stay busy; statuses missing from the map leave busy untouched,
+ * so a newer main-process state can't wedge the renderer into a wrong one.
+ */
+const STATUS_BUSY: Partial<Record<SessionRuntimeState, boolean>> = {
+  working: true,
+  waiting_for_user: true,
+  aborting: true,
+  idle: false,
+  failed: false
 }
 
 /**
@@ -586,6 +595,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         role: 'assistant',
         content: '',
         toolCall: {
+          id: event.id,
           tool: event.tool,
           input: event.input,
           output: event.output
@@ -612,32 +622,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       })
     } else if (event.type === 'tool_result') {
-      // Merge the result into the last pending tool call of this session
-      const list = get().messages[event.sessionId] || []
-      const idx = [...list]
-        .reverse()
-        .findIndex((m) => m.toolCall && m.toolCall.output === undefined && m.toolCall.tool === event.tool)
-      if (idx === -1) {
-        get().addMessage(event.sessionId, {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: '',
-          toolCall: { tool: event.tool, input: undefined, output: event.output, isError: event.isError }
-        })
-      } else {
-        const realIdx = list.length - 1 - idx
-        const target = list[realIdx]
-        const updated = [...list]
-        updated[realIdx] = {
-          ...target,
-          toolCall: { ...target.toolCall!, output: event.output, isError: event.isError }
+      // Merge the result into its tool-call card: by toolCallId when the event
+      // carries one (parallel calls pair by id, order-independent); the legacy
+      // name+recency fallback inside applyToolResult covers id-less events.
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [event.sessionId]: applyToolResult(state.messages[event.sessionId] || [], event)
         }
-        set((state) => ({ messages: { ...state.messages, [event.sessionId]: updated } }))
-      }
+      }))
     } else if (event.type === 'status') {
       const wasBusy = Boolean(get().busy[event.sessionId])
-      const working = event.status === 'working'
-      if (working) {
+      const nextBusy = STATUS_BUSY[event.status]
+      if (event.status === 'working') {
         // agent_start: fresh turn-progress counters
         set((state) => ({
           busy: { ...state.busy, [event.sessionId]: true },
@@ -646,8 +643,14 @@ export const useAppStore = create<AppState>((set, get) => ({
             [event.sessionId]: { startedAt: Date.now(), counts: emptyTurnCounts() }
           }
         }))
-      } else {
-        // agent_end: close any open thinking run and freeze the turn summary
+      } else if (nextBusy === true) {
+        // waiting_for_user / aborting: the turn is still open — stay busy.
+        set((state) => ({ busy: { ...state.busy, [event.sessionId]: true } }))
+      } else if (nextBusy === false) {
+        // Turn ended: close any open thinking run and clear busy. idle
+        // (agent_end) also freezes the turn summary; a failed session stops
+        // there — its error event already put the message on screen and its
+        // queue stays parked instead of auto-firing into a dead session.
         get().finalizeThinking(event.sessionId)
         set((state) => {
           const activity = state.turnActivity[event.sessionId]
@@ -656,7 +659,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           return {
             busy: { ...state.busy, [event.sessionId]: false },
             turnActivity,
-            ...(activity
+            ...(event.status === 'idle' && activity
               ? {
                   turnSummaries: {
                     ...state.turnSummaries,
@@ -670,10 +673,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         })
       }
+      // Statuses outside STATUS_BUSY leave busy/turn state untouched.
       // working→idle with a non-empty queue: send the next queued message.
       // The wasBusy guard plus the optimistic busy=true below keep a stray or
       // repeated 'idle' from draining more than one message per real turn.
-      if (!working && wasBusy) {
+      if (event.status === 'idle' && wasBusy) {
         const next = get().shiftQueuedMessage(event.sessionId)
         if (next) {
           get().addMessage(event.sessionId, {

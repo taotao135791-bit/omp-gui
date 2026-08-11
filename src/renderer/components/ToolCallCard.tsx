@@ -1,14 +1,10 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
-import { useT } from '../i18n'
+import { ToolCallRecord } from '../lib/toolCalls'
+import { getToolRenderer } from './tools'
 
 interface ToolCallCardProps {
-  toolCall: {
-    tool: string
-    input: unknown
-    output?: unknown
-    isError?: boolean
-  }
+  toolCall: ToolCallRecord
 }
 
 /** One-line summary of a tool call's input, shown in the collapsed header. */
@@ -33,9 +29,10 @@ function summarizeInput(tool: string, input: unknown): string | null {
 
 export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false)
-  const t = useT()
   const summary = summarizeInput(toolCall.tool, toolCall.input)
   const running = toolCall.output === undefined
+  // Expanded content comes from the per-tool renderer (tools/ registry).
+  const Content = getToolRenderer(toolCall.tool)
 
   // Borderless one-line row; the surrounding group container (MessageList)
   // draws the box and hairline separators between consecutive tool calls.
@@ -65,25 +62,8 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
         </span>
       </button>
       {expanded && (
-        <div className="fade-in mb-2.5 ml-[14px] mr-3 space-y-2.5 border-l-2 border-line py-0.5 pl-3">
-          <div>
-            <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-cream-faint">
-              {t('tool.input')}
-            </div>
-            <pre className="max-h-48 overflow-auto rounded-lg bg-ink-800 p-3 font-mono text-[12px] leading-5 text-cream/80">
-              {JSON.stringify(toolCall.input, null, 2)}
-            </pre>
-          </div>
-          {toolCall.output !== undefined && (
-            <div>
-              <div className="mb-1 text-[10px] uppercase tracking-[0.12em] text-cream-faint">
-                {t('tool.output')}
-              </div>
-              <pre className="max-h-48 overflow-auto rounded-lg bg-ink-800 p-3 font-mono text-[12px] leading-5 text-cream/80">
-                {JSON.stringify(toolCall.output, null, 2)}
-              </pre>
-            </div>
-          )}
+        <div className="fade-in mb-2.5 ml-[14px] mr-3 border-l-2 border-line py-0.5 pl-3">
+          <Content toolCall={toolCall} />
         </div>
       )}
     </div>

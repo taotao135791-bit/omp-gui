@@ -4,8 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { PiModel } from '../shared/types'
-import { detectCli, executableSearchDirs } from './omp'
-import { drainLines } from './protocol'
+import { detectCli, executableSearchDirs, drainLines } from './omp'
 
 /**
  * Ask pi itself which models are usable: spawn a short-lived RPC session,

@@ -199,6 +199,11 @@ const en = {
   'settings.updateRetry': 'Retry',
   'settings.updateOpenPage': 'Open download page',
   'settings.updateDevMode': 'Updates are not checked in dev mode',
+  'settings.ompNotDetected': 'Not detected',
+  'settings.ompProtocol': 'RPC protocol',
+  'settings.ompCompatibility': 'Compatibility',
+  'settings.ompCompatSupported': 'Supported',
+  'settings.ompCompatUnsupported': "This OMP version's RPC protocol is not supported by this app version",
   'settings.notifications': 'Notifications',
   'settings.notifyCompletion': 'Completion notifications',
   'settings.notifyCompletionNote': 'Send a system notification when an agent turn finishes while the window is in the background.',
@@ -208,6 +213,7 @@ const en = {
   // Tool call card
   'tool.input': 'Input',
   'tool.output': 'Output',
+  'tool.lines': '{count} lines',
 
   // Code block
   'code.copy': 'Copy',
@@ -499,6 +505,11 @@ const zh: Record<I18nKey, string> = {
   'settings.updateRetry': '重试',
   'settings.updateOpenPage': '打开下载页',
   'settings.updateDevMode': '开发模式不检查更新',
+  'settings.ompNotDetected': '未检测到',
+  'settings.ompProtocol': 'RPC 协议',
+  'settings.ompCompatibility': '兼容性',
+  'settings.ompCompatSupported': '受支持',
+  'settings.ompCompatUnsupported': '此 OMP 版本的 RPC 协议暂不受本版本支持',
   'settings.notifications': '通知',
   'settings.notifyCompletion': '完成通知',
   'settings.notifyCompletionNote': 'Agent 回合结束且窗口不在前台时，发送系统通知。',
@@ -507,6 +518,7 @@ const zh: Record<I18nKey, string> = {
 
   'tool.input': '输入',
   'tool.output': '输出',
+  'tool.lines': '{count} 行',
 
   'code.copy': '复制',
   'mermaid.failed': '图表渲染失败，已显示源码。',
