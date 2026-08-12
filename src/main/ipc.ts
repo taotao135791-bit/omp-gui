@@ -74,7 +74,7 @@ import {
   updaterQuitAndInstall,
   updaterOpenReleasePage
 } from './updater'
-import { RuntimeSettings, PROVIDER_ID_PATTERN } from './omp/settings/RuntimeSettings'
+import { RuntimeSettings, PROVIDER_ID_PATTERN, isValidModelSelector, splitModelSelector } from './omp/settings/RuntimeSettings'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
 
 const fsGuard = new FsGuard()
@@ -173,13 +173,30 @@ export function registerIpc() {
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_CREATE_SESSION,
-    async (_event: IpcMainInvokeEvent, cwd: string) => {
+    async (
+      _event: IpcMainInvokeEvent,
+      cwd: string,
+      overrides?: { modelSelector?: unknown; thinkingLevel?: unknown }
+    ) => {
       if (typeof cwd !== 'string' || !cwd.trim()) {
         throw new Error('createSession requires a non-empty cwd')
       }
       const resolved = path.resolve(cwd)
       fsGuard.addRoot(resolved)
-      return createSession(resolved, broadcastSessionEvent)
+      // Next-session overrides: validated, spawn-arg scoped, one-shot.
+      const modelSelector =
+        typeof overrides?.modelSelector === 'string' &&
+        isValidModelSelector(overrides.modelSelector) &&
+        splitModelSelector(overrides.modelSelector)
+          ? overrides.modelSelector
+          : undefined
+      const thinkingLevel = THINKING_LEVELS.includes(overrides?.thinkingLevel as ThinkingLevel)
+        ? (overrides?.thinkingLevel as ThinkingLevel)
+        : undefined
+      return createSession(resolved, broadcastSessionEvent, {
+        ...(modelSelector ? { modelSelector } : {}),
+        ...(thinkingLevel ? { thinkingLevel } : {})
+      })
     }
   )
 

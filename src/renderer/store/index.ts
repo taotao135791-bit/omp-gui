@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, ThinkingLevel } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 
 export interface MessageLike {
@@ -252,8 +252,23 @@ interface AppState {
   setInstallStatus: (status: InstallStatus) => void
   /** (Re)load model config + available models from the main process. */
   loadModelState: () => Promise<void>
-  /** Persist a model choice and hot-apply it to the live session, if any. */
-  selectModel: (provider: string, modelId: string) => Promise<void>
+  /**
+   * Hot-switch the CURRENT session's model — session scope only. Never
+   * touches the default for future sessions (that lives in Settings).
+   */
+  setCurrentSessionModel: (provider: string, modelId: string) => Promise<boolean>
+  /** Hot-switch the CURRENT session's thinking level — session scope only. */
+  setCurrentSessionThinking: (level: ThinkingLevel) => Promise<boolean>
+  /** Model selector for the NEXT session's spawn args (''/null = runtime default). */
+  pendingModel: string | null
+  /** Thinking level for the NEXT session's spawn args (null = runtime default). */
+  pendingThinking: ThinkingLevel | null
+  /** Set the next-session model override (composer pickers without a session). */
+  setPendingModel: (selector: string | null) => void
+  /** Set the next-session thinking override. */
+  setPendingThinking: (level: ThinkingLevel | null) => void
+  /** Read and clear the next-session overrides (session creation funnel). */
+  consumeSessionOverrides: () => { modelSelector?: string; thinkingLevel?: ThinkingLevel }
   /** Refresh the runtime settings overview (profile/capabilities/providers). */
   loadRuntimeOverview: (force?: boolean) => Promise<void>
   /** Refresh the runtime model catalog (current profile). */
@@ -262,6 +277,8 @@ interface AppState {
   selectRuntimeDefaultModel: (selector: string) => Promise<{ ok: boolean; error?: string }>
   /** Persist the runtime default thinking level (current profile). */
   setRuntimeDefaultThinking: (level: string) => Promise<{ ok: boolean; error?: string }>
+  /** Toggle machine skills via the runtime config (current profile). */
+  setRuntimeMachineSkills: (enabled: boolean) => Promise<{ ok: boolean; error?: string }>
   /** Start the native login flow for a provider. */
   startLogin: (providerId: string) => Promise<{ ok: boolean; error?: string }>
   /** Answer the pending login prompt. */
@@ -310,6 +327,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessionThinking: {},
   sessionModelVersion: {},
   loginState: { status: 'idle' },
+  pendingModel: null,
+  pendingThinking: null,
 
   setTheme: (theme) => {
     set({ theme })
@@ -606,6 +625,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     return result
   },
 
+  setRuntimeMachineSkills: async (enabled) => {
+    const result = await window.electronAPI.runtimeSetMachineSkills(enabled)
+    await get().loadRuntimeOverview(true)
+    return result
+  },
+
   startLogin: async (providerId) => {
     return window.electronAPI.authStartLogin(providerId)
   },
@@ -632,30 +657,31 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ modelConfig, models })
   },
 
-  selectModel: async (provider, modelId) => {
-    const current = get().runtimeOverview?.profile === 'current'
-    if (current) {
-      // Current profile: default via runtime config (read-after-write),
-      // session via set_model. No legacy files involved.
-      const selector = provider && modelId ? `${provider}/${modelId}` : ''
-      const result = await get().selectRuntimeDefaultModel(selector)
-      if (!result.ok) return
-      const sid = get().currentSessionId
-      if (sid && provider && modelId) {
-        await window.electronAPI.setSessionModel(sid, provider, modelId)
-      }
-      return
-    }
-    await window.electronAPI.setModelConfig({ defaultProvider: provider, defaultModel: modelId })
+  setCurrentSessionModel: async (provider, modelId) => {
     const sid = get().currentSessionId
-    if (sid) {
-      await window.electronAPI.setSessionModel(sid, provider, modelId)
+    if (!sid || !provider || !modelId) return false
+    return window.electronAPI.setSessionModel(sid, provider, modelId)
+  },
+
+  setCurrentSessionThinking: async (level) => {
+    const sid = get().currentSessionId
+    if (!sid) return false
+    return window.electronAPI.setThinkingLevel(sid, level)
+  },
+
+  setPendingModel: (selector) => set({ pendingModel: selector }),
+
+  setPendingThinking: (level) => set({ pendingThinking: level }),
+
+  consumeSessionOverrides: () => {
+    const { pendingModel, pendingThinking } = get()
+    if (pendingModel || pendingThinking) {
+      set({ pendingModel: null, pendingThinking: null })
     }
-    set((state) => ({
-      modelConfig: state.modelConfig
-        ? { ...state.modelConfig, defaultProvider: provider, defaultModel: modelId }
-        : state.modelConfig
-    }))
+    return {
+      ...(pendingModel ? { modelSelector: pendingModel } : {}),
+      ...(pendingThinking ? { thinkingLevel: pendingThinking } : {})
+    }
   },
 
   applySessionEvent: (event) => {

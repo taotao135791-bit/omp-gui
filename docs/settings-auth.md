@@ -50,9 +50,16 @@ login
 
 - The picker lists what the runtime can actually run
   (credential-filtered catalog), never a static copy.
-- Session model (composer picker) is session-scoped (`set_model` does not
-  persist); the default model (Settings) applies to new sessions via
-  `enabledModels`. The two are deliberately separate controls.
+- **Scope is strict and separate:**
+  - Composer picker WITH a session → switches exactly that session
+    (`set_model`, session scope).
+  - Composer picker WITHOUT one → a one-shot override consumed by the next
+    session's spawn args (`--model` / `--thinking`).
+  - Settings default model → `enabledModels` via `omp config`, applies to
+    new sessions only.
+  Changing one never moves the other — verified by real-binary regression
+  tests (a session hot-switch never moves `enabledModels`; a fresh session
+  starts on the runtime default).
 - `model_changed` / `thinking_level_changed` events keep pickers in sync
   with the runtime-resolved state.
 
@@ -60,12 +67,17 @@ login
 
 Current runtime levels: `off`, `minimal`, `low`, `medium`, `high`,
 `xhigh`, `max` (verified via `Effort`/`THINKING_EFFORTS` and live probes).
-Per-model subsets exist (`omp models --json` → `thinking: [...]`).
+Per-model subsets exist (`omp models --json` → `thinking: [...]`) and the
+composer picker only offers what the current model supports (plus `off`,
+which is universal); when the catalog doesn't know the model, the full set
+is offered and capability reads as unknown.
 
 `set_thinking_level` never errors — unsupported levels are **clamped**
 (e.g. xhigh → high) or resolve to "auto" (unknown values). The GUI
 therefore displays the runtime-resolved level (`thinking_level_changed` /
-`get_state.thinkingLevel`), not the requested one.
+`get_state.thinkingLevel`), not the requested one. Scope mirrors models:
+session picks are session-only; the Settings default applies to future
+sessions only.
 
 ## Secrets
 

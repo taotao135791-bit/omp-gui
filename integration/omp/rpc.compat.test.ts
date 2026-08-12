@@ -281,6 +281,88 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('spawn-arg overrides: --model/--thinking apply to exactly one session', async () => {
+    if (!available) return
+    const live = startSession(OMP_BIN, [
+      '--model',
+      'deepseek/deepseek-v4-flash',
+      '--thinking',
+      'max'
+    ])
+    try {
+      await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
+      if (diedEarly(live)) return
+      const state = await live.session.query({ type: 'get_state' })
+      const model = (state?.data as { model?: { id?: string } } | undefined)?.model
+      expect(model?.id).toBe('deepseek-v4-flash')
+      expect((state?.data as { thinkingLevel?: string } | undefined)?.thinkingLevel).toBe('max')
+      // And the runtime default is untouched by the spawn-arg override.
+      const run = makeExecRunner(OMP_BIN)
+      const enabled = await configGet(run, 'enabledModels')
+      expect(JSON.stringify(enabled?.value ?? [])).toBe('[]')
+      const thinking = await configGet(run, 'defaultThinkingLevel')
+      expect(thinking?.value).not.toBe('max')
+    } finally {
+      live.session.kill()
+    }
+  })
+
+  it('session scope vs default scope: switching a session never changes the default', async () => {
+    if (!available) return
+    const run = makeExecRunner(OMP_BIN)
+    const thinkingBefore = (await configGet(run, 'defaultThinkingLevel'))?.value
+    // Session 1: hot-switch model + thinking via session-scoped RPC.
+    const s1 = startSession(OMP_BIN)
+    try {
+      await waitFor(() => s1.session.handshakeOutcome !== null, 15_000, 'handshake')
+      if (diedEarly(s1)) return
+      const r1 = await s1.session.query({
+        type: 'set_model',
+        provider: 'deepseek',
+        modelId: 'deepseek-v4-flash'
+      })
+      expect(r1?.success).toBe(true)
+      const r2 = await s1.session.query({ type: 'set_thinking_level', level: 'max' })
+      expect(r2?.success).toBe(true)
+      // The default must NOT have moved.
+      expect(JSON.stringify((await configGet(run, 'enabledModels'))?.value ?? [])).toBe('[]')
+      expect((await configGet(run, 'defaultThinkingLevel'))?.value).toBe(thinkingBefore)
+      // Session 2 (fresh): starts on the runtime default, not the override.
+      const s2 = startSession(OMP_BIN)
+      try {
+        await waitFor(() => s2.session.handshakeOutcome !== null, 15_000, 'handshake')
+        const state = await s2.session.query({ type: 'get_state' })
+        const model = (state?.data as { model?: { id?: string } } | undefined)?.model
+        expect(model?.id).not.toBe('deepseek-v4-flash')
+        expect((state?.data as { thinkingLevel?: string } | undefined)?.thinkingLevel).not.toBe('max')
+      } finally {
+        s2.session.kill()
+      }
+      // And session 1 still runs the override.
+      const state1 = await s1.session.query({ type: 'get_state' })
+      expect((state1?.data as { model?: { id?: string } } | undefined)?.model?.id).toBe(
+        'deepseek-v4-flash'
+      )
+      expect((state1?.data as { thinkingLevel?: string } | undefined)?.thinkingLevel).toBe('max')
+    } finally {
+      s1.session.kill()
+    }
+  })
+
+  it('zero legacy writes: config mutations never create auth.json/settings.json', async () => {
+    if (!available) return
+    const run = makeExecRunner(OMP_BIN)
+    await configSet(run, 'defaultThinkingLevel', 'high')
+    await configReset(run, 'defaultThinkingLevel')
+    const agentDir = path.join(process.env.HOME ?? '', '.omp', 'agent')
+    const { existsSync } = await import('node:fs')
+    // Legacy Pi config files must not exist in the current runtime's dir —
+    // current Oh My Pi migrated away from them and the GUI must not
+    // resurrect them.
+    expect(existsSync(path.join(agentDir, 'auth.json'))).toBe(false)
+    expect(existsSync(path.join(agentDir, 'settings.json'))).toBe(false)
+  })
 })
 
 describe('legacy Pi (pi ≤ 0.84) — RPC v1 profile', () => {

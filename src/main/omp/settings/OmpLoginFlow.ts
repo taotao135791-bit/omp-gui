@@ -77,14 +77,56 @@ export class OmpLoginFlow {
       LOGIN_RESPONSE_TIMEOUT_MS
     )
     if (this.finished) return // cancelled meanwhile
+    // The login session is done either way — release it before verifying.
+    this.client.kill()
+    this.client = null
     if (res && res.success === true) {
-      this.finish({ status: 'connected', providerId })
+      await this.verify(providerId)
     } else {
       const message =
         typeof res?.error === 'string'
           ? res.error
           : 'Oh My Pi did not answer the login request.'
       this.finish({ status: 'failed', providerId, message })
+    }
+  }
+
+  /**
+   * Read-after-write: a `success` from the login command is not proof the
+   * credential works. Re-query the runtime's provider list and only report
+   * Connected when the runtime itself confirms authentication.
+   */
+  private async verify(providerId: string): Promise<void> {
+    this.setState({ status: 'verifying', providerId })
+    const spawn = this.opts.spawnProbe ?? RuntimeRpcClient.spawnWithBootstrap
+    const spawned = await spawn(this.opts.cli, { args: ['--no-extensions'] }, {})
+    if (!spawned) {
+      this.finish({
+        status: 'failed',
+        providerId,
+        message: 'Login finished, but verification could not start.'
+      })
+      return
+    }
+    try {
+      const res = await spawned.client.query({ type: 'get_login_providers' }, 10_000)
+      const data = res?.data as
+        | { providers?: Array<{ id?: unknown; authenticated?: unknown }> }
+        | undefined
+      const me = Array.isArray(data?.providers)
+        ? data.providers.find((p) => p.id === providerId)
+        : undefined
+      if (me?.authenticated === true) {
+        this.finish({ status: 'connected', providerId })
+      } else {
+        this.finish({
+          status: 'failed',
+          providerId,
+          message: 'Oh My Pi did not confirm the new credential.'
+        })
+      }
+    } finally {
+      spawned.client.kill()
     }
   }
 

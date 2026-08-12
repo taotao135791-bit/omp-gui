@@ -70,7 +70,7 @@ export function getLastAssistantText(sessionId: string): string {
 export function createSession(
   cwd: string,
   onEvent: (event: SessionEvent) => void,
-  opts?: { resumeSessionPath?: string }
+  opts?: { resumeSessionPath?: string; modelSelector?: string; thinkingLevel?: ThinkingLevel }
 ): Session {
   const id = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const cli = detectCli()
@@ -94,7 +94,9 @@ export function createSession(
   const plan = planSpawn(id, cli, {
     permissionMode: getStore('permissionMode'),
     language: getStore('language'),
-    resumeSessionPath: opts?.resumeSessionPath
+    resumeSessionPath: opts?.resumeSessionPath,
+    modelSelector: opts?.modelSelector,
+    thinkingLevel: opts?.thinkingLevel
   })
   // A stale recent-project entry (e.g. a cleaned /tmp dir) would otherwise
   // surface as a misleading "spawn omp ENOENT" — say what actually happened.

@@ -5,9 +5,12 @@ import App from './App'
 import { useAppStore } from './store'
 import './index.css'
 
-// Handle for E2E driving via CDP and power-user debugging (read-only intent;
-// exposed in production too so automation works against packaged builds)
-;(window as unknown as { __store: typeof useAppStore }).__store = useAppStore
+// E2E/debug handle for CDP driving. Development and explicitly-flagged E2E
+// builds only — the store carries mutation actions, so production does not
+// expose it. Enable in a packaged build by launching with OMP_GUI_E2E=1.
+if (import.meta.env.DEV || import.meta.env.VITE_E2E) {
+  ;(window as unknown as { __store: typeof useAppStore }).__store = useAppStore
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

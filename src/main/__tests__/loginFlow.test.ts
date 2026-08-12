@@ -22,7 +22,7 @@ interface FakeClient {
   resolveLogin: (response: Record<string, unknown> | null) => void
 }
 
-function makeFlow(opts: { spawnNull?: boolean } = {}) {
+function makeFlow(opts: { spawnNull?: boolean; authenticated?: boolean } = {}) {
   const states: LoginState[] = []
   const urls: string[] = []
   let eventCb: ((event: Record<string, unknown>) => void) | null = null
@@ -30,12 +30,25 @@ function makeFlow(opts: { spawnNull?: boolean } = {}) {
   let exitCb: ((code: number) => void) | null = null
   let resolveLogin: (response: Record<string, unknown> | null) => void = () => {}
   const client: FakeClient = {
-    query: vi.fn(
-      (_cmd: Record<string, unknown>, _t?: number) =>
-        new Promise((resolve) => {
-          resolveLogin = resolve
+    query: vi.fn((cmd: Record<string, unknown>, _t?: number) => {
+      // Verification probe: answer provider state instead of deferring.
+      if (cmd.type === 'get_login_providers') {
+        return Promise.resolve({
+          type: 'response',
+          command: 'get_login_providers',
+          success: true,
+          data: {
+            providers: [
+              { id: 'deepseek', name: 'DeepSeek', available: true, authenticated: opts.authenticated !== false },
+              { id: 'anthropic', name: 'Anthropic', available: true, authenticated: opts.authenticated !== false }
+            ]
+          }
         })
-    ),
+      }
+      return new Promise((resolve) => {
+        resolveLogin = resolve
+      })
+    }),
     respond: vi.fn((_id: string, _a: ExtensionUiAnswer) => true),
     kill: vi.fn(() => {}),
     emit: (event) => eventCb?.(event),
@@ -83,6 +96,10 @@ describe('OmpLoginFlow', () => {
     client.resolveLogin({ type: 'response', command: 'login', success: true, data: { providerId: 'deepseek' } })
     await started
     expect(states.at(-1)?.status).toBe('connected')
+    // The success response alone is not enough — the flow re-queried the
+    // runtime (verifying) before declaring Connected.
+    expect(states.map((x) => x.status)).toContain('verifying')
+    expect(client.query).toHaveBeenCalledWith({ type: 'get_login_providers' }, 10_000)
     expect(urls).toEqual(['https://platform.deepseek.com/api_keys'])
     expect(client.kill).toHaveBeenCalled()
   })
@@ -101,6 +118,17 @@ describe('OmpLoginFlow', () => {
     const last = states.at(-1)
     expect(last?.status).toBe('failed')
     expect(last && 'message' in last && last.message).toContain('401')
+  })
+
+  it('login success without runtime confirmation is a failure, not Connected', async () => {
+    const { flow, states, client } = makeFlow({ authenticated: false })
+    const started = flow.start('deepseek')
+    await vi.waitFor(() => expect(states.some((x) => x.status === 'starting')).toBe(true))
+    client.resolveLogin({ type: 'response', command: 'login', success: true, data: { providerId: 'deepseek' } })
+    await started
+    const last = states.at(-1)
+    expect(last?.status).toBe('failed')
+    expect(last && 'message' in last && (last as { message: string }).message).toMatch(/did not confirm/)
   })
 
   it('cancel kills the runtime operation and reports cancelled', async () => {

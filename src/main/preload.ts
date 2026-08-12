@@ -38,7 +38,11 @@ export interface ElectronAPI {
   /** CLI version + RPC feature surface of the detected CLI. */
   getCapabilities: () => Promise<CliCapabilities>
   listSessions: () => Promise<Session[]>
-  createSession: (cwd: string) => Promise<Session>
+  /** Create a session; overrides are one-shot spawn args for this session only. */
+  createSession: (
+    cwd: string,
+    overrides?: { modelSelector?: string; thinkingLevel?: ThinkingLevel }
+  ) => Promise<Session>
   sendMessage: (
     sessionId: string,
     text: string,
@@ -167,7 +171,8 @@ const api: ElectronAPI = {
   detectCli: (force?: boolean) => ipcRenderer.invoke(IPC_CHANNELS.OMP_DETECT, force),
   getCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_CAPABILITIES),
   listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_SESSIONS),
-  createSession: (cwd: string) => ipcRenderer.invoke(IPC_CHANNELS.OMP_CREATE_SESSION, cwd),
+  createSession: (cwd: string, overrides?: { modelSelector?: string; thinkingLevel?: ThinkingLevel }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_CREATE_SESSION, cwd, overrides),
   sendMessage: (
     sessionId: string,
     text: string,

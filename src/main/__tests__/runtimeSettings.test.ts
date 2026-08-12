@@ -255,3 +255,96 @@ describe('RuntimeSettings · legacy profile', () => {
     expect((await svc.logout('deepseek')).ok).toBe(false)
   })
 })
+
+describe('RuntimeSettings · machine skills strict verification', () => {
+  const writeOk = { 'config set skills.enableAgentsUser false --json': { stdout: '{}' } }
+
+  it('write success + read-back missing → failure, not truthiness', async () => {
+    // config get returns an entry WITHOUT a value key (unset/unknown).
+    const { run } = fakeRunner({
+      ...writeOk,
+      'config get skills.enableAgentsUser --json': {
+        stdout: JSON.stringify({ key: 'skills.enableAgentsUser' })
+      }
+    })
+    const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
+    expect((await svc.setMachineSkills(false)).ok).toBe(false)
+  })
+
+  it('write success + read-back wrong value → failure', async () => {
+    const { run } = fakeRunner({
+      ...writeOk,
+      'config get skills.enableAgentsUser --json': {
+        stdout: JSON.stringify({ key: 'skills.enableAgentsUser', value: true })
+      }
+    })
+    const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
+    expect((await svc.setMachineSkills(false)).ok).toBe(false)
+  })
+
+  it('write success + exact boolean read-back → success', async () => {
+    const { run } = fakeRunner({
+      'config set skills.enableAgentsUser false --json': { stdout: '{}' },
+      'config get skills.enableAgentsUser --json': {
+        stdout: JSON.stringify({ key: 'skills.enableAgentsUser', value: false })
+      },
+      'config set skills.enableAgentsUser true --json': { stdout: '{}' }
+    })
+    const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
+    expect((await svc.setMachineSkills(false)).ok).toBe(true)
+  })
+
+  it('consecutive mutations are serialized (write-verify pairs never interleave)', async () => {
+    const order: string[] = []
+    const run = async (args: string[]) => {
+      order.push(args.join(' '))
+      const key = args.join(' ')
+      if (key === 'config set defaultThinkingLevel high --json') return { ok: true, stdout: '{}', stderr: '' }
+      if (key === 'config set defaultThinkingLevel max --json') return { ok: true, stdout: '{}', stderr: '' }
+      if (key === 'config get defaultThinkingLevel --json') {
+        // Read-back reflects the LAST write — without serialization the
+        // first write's verify would see 'max' and fail.
+        const lastSet = [...order].reverse().find((o) => o.startsWith('config set defaultThinkingLevel'))
+        const value = lastSet?.endsWith(' max --json') ? 'max' : 'high'
+        return { ok: true, stdout: JSON.stringify({ key: 'defaultThinkingLevel', value }), stderr: '' }
+      }
+      return { ok: false, stdout: '', stderr: 'unscripted' }
+    }
+    const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
+    const [a, b] = await Promise.all([svc.setDefaultThinking('high'), svc.setDefaultThinking('max')])
+    expect(a.ok).toBe(true)
+    expect(b.ok).toBe(true)
+    // Each set is immediately followed by its own get.
+    const sets = order.map((o, i) => ({ o, i })).filter((x) => x.o.startsWith('config set'))
+    const gets = order.map((o, i) => ({ o, i })).filter((x) => x.o.startsWith('config get'))
+    expect(sets).toHaveLength(2)
+    expect(gets).toHaveLength(2)
+    expect(gets[0].i).toBe(sets[0].i + 1)
+    expect(sets[1].i).toBe(gets[0].i + 1)
+    expect(gets[1].i).toBe(sets[1].i + 1)
+  })
+})
+
+describe('RuntimeSettings · selector safety', () => {
+  it('accepts slash-containing selectors and writes them verbatim as argv', async () => {
+    const selector = 'openrouter/deepseek/deepseek-v4-flash-0731'
+    const { run, calls } = fakeRunner({
+      [`config set enabledModels ["${selector}"] --json`]: { stdout: '{}' },
+      'config get enabledModels --json': {
+        stdout: JSON.stringify({ key: 'enabledModels', value: [selector] })
+      }
+    })
+    const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
+    expect((await svc.setDefaultModel(selector)).ok).toBe(true)
+    const setCall = calls.find((c) => c[1] === 'set')
+    expect(setCall?.[3]).toBe(JSON.stringify([selector]))
+  })
+
+  it('rejects unsafe selectors before any CLI call', async () => {
+    const { run, calls } = fakeRunner({})
+    const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
+    expect((await svc.setDefaultModel('-rf')).ok).toBe(false)
+    expect((await svc.setDefaultModel('a\0b')).ok).toBe(false)
+    expect(calls).toHaveLength(0)
+  })
+})

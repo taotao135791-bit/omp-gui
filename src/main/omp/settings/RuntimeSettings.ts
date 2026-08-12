@@ -233,68 +233,106 @@ export class RuntimeSettings {
   }
 
   // ---------------------------------------------------------------- writes
-  // Every write is read-after-write verified against the runtime.
+  // Every write is read-after-write verified against the runtime, and all
+  // mutations are serialized: rapid A→B changes cannot interleave their
+  // write/read-back pairs, and a slow first write can never overwrite the
+  // second one's confirmation.
+
+  /** Serialize mutations through one chain so write+verify pairs never race. */
+  private mutationChain: Promise<unknown> = Promise.resolve()
+
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.mutationChain.then(fn, fn)
+    this.mutationChain = next.catch(() => {})
+    return next
+  }
 
   async setDefaultModel(selector: string): Promise<{ ok: boolean; error?: string }> {
     if (this.profile !== 'current') return { ok: false, error: 'legacy-profile' }
-    const value = selector ? [selector] : []
-    if (!(await configSet(this.run, 'enabledModels', value))) {
-      return { ok: false, error: 'omp config set failed' }
+    if (selector && !isValidModelSelector(selector)) {
+      return { ok: false, error: 'invalid model selector' }
     }
-    const verify = await configGet(this.run, 'enabledModels')
-    const actual = firstSelector(verify)
-    const expected = selector || ''
-    this.invalidate()
-    if (actual !== expected) {
-      return { ok: false, error: `runtime did not confirm the change (got "${actual || 'default'}")` }
-    }
-    return { ok: true }
+    return this.enqueue(async () => {
+      const value = selector ? [selector] : []
+      if (!(await configSet(this.run, 'enabledModels', value))) {
+        return { ok: false, error: 'omp config set failed' }
+      }
+      const verify = await configGet(this.run, 'enabledModels')
+      const actual = firstSelector(verify)
+      this.invalidate()
+      // Exact match only — a missing/unknown read-back is a failure.
+      if (!verify || actual !== selector) {
+        return { ok: false, error: `runtime did not confirm the change (got "${actual || 'default'}")` }
+      }
+      return { ok: true }
+    })
   }
 
   async setDefaultThinking(level: string): Promise<{ ok: boolean; error?: string }> {
     if (this.profile !== 'current') return { ok: false, error: 'legacy-profile' }
-    const ok = level
-      ? await configSet(this.run, 'defaultThinkingLevel', level)
-      : await configReset(this.run, 'defaultThinkingLevel')
-    if (!ok) return { ok: false, error: 'omp config set failed' }
-    const verify = await configGet(this.run, 'defaultThinkingLevel')
-    const actual = typeof verify?.value === 'string' ? verify.value : ''
-    this.invalidate()
-    if (level && actual !== level) {
-      return { ok: false, error: `runtime did not confirm the change (got "${actual || 'unset'}")` }
-    }
-    return { ok: true }
+    return this.enqueue(async () => {
+      if (level) {
+        if (!(await configSet(this.run, 'defaultThinkingLevel', level))) {
+          return { ok: false, error: 'omp config set failed' }
+        }
+        const verify = await configGet(this.run, 'defaultThinkingLevel')
+        const actual = verify?.value
+        this.invalidate()
+        // Exact match only.
+        if (actual !== level) {
+          return { ok: false, error: `runtime did not confirm the change (got "${typeof actual === 'string' ? actual : 'unset'}")` }
+        }
+        return { ok: true }
+      }
+      // '' = reset to the runtime default. Verification: the key must exist
+      // afterwards with its (runtime-chosen) default value.
+      if (!(await configReset(this.run, 'defaultThinkingLevel'))) {
+        return { ok: false, error: 'omp config reset failed' }
+      }
+      const verify = await configGet(this.run, 'defaultThinkingLevel')
+      this.invalidate()
+      if (typeof verify?.value !== 'string') {
+        return { ok: false, error: 'runtime did not confirm the reset' }
+      }
+      return { ok: true }
+    })
   }
 
   async setMachineSkills(enabled: boolean): Promise<{ ok: boolean; error?: string }> {
     if (this.profile !== 'current') return { ok: false, error: 'legacy-profile' }
-    if (!(await configSet(this.run, 'skills.enableAgentsUser', enabled))) {
-      return { ok: false, error: 'omp config set failed' }
-    }
-    const verify = await configGet(this.run, 'skills.enableAgentsUser')
-    this.invalidate()
-    if ((verify?.value !== false) !== enabled) {
-      return { ok: false, error: 'runtime did not confirm the change' }
-    }
-    return { ok: true }
+    return this.enqueue(async () => {
+      if (!(await configSet(this.run, 'skills.enableAgentsUser', enabled))) {
+        return { ok: false, error: 'omp config set failed' }
+      }
+      const verify = await configGet(this.run, 'skills.enableAgentsUser')
+      this.invalidate()
+      // Exact boolean match only — missing/null/undefined is a failure,
+      // never truthiness.
+      if (verify?.value !== enabled) {
+        return { ok: false, error: 'runtime did not confirm the change' }
+      }
+      return { ok: true }
+    })
   }
 
   async logout(providerId: string): Promise<{ ok: boolean; error?: string }> {
     if (this.profile !== 'current') return { ok: false, error: 'legacy-profile' }
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(providerId)) {
+    if (!PROVIDER_ID_PATTERN.test(providerId)) {
       return { ok: false, error: 'invalid provider id' }
     }
-    if (!(await authBrokerLogout(this.run, providerId))) {
-      return { ok: false, error: 'omp auth-broker logout failed' }
-    }
-    this.invalidate()
-    // Read-after-write: the runtime must agree the credential is gone.
-    const overview = await this.getOverview(true)
-    const still = overview.providers.find((p) => p.id === providerId)
-    if (still?.authenticated) {
-      return { ok: false, error: 'credential still present (e.g. also set as an environment variable)' }
-    }
-    return { ok: true }
+    return this.enqueue(async () => {
+      if (!(await authBrokerLogout(this.run, providerId))) {
+        return { ok: false, error: 'omp auth-broker logout failed' }
+      }
+      this.invalidate()
+      // Read-after-write: the runtime must agree the credential is gone.
+      const overview = await this.getOverview(true)
+      const still = overview.providers.find((p) => p.id === providerId)
+      if (still?.authenticated) {
+        return { ok: false, error: 'credential still present (e.g. also set as an environment variable)' }
+      }
+      return { ok: true }
+    })
   }
 }
 
@@ -304,6 +342,36 @@ function firstSelector(entry: OmpConfigEntry | null): string {
   if (!Array.isArray(value) || value.length === 0) return ''
   const first = value[0]
   return typeof first === 'string' ? first : ''
+}
+
+/**
+ * Model selector validation. The GUI deliberately does NOT replicate the
+ * runtime's naming rules — existence is the runtime's call. We only guarantee
+ * argv/IPC safety: non-empty, bounded, no control characters, and not
+ * flag-like (leading '-'). Slashes are fine everywhere: real selectors look
+ * like `openrouter/deepseek/deepseek-v4-flash-0731`.
+ */
+export function isValidModelSelector(selector: string): boolean {
+  if (typeof selector !== 'string') return false
+  if (selector.length === 0 || selector.length > 300) return false
+  if (selector.startsWith('-')) return false
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(selector)) return false
+  return true
+}
+
+/**
+ * Split a selector into provider + modelId: provider is the first segment,
+ * modelId is everything after it (may itself contain slashes).
+ */
+export function splitModelSelector(selector: string): { provider: string; modelId: string } | null {
+  if (!isValidModelSelector(selector)) return null
+  const slash = selector.indexOf('/')
+  if (slash === -1) return null
+  const provider = selector.slice(0, slash)
+  const modelId = selector.slice(slash + 1)
+  if (!provider || !modelId) return null
+  return { provider, modelId }
 }
 
 /** Provider-id shape shared with the login/logout IPC validators. */

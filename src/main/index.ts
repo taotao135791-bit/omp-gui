@@ -4,6 +4,7 @@ import { readdirSync, unlinkSync } from 'node:fs'
 import { getStore, setStore, applyFirstRunDefaults } from './store'
 import { registerIpc } from './ipc'
 import { syncMachineSkills } from './piSettings'
+import { detectCli } from './omp'
 import { initUpdater } from './updater'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
@@ -66,9 +67,14 @@ function createWindow() {
 app.whenReady().then(() => {
   registerIpc()
   applyFirstRunDefaults()
-  // Keep pi's skill overrides in line with the GUI toggle — pi loads
+  // Keep pi's skill overrides in line with the GUI toggle — LEGACY pi loads
   // ~/.agents/skills (other agents' skills) into every session by default.
-  syncMachineSkills(getStore('machineSkills'))
+  // Current Oh My Pi manages this through its own config
+  // (skills.enableAgentsUser via the runtime settings adapter), so the
+  // legacy settings.json sync must not run there.
+  if (detectCli().command !== 'omp') {
+    syncMachineSkills(getStore('machineSkills'))
+  }
   cleanStaleApprovalConfigs()
   createWindow()
   initUpdater()

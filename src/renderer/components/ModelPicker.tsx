@@ -16,26 +16,31 @@ function sessionModelOf(state: SessionState | null): { provider: string; id: str
 }
 
 interface ModelPickerProps {
-  /** Live session whose model display/hot-switch applies; null = defaults only. */
+  /** Live session whose model display/hot-switch applies; null = next-session override. */
   sessionId: string | null
 }
 
 /**
- * Codex-style model picker in the composer. The list is whatever the
- * runtime can actually run right now (credential-filtered by the runtime
- * itself); the current selection is the live session's model, or the
- * runtime default when no session is open. Picking one persists it as the
- * runtime default and hot-switches the live session.
+ * Codex-style model picker in the composer. Scope is strict:
+ * - WITH a session: switches exactly that session (set_model) — the default
+ *   for future sessions is untouched.
+ * - WITHOUT one: sets a one-shot override consumed by the next session's
+ *   spawn args — again never the runtime default (that lives in Settings).
+ *
+ * The list is whatever the runtime can actually run right now
+ * (credential-filtered by the runtime itself).
  */
 export default function ModelPicker({ sessionId }: ModelPickerProps) {
   const {
     models,
     modelConfig,
     loadModelState,
-    selectModel,
+    setCurrentSessionModel,
     runtimeOverview,
     runtimeModels,
-    loadRuntimeModels
+    loadRuntimeModels,
+    pendingModel,
+    setPendingModel
   } = useAppStore()
   const [open, setOpen] = useState(false)
   const [sessionModel, setSessionModel] = useState<{ provider: string; id: string; name: string } | null>(null)
@@ -71,29 +76,6 @@ export default function ModelPicker({ sessionId }: ModelPickerProps) {
 
   const providerLabel = (id: string) => PI_PROVIDERS.find((p) => p.id === id)?.label ?? id
 
-  // ----- current selection label -------------------------------------------
-  let label = t('composer.modelAuto')
-  let currentSelector = ''
-  if (isCurrent) {
-    if (sessionModel) {
-      label = sessionModel.name
-      currentSelector = `${sessionModel.provider}/${sessionModel.id}`
-    } else {
-      const def = runtimeOverview?.modelState.defaultModel ?? ''
-      if (def) {
-        const m = runtimeModels.find((m) => m.selector === def)
-        label = m?.name ?? def
-        currentSelector = def
-      }
-    }
-  } else {
-    const provider = modelConfig?.defaultProvider ?? ''
-    const modelId = modelConfig?.defaultModel ?? ''
-    const current = models.find((m) => m.provider === provider && m.id === modelId)
-    label = current?.name ?? (modelId || t('composer.modelAuto'))
-    currentSelector = provider && modelId ? `${provider}/${modelId}` : ''
-  }
-
   // ----- grouped list -------------------------------------------------------
   type Item = { provider: string; id: string; selector: string; name: string }
   const items: Item[] = isCurrent
@@ -106,14 +88,37 @@ export default function ModelPicker({ sessionId }: ModelPickerProps) {
     return acc
   }, new Map())
 
+  // ----- current selection label -------------------------------------------
+  let label = t('composer.modelAuto')
+  let currentSelector = ''
+  if (sessionId) {
+    if (sessionModel) {
+      label = sessionModel.name
+      currentSelector = `${sessionModel.provider}/${sessionModel.id}`
+    }
+  } else {
+    // No session: the next-session override, else the runtime default.
+    const def = isCurrent
+      ? pendingModel || (runtimeOverview?.modelState.defaultModel ?? '')
+      : pendingModel || (modelConfig?.defaultProvider && modelConfig?.defaultModel
+          ? `${modelConfig.defaultProvider}/${modelConfig.defaultModel}`
+          : '')
+    if (def) {
+      label = items.find((m) => m.selector === def)?.name ?? def
+      currentSelector = def
+    }
+  }
+
   const pick = async (selector: string) => {
     setOpen(false)
-    if (!selector) {
-      await selectModel('', '')
+    if (sessionId) {
+      if (!selector) return // a live session has no "auto" to return to
+      const slash = selector.indexOf('/')
+      await setCurrentSessionModel(selector.slice(0, slash), selector.slice(slash + 1))
       return
     }
-    const [provider, ...rest] = selector.split('/')
-    await selectModel(provider, rest.join('/'))
+    // No session: next-session override ('' clears it back to the default).
+    setPendingModel(selector || null)
   }
 
   return (
@@ -128,7 +133,7 @@ export default function ModelPicker({ sessionId }: ModelPickerProps) {
           }
         }}
         className="focus-ring flex shrink-0 items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[12px] font-medium whitespace-nowrap text-cream-dim transition-all hover:border-ink-600 hover:text-cream"
-        title={t('composer.model')}
+        title={sessionId ? t('composer.model') : t('composer.modelNextSession')}
       >
         <Cpu size={12} />
         <span className="max-w-36 truncate">{label}</span>
@@ -136,13 +141,15 @@ export default function ModelPicker({ sessionId }: ModelPickerProps) {
       </button>
 
       <MenuPortal open={open} triggerRef={triggerRef} onClose={() => setOpen(false)} width={256} maxHeight={320}>
-        <button
-          onClick={() => pick('')}
-          className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream transition hover:bg-overlay"
-        >
-          <span>{t('composer.modelAuto')}</span>
-          {!currentSelector && <Check size={12} className="text-accent" />}
-        </button>
+        {!sessionId && (
+          <button
+            onClick={() => pick('')}
+            className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-cream transition hover:bg-overlay"
+          >
+            <span>{t('composer.modelAuto')}</span>
+            {!currentSelector && <Check size={12} className="text-accent" />}
+          </button>
+        )}
 
         {Array.from(groups.entries()).map(([pid, list]) => (
           <div key={pid} className="mt-1">

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { app } from 'electron'
-import { CliInfo, Language, PermissionMode } from '../../shared/types'
+import { CliInfo, Language, PermissionMode, ThinkingLevel } from '../../shared/types'
 import { getStore } from '../store'
 import { buildLanguageArgs } from '../languageArgs'
 import { executableSearchDirs } from './OmpCapabilities'
@@ -124,6 +124,10 @@ export interface SpawnOptions {
   language: Language
   /** Persisted session file to resume (history panel). */
   resumeSessionPath?: string
+  /** One-shot session-scoped model override (--model spawn arg). */
+  modelSelector?: string
+  /** One-shot session-scoped thinking override (--thinking spawn arg). */
+  thinkingLevel?: ThinkingLevel
 }
 
 export interface SpawnPlan {
@@ -167,6 +171,14 @@ export function planSpawn(sessionId: string, cli: CliInfo, opts: SpawnOptions): 
   // Resume a persisted session file when requested (history panel).
   if (opts.resumeSessionPath) {
     args.push('--session', opts.resumeSessionPath)
+  }
+  // One-shot session-scoped overrides from the composer pickers. These are
+  // spawn args of exactly this session — the runtime default stays untouched.
+  if (opts.modelSelector) {
+    args.push('--model', opts.modelSelector)
+  }
+  if (opts.thinkingLevel) {
+    args.push('--thinking', opts.thinkingLevel)
   }
   // Steer the reply language to the UI language (no flag for English).
   args.push(...buildLanguageArgs(opts.language))

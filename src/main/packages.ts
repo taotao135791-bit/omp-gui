@@ -331,6 +331,15 @@ export function setPackageEnabled(
   enabled: boolean,
   piAgentDir: string = defaultPiAgentDir()
 ): PackageActionResult {
+  // The enabled/disabled flag lives in pi's legacy settings.json — a file
+  // current Oh My Pi does not read. Toggling it there would be a fake
+  // success, so the operation is legacy-profile-only.
+  if (detectCli().command === 'omp') {
+    return {
+      ok: false,
+      log: 'Package enable/disable uses the legacy Pi configuration and is not supported by this Oh My Pi version.'
+    }
+  }
   const settings = readPiSettings(piAgentDir)
   const packages = (settings.packages ?? []) as PackageEntry[]
   const idx = packages.findIndex((entry) => entrySource(entry) === source)

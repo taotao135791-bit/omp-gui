@@ -2,19 +2,17 @@ import { useEffect, useState } from 'react'
 import {
   Check,
   FolderCog,
-  KeyRound,
   Languages,
   Moon,
   RefreshCw,
-  ShieldCheck,
   Sun,
   Trash2
 } from 'lucide-react'
-import { CliCapabilities, CliInfo, ModelConfig, PermissionMode, PI_PROVIDERS, PiModel, UpdaterStatus } from '@shared/types'
+import { CliCapabilities, CliInfo, PermissionMode, UpdaterStatus } from '@shared/types'
 import { useAppStore } from '../store'
 import { I18nKey, useT } from '../i18n'
-import AuthSection from '../components/AuthSection'
-import RuntimeModelSection from '../components/RuntimeModelSection'
+import CurrentOmpSettings from '../components/CurrentOmpSettings'
+import LegacyPiSettings from '../components/LegacyPiSettings'
 
 /** RPC protocol versions this GUI can drive (mirrors the main-process handshake). */
 const SUPPORTED_RPC_PROTOCOLS: readonly number[] = [1, 2]
@@ -25,34 +23,26 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div className="border-b border-line px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
         {title}
       </div>
-      <div className="divide-y divide-line">{children}</div>
+      <div className="divide-y divide-line/60 px-4">{children}</div>
     </section>
   )
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <span className="text-[13px] font-medium text-cream">{label}</span>
+    <div className="flex items-center justify-between gap-3 py-3">
+      <span className="text-[13px] text-cream">{label}</span>
       {children}
     </div>
   )
 }
 
 function Note({ children }: { children: React.ReactNode }) {
-  return <p className="px-4 py-2.5 text-[12px] leading-5 text-cream-faint">{children}</p>
+  return <p className="py-2.5 text-[11px] leading-relaxed text-cream-faint">{children}</p>
 }
 
-const selectCls =
-  'rounded-full border border-line bg-transparent px-3 py-1 text-[12px] font-medium text-cream-dim outline-none transition-colors hover:border-ink-600 hover:text-cream focus:border-accent/50'
-
-const inputCls =
-  'w-56 rounded-lg border border-line bg-ink-900 px-3 py-2 text-[13px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50 focus:shadow-[0_0_0_3px_var(--accent-soft)]'
-
 const buttonCls =
-  'flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-ink-600 hover:text-cream disabled:opacity-50'
-
-const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
+  'flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-ink-600 hover:text-cream disabled:opacity-40'
 
 const PERMISSION_MODES: { value: PermissionMode; label: I18nKey; note: I18nKey }[] = [
   { value: 'ask', label: 'settings.permissions.ask', note: 'settings.permissionsNote.ask' },
@@ -62,66 +52,35 @@ const PERMISSION_MODES: { value: PermissionMode; label: I18nKey; note: I18nKey }
 ]
 
 export default function SettingsPage() {
-  const { theme, language, setTheme, setLanguage, models, modelConfig, loadModelState, selectModel } =
-    useAppStore()
+  const { theme, language, setTheme, setLanguage } = useAppStore()
   const t = useT()
   const [cli, setCli] = useState<CliInfo | null>(null)
   const [caps, setCaps] = useState<CliCapabilities | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [cleared, setCleared] = useState(false)
   const [version, setVersion] = useState('')
-
-  const [keyInput, setKeyInput] = useState('')
-  const [keyState, setKeyState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-  const [keyError, setKeyError] = useState('')
-  const [modelSaved, setModelSaved] = useState(false)
   const [permissionMode, setPermissionModeState] = useState<PermissionMode>('ask')
   const [notifications, setNotificationsState] = useState(true)
   const [updater, setUpdater] = useState<UpdaterStatus>({ status: 'idle' })
-  const [machineSkills, setMachineSkillsState] = useState(false)
-  const [machineSkillCount, setMachineSkillCount] = useState(0)
 
-  const provider = modelConfig?.defaultProvider ?? ''
-  const providerConfigured = provider ? (modelConfig?.authProviders ?? []).includes(provider) : false
-  const providerModels = provider ? models.filter((m) => m.provider === provider) : []
-  const [catalog, setCatalog] = useState<PiModel[]>([])
-  // The full registry lets the picker offer models before a key is stored;
-  // the credential-filtered list is only a fallback if the registry is unreadable.
-  const catalogForProvider = provider ? catalog.filter((m) => m.provider === provider) : []
-  const selectableModels = catalogForProvider.length > 0 ? catalogForProvider : providerModels
   // Runtime profile decides which settings surface applies: current (omp
-  // config/RPC-backed) vs legacy (auth.json/settings.json file-backed).
+  // config/RPC-backed) vs legacy (auth.json/settings.json file-backed). The
+  // two surfaces are physically separate components — no shared mutations.
   const runtimeOverview = useAppStore((s) => s.runtimeOverview)
   const isCurrent = runtimeOverview?.profile === 'current'
   // Widened from the literal type `1` so a future protocol bump can render
   // the unsupported state instead of being narrowed away by TS.
   const ompProtocol: number | null = caps ? caps.protocol : null
+
   useEffect(() => {
     window.electronAPI.detectCli().then(setCli)
     window.electronAPI.getCapabilities().then(setCaps)
     window.electronAPI.getAppVersion().then(setVersion)
-    window.electronAPI.listCatalogModels().then(setCatalog)
-    loadModelState()
     useAppStore.getState().loadRuntimeOverview(true)
     useAppStore.getState().loadRuntimeModels()
     window.electronAPI.getStore('permissionMode').then((v) => setPermissionModeState(v ?? 'ask'))
     window.electronAPI.getStore('notifications').then((v) => setNotificationsState(v ?? true))
-    window.electronAPI.getStore('machineSkills').then((v) => {
-      const enabled = v ?? false
-      setMachineSkillsState(enabled)
-      // Idempotent re-sync doubles as the machine-skill count probe (legacy
-      // profile; the current profile reads state from the runtime overview).
-      window.electronAPI.setMachineSkills(enabled).then((r) => setMachineSkillCount(r.available.length))
-    })
-    window.electronAPI.listMachineSkills().then((names) => setMachineSkillCount(names.length))
-  }, [loadModelState])
-
-  // Current profile: the machine-skills toggle state comes from the runtime.
-  useEffect(() => {
-    if (runtimeOverview?.profile === 'current') {
-      setMachineSkillsState(runtimeOverview.machineSkillsEnabled)
-    }
-  }, [runtimeOverview])
+  }, [])
 
   useEffect(() => {
     window.electronAPI.updaterGetStatus().then(setUpdater)
@@ -146,60 +105,6 @@ export default function SettingsPage() {
     setTimeout(() => setCleared(false), 1500)
   }
 
-  const flashModelSaved = () => {
-    setModelSaved(true)
-    setTimeout(() => setModelSaved(false), 1500)
-  }
-
-  const changeProvider = async (id: string) => {
-    setKeyInput('')
-    setKeyState('idle')
-    // A model id only makes sense within its provider — reset it on switch
-    await window.electronAPI.setModelConfig({ defaultProvider: id, defaultModel: '' })
-    loadModelState()
-  }
-
-  const changeModel = async (modelId: string) => {
-    if (!provider) return
-    await selectModel(provider, modelId)
-    flashModelSaved()
-  }
-
-  const saveCustomModel = async (value: string) => {
-    if (!provider || value === (modelConfig?.defaultModel ?? '')) return
-    await selectModel(provider, value)
-    flashModelSaved()
-  }
-
-  const saveKey = async () => {
-    if (!provider || !keyInput.trim()) return
-    setKeyState('saving')
-    const result = await window.electronAPI.setApiKey(provider, keyInput.trim())
-    if (result.ok) {
-      setKeyInput('')
-      setKeyState('saved')
-      setTimeout(() => setKeyState('idle'), 2000)
-      loadModelState()
-    } else {
-      setKeyError(result.log)
-      setKeyState('error')
-    }
-  }
-
-  const removeKey = async () => {
-    if (!provider) return
-    await window.electronAPI.clearApiKey(provider)
-    setKeyState('idle')
-    loadModelState()
-  }
-
-  const changeThinking = async (level: string) => {
-    await window.electronAPI.setModelConfig({
-      defaultThinkingLevel: level as ModelConfig['defaultThinkingLevel']
-    })
-    loadModelState()
-  }
-
   const changePermissionMode = async (value: PermissionMode) => {
     setPermissionModeState(value)
     await window.electronAPI.setStore('permissionMode', value)
@@ -218,23 +123,6 @@ export default function SettingsPage() {
     setUpdater(await window.electronAPI.updaterDownload())
   }
 
-  const changeTrust = async (value: ModelConfig['projectTrust']) => {
-    await window.electronAPI.setModelConfig({ projectTrust: value })
-    loadModelState()
-  }
-
-  const changeMachineSkills = async (enabled: boolean) => {
-    setMachineSkillsState(enabled)
-    if (useAppStore.getState().runtimeOverview?.profile === 'current') {
-      // Current profile: the toggle lives in the runtime config; the
-      // legacy file path stays untouched.
-      await window.electronAPI.runtimeSetMachineSkills(enabled)
-      return
-    }
-    const r = await window.electronAPI.setMachineSkills(enabled)
-    setMachineSkillCount(r.available.length)
-  }
-
   const seg = (active: boolean) =>
     `flex h-[26px] items-center rounded-full border px-2.5 text-[12px] font-medium transition-colors ${
       active
@@ -250,140 +138,7 @@ export default function SettingsPage() {
 
       <div className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto max-w-[680px] space-y-4">
-          {isCurrent && (
-            <>
-              <AuthSection />
-              <RuntimeModelSection />
-            </>
-          )}
-          {!isCurrent && (
-          <Section title={t('settings.model')}>
-            <Row label={t('settings.provider')}>
-              <select
-                value={provider}
-                onChange={(e) => changeProvider(e.target.value)}
-                className={selectCls}
-              >
-                <option value="">{t('settings.providerAuto')}</option>
-                {PI_PROVIDERS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                    {(modelConfig?.authProviders ?? []).includes(p.id) ? ' ✓' : ''}
-                  </option>
-                ))}
-              </select>
-            </Row>
-            {provider && (
-              <Row label={t('settings.apiKey')}>
-                <div className="flex items-center gap-2">
-                  {providerConfigured && keyState !== 'saved' ? (
-                    <>
-                      <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                        <KeyRound size={11} />
-                        {t('settings.providerConfigured')}
-                      </span>
-                      <button
-                        onClick={removeKey}
-                        className="flex items-center gap-1 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500"
-                      >
-                        {t('settings.clearKey')}
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <input
-                        type="password"
-                        value={keyInput}
-                        onChange={(e) => {
-                          setKeyInput(e.target.value)
-                          if (keyState === 'error') setKeyState('idle')
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveKey()
-                        }}
-                        placeholder={t('settings.apiKeyPlaceholder')}
-                        className={inputCls}
-                      />
-                      <button
-                        onClick={saveKey}
-                        disabled={!keyInput.trim() || keyState === 'saving'}
-                        className={buttonCls}
-                      >
-                        {keyState === 'saved' ? (
-                          <>
-                            <Check size={11} className="text-emerald-500" />
-                            {t('settings.saved')}
-                          </>
-                        ) : keyState === 'saving' ? (
-                          t('settings.saving')
-                        ) : (
-                          t('settings.saveKey')
-                        )}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </Row>
-            )}
-            {keyState === 'error' && (
-              <Note>
-                <span className="text-red-500">{t('settings.saveFailed', { error: keyError })}</span>
-              </Note>
-            )}
-            {provider && (
-              <Row label={t('settings.defaultModel')}>
-                <div className="flex items-center gap-2">
-                  {selectableModels.length > 0 ? (
-                    <select
-                      value={modelConfig?.defaultModel ?? ''}
-                      onChange={(e) => changeModel(e.target.value)}
-                      className={`${selectCls} max-w-64`}
-                    >
-                      <option value="">{t('settings.modelAuto')}</option>
-                      {selectableModels.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      key={provider}
-                      defaultValue={modelConfig?.defaultModel ?? ''}
-                      onBlur={(e) => saveCustomModel(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') saveCustomModel((e.target as HTMLInputElement).value)
-                      }}
-                      placeholder={t('settings.defaultModelPlaceholder')}
-                      className={inputCls}
-                    />
-                  )}
-                  {modelSaved && (
-                    <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                      <Check size={11} />
-                      {t('settings.saved')}
-                    </span>
-                  )}
-                </div>
-              </Row>
-            )}
-            <Row label={t('settings.thinking')}>
-              <select
-                value={modelConfig?.defaultThinkingLevel ?? ''}
-                onChange={(e) => changeThinking(e.target.value)}
-                className={selectCls}
-              >
-                <option value="">{t('settings.thinkingDefault')}</option>
-                {THINKING_LEVELS.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
-            </Row>
-            <Note>{t('settings.modelNote')}</Note>
-          </Section>
-          )}
+          {isCurrent ? <CurrentOmpSettings /> : <LegacyPiSettings />}
 
           <Section title={t('settings.permissions')}>
             <Row label={t('settings.permissionMode')}>
@@ -400,52 +155,6 @@ export default function SettingsPage() {
               </div>
             </Row>
             <Note>{t(PERMISSION_MODES.find((m) => m.value === permissionMode)?.note ?? 'settings.permissionsNote.ask')}</Note>
-            {!isCurrent && (
-            <Row label={t('settings.projectTrust')}>
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={13} className="text-cream-faint" />
-                <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
-                  <button
-                    onClick={() => changeTrust('ask')}
-                    className={seg((modelConfig?.projectTrust ?? 'ask') === 'ask')}
-                  >
-                    {t('settings.trustAsk')}
-                  </button>
-                  <button
-                    onClick={() => changeTrust('always')}
-                    className={seg((modelConfig?.projectTrust ?? 'ask') === 'always')}
-                  >
-                    {t('settings.trustAlways')}
-                  </button>
-                  <button
-                    onClick={() => changeTrust('never')}
-                    className={seg((modelConfig?.projectTrust ?? 'ask') === 'never')}
-                  >
-                    {t('settings.trustNever')}
-                  </button>
-                </div>
-              </div>
-            </Row>
-            )}
-            {!isCurrent && <Note>{t('settings.trustNote')}</Note>}
-          </Section>
-
-          <Section title={t('settings.skills')}>
-            <Row label={t('settings.machineSkills')}>
-              <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
-                <button onClick={() => changeMachineSkills(true)} className={seg(machineSkills)}>
-                  {t('settings.on')}
-                </button>
-                <button onClick={() => changeMachineSkills(false)} className={seg(!machineSkills)}>
-                  {t('settings.off')}
-                </button>
-              </div>
-            </Row>
-            <Note>
-              {machineSkillCount > 0
-                ? t('settings.machineSkillsNoteCount', { count: machineSkillCount })
-                : t('settings.machineSkillsNote')}
-            </Note>
           </Section>
 
           <Section title={t('settings.appearance')}>
@@ -515,20 +224,13 @@ export default function SettingsPage() {
               </span>
             </Row>
             <Row label={t('settings.redetect')}>
-              <button
-                onClick={redetect}
-                disabled={detecting}
-                className={buttonCls}
-              >
+              <button onClick={redetect} disabled={detecting} className={buttonCls}>
                 <RefreshCw size={11} className={detecting ? 'animate-spin' : ''} />
                 {detecting ? t('settings.detecting') : t('settings.redetect')}
               </button>
             </Row>
             <Row label={t('settings.cliSettingsFile')}>
-              <button
-                onClick={() => window.electronAPI.showCliSettings()}
-                className={buttonCls}
-              >
+              <button onClick={() => window.electronAPI.showCliSettings()} className={buttonCls}>
                 <FolderCog size={11} />
                 {t('settings.showInFinder')}
               </button>
