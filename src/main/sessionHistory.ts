@@ -95,7 +95,7 @@ async function parseSessionFile(filePath: string): Promise<HistorySessionInfo | 
     return null
   }
   const lines = head.split('\n')
-  let header: { type?: unknown; id?: unknown; timestamp?: unknown; cwd?: unknown } | null = null
+  let header: { id: string; timestamp?: unknown; cwd?: unknown } | null = null
   let headerIndex = -1
   for (let i = 0; i < Math.min(lines.length, 5); i++) {
     if (!lines[i].trim()) continue
@@ -106,7 +106,7 @@ async function parseSessionFile(filePath: string): Promise<HistorySessionInfo | 
       continue
     }
     if (candidate?.type === 'session' && typeof candidate.id === 'string') {
-      header = candidate
+      header = { id: candidate.id, timestamp: candidate.timestamp, cwd: candidate.cwd }
       headerIndex = i
       break
     }
