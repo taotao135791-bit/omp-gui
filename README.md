@@ -41,7 +41,28 @@ The app auto-detects an installed `omp`/`pi` CLI, or offers to install Oh My Pi 
 - **Interactive plugin dialogs** — when an extension asks (select / confirm / input / editor), a real dialog pops up in the chat instead of hanging the agent.
 - **Tool call visualization** — `read`, `bash`, `edit` and custom tool calls rendered as expandable cards.
 - **Mermaid diagrams** — assistant responses with ```mermaid fenced blocks render as sandboxed SVG diagrams (flowcharts, sequence, state, gantt…), theme-aware, with a source/diagram toggle and graceful source fallback on parse errors.
-- **Hardened host** — strict JSONL transport with a 16 MB frame guard, an explicit session state machine (queue drains only on terminal completion), tool results matched by `toolCallId` (parallel-safe), and realpath-based filesystem sandboxing that stops symlink escapes. See `docs/architecture.md` and `docs/protocol-facts.md`.
+- **Hardened host** — runtime-detected RPC compatibility (legacy Pi and current Oh My Pi), protocol negotiation with `rpc_chunk` reassembly for large frames, an explicit session state machine (queue drains only on terminal completion), tool results matched by `toolCallId` (parallel-safe), and realpath-based filesystem sandboxing that stops symlink escapes. See `docs/architecture.md` and `docs/protocol-facts.md`.
+
+## RPC compatibility
+
+OMP GUI does not depend on one frozen snapshot of the Oh My Pi RPC protocol.
+At session start it detects which runtime it is talking to and adapts:
+
+- **Current Oh My Pi** (`omp`, the `omp.sh` lineage) — reads the `ready`
+  frame, negotiates the highest mutually supported RPC protocol (v1/v2), and
+  reassembles `rpc_chunk`ed frames larger than 1 MiB losslessly. Local slash
+  commands, `agent_end isTerminal:false` maintenance ends, and auto-retry /
+  auto-compaction events are all understood.
+- **Legacy Pi** (`pi` ≤ 0.84) — no handshake exists; the first ordinary frame
+  settles the classic v1 JSONL profile.
+
+Both profiles normalize onto one event surface, so the UI never cares which
+runtime — or which protocol version — is underneath. If a future runtime
+speaks a protocol this app can't, the session fails with an explicit
+compatibility message (both version lists), not a parse error. Settings →
+About shows the detected version, the negotiated protocol, and the runtime's
+supported versions. The tested matrix lives in `docs/protocol-facts.md`; the
+real-binary suite runs with `pnpm test:omp`.
 
 ## Tech Stack
 
@@ -66,6 +87,7 @@ pnpm dev
 
 ```bash
 pnpm test        # vitest unit tests
+pnpm test:omp    # real-binary RPC compatibility suite (needs a configured omp/pi)
 pnpm build       # type-check + bundle
 pnpm package     # electron-builder → release/
 ```
@@ -85,12 +107,14 @@ gh release create vX.Y.Z \
 omp-gui/
 ├── electron.vite.config.ts    # electron-vite configuration
 ├── package.json
+├── integration/
+│   └── omp/                   # real-binary RPC compatibility suite (test:omp)
 ├── src/
 │   ├── main/                  # Electron main process
 │   │   ├── index.ts           # window lifecycle
 │   │   ├── ipc.ts             # IPC handlers
-│   │   ├── omp.ts             # pi/omp RPC session manager
-│   │   ├── protocol.ts        # RPC JSONL parser (pure)
+│   │   ├── omp/               # host layer: process, transport, handshake,
+│   │   │                      # protocol normalization, session, capabilities
 │   │   ├── packages.ts        # pi package management
 │   │   ├── piSettings.ts      # pi settings.json / auth.json
 │   │   ├── preload.ts         # contextBridge API

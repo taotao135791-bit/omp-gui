@@ -712,6 +712,16 @@ export const useAppStore = create<AppState>((set, get) => ({
           [event.sessionId]: [...(state.uiRequests[event.sessionId] || []), event]
         }
       }))
+    } else if (event.type === 'ui_cancel') {
+      // The extension dismissed its own dialog — drop the pending request.
+      set((state) => ({
+        uiRequests: {
+          ...state.uiRequests,
+          [event.sessionId]: (state.uiRequests[event.sessionId] || []).filter(
+            (r) => r.id !== event.id
+          )
+        }
+      }))
     } else if (event.type === 'error') {
       get().addMessage(event.sessionId, {
         id: crypto.randomUUID(),

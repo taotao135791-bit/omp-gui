@@ -83,6 +83,42 @@ export function resolvePermissionMode(mode: PermissionMode): {
   }
 }
 
+/**
+ * Current Oh My Pi dropped `--exclude-tools`; the equivalents are the
+ * `--tools` allowlist and the native approval modes (`--approval-mode`).
+ * Verified against omp 17.2.12 (docs/protocol-facts.md):
+ * - always-ask auto-approves read-only tools, prompts for write+exec —
+ *   that is exactly the GUI's 'ask' mode;
+ * - yolo auto-approves everything — the GUI's 'full' mode (passed
+ *   explicitly so a user's own config.yml cannot turn prompts on);
+ * - tool tiers without an upstream approval equivalent go through the
+ *   allowlist: no-bash drops every execution-tier tool (bash and python),
+ *   readonly keeps navigation/inspection only. `task` is excluded from both
+ *   (subagent tool inheritance is not verified) and `computer` stays off
+ *   (upstream default).
+ */
+const OMP_READONLY_TOOLS = ['read', 'grep', 'glob', 'lsp', 'inspect_image', 'web_search', 'todo']
+const OMP_NO_BASH_TOOLS = [...OMP_READONLY_TOOLS, 'edit', 'write', 'notebook', 'browser']
+
+export interface CurrentPermissionPlan {
+  tools?: string
+  approvalMode?: 'always-ask' | 'write' | 'yolo'
+}
+
+export function resolvePermissionModeCurrent(mode: PermissionMode): CurrentPermissionPlan {
+  switch (mode) {
+    case 'no-bash':
+      return { tools: OMP_NO_BASH_TOOLS.join(','), approvalMode: 'yolo' }
+    case 'readonly':
+      return { tools: OMP_READONLY_TOOLS.join(','), approvalMode: 'yolo' }
+    case 'ask':
+      return { approvalMode: 'always-ask' }
+    case 'full':
+    default:
+      return { approvalMode: 'yolo' }
+  }
+}
+
 export interface SpawnOptions {
   permissionMode: PermissionMode
   language: Language
@@ -108,15 +144,25 @@ export function planSpawn(sessionId: string, cli: CliInfo, opts: SpawnOptions): 
   // pi loads installed packages (settings.json) and auto-discovered extension
   // dirs itself on startup; the GUI manages them through the Packages page.
   const args = ['--mode', 'rpc']
-  // pi has no built-in tool approval; coarse-grained gating goes through
-  // --exclude-tools, per-call approval through the bundled extension.
-  const { excludeTools, approval } = resolvePermissionMode(opts.permissionMode)
-  if (excludeTools) {
-    args.push('--exclude-tools', excludeTools)
-  }
-  const approvalExtension = approvalExtensionPath()
-  if (existsSync(approvalExtension)) {
-    args.push('-e', approvalExtension)
+  // Tool gating is profile-specific: legacy pi takes --exclude-tools plus the
+  // bundled approval extension; current omp takes --tools / --approval-mode
+  // (its native prompts arrive as ordinary extension_ui_request dialogs).
+  const isCurrent = cli.command === 'omp'
+  let approval: ApprovalConfig = { mode: 'off' }
+  if (isCurrent) {
+    const plan = resolvePermissionModeCurrent(opts.permissionMode)
+    if (plan.tools) args.push('--tools', plan.tools)
+    if (plan.approvalMode) args.push('--approval-mode', plan.approvalMode)
+  } else {
+    const legacy = resolvePermissionMode(opts.permissionMode)
+    approval = legacy.approval
+    if (legacy.excludeTools) {
+      args.push('--exclude-tools', legacy.excludeTools)
+    }
+    const approvalExtension = approvalExtensionPath()
+    if (existsSync(approvalExtension)) {
+      args.push('-e', approvalExtension)
+    }
   }
   // Resume a persisted session file when requested (history panel).
   if (opts.resumeSessionPath) {

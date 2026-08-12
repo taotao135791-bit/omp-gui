@@ -1,4 +1,6 @@
 import path from 'node:path'
+import { existsSync } from 'node:fs'
+import { app, shell } from 'electron'
 import {
   ChatMessage,
   ExtensionUiAnswer,
@@ -17,13 +19,14 @@ import { AgentMessage, mapAgentMessages } from '../messageMapping'
 import { isSessionFilePath } from '../sessionHistory'
 import { planSpawn, removeApprovalConfig, resolvePermissionMode, spawnProcess, writeApprovalConfig } from './OmpProcess'
 import { OmpSession } from './OmpSession'
-import { detectCli, noteSessionState } from './OmpCapabilities'
+import { detectCli, noteHandshake, noteSessionState } from './OmpCapabilities'
 
 /**
  * Facade over the omp session modules (OmpProcess / OmpTransport /
- * OmpProtocol / OmpSession / OmpCapabilities). Keeps the exact function
- * surface the old monolithic omp.ts exposed, so ipc.ts and the other
- * consumers (notify, piModels, piSettings) import unchanged from './omp'.
+ * OmpHandshake / OmpProtocol / OmpSession / OmpCapabilities). Keeps the
+ * exact function surface the old monolithic omp.ts exposed, so ipc.ts and
+ * the other consumers (notify, piModels, piSettings) import unchanged from
+ * './omp'.
  */
 
 export {
@@ -32,8 +35,19 @@ export {
   executableSearchDirs,
   getCapabilities
 } from './OmpCapabilities'
-export { drainLines, serializeCommand, LineReader, MAX_LINE_BYTES } from './OmpTransport'
-export { parseRpcLine, extensionUiCancel, extensionUiResponse } from './OmpProtocol'
+export {
+  drainLines,
+  serializeCommand,
+  LineReader,
+  RpcFrameDecoder,
+  RpcFrameError,
+  MAX_LINE_BYTES,
+  MAX_RPC_FRAME_BYTES,
+  MAX_RPC_REASSEMBLED_BYTES
+} from './OmpTransport'
+export { OmpHandshake, GUI_SUPPORTED_PROTOCOLS, parseReadyFrame } from './OmpHandshake'
+export type { HandshakeOutcome, RuntimeProfile } from './OmpHandshake'
+export { parseRpcLine, normalizeRpcFrame, extensionUiCancel, extensionUiResponse } from './OmpProtocol'
 export type { RpcParseResult, ExtensionUiMethod } from './OmpProtocol'
 export { OmpSession } from './OmpSession'
 export type { OmpProcessLike, OmpSessionOptions } from './OmpSession'
@@ -82,6 +96,25 @@ export function createSession(
     language: getStore('language'),
     resumeSessionPath: opts?.resumeSessionPath
   })
+  // A stale recent-project entry (e.g. a cleaned /tmp dir) would otherwise
+  // surface as a misleading "spawn omp ENOENT" — say what actually happened.
+  if (!existsSync(cwd)) {
+    removeApprovalConfig(id)
+    const errorEvent: SessionEvent = {
+      type: 'error',
+      sessionId: id,
+      message: `Project folder does not exist: ${cwd}`,
+      recoverable: false
+    }
+    setTimeout(() => onEvent(errorEvent), 0)
+    return {
+      id,
+      cwd,
+      title: 'Missing folder',
+      createdAt: Date.now(),
+      status: 'error'
+    }
+  }
   const proc = spawnProcess(plan, cwd)
 
   const session: Session = {
@@ -98,7 +131,16 @@ export function createSession(
     new OmpSession(session, proc, {
       label: cli.command,
       onEvent,
-      onGone: () => sessions.delete(id)
+      onGone: () => sessions.delete(id),
+      onHandshake: noteHandshake,
+      onOpenUrl: (url, launchUrl) => {
+        // OAuth-style flows ask the host to open a browser; http(s) only.
+        const target = launchUrl ?? url
+        if (/^https?:\/\//i.test(target)) void shell.openExternal(target)
+      },
+      onDebug: (message) => {
+        if (!app.isPackaged) console.debug(`[omp:${id.slice(-6)}]`, message)
+      }
     })
   )
 
@@ -168,7 +210,13 @@ export async function getSessionStats(sessionId: string): Promise<SessionStats |
 
 /** Slash commands available in this session (extensions, prompts, skills). */
 export async function listSessionCommands(sessionId: string): Promise<SlashCommand[]> {
-  const res = await querySession(sessionId, { type: 'get_commands' })
+  // Current Oh My Pi renamed the command (get_commands →
+  // get_available_commands); probe the new name first and fall back for
+  // legacy runtimes. Both answer `{commands: [...]}`.
+  let res = await querySession(sessionId, { type: 'get_available_commands' })
+  if (!res || res.success !== true) {
+    res = await querySession(sessionId, { type: 'get_commands' })
+  }
   if (!res || res.success !== true || !res.data) return []
   const raw = (res.data as { commands?: unknown }).commands
   if (!Array.isArray(raw)) return []

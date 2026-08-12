@@ -1,24 +1,34 @@
 import { ExtensionUiAnswer, SessionEvent } from '../../shared/types'
 
 /**
- * Parser for pi/omp `--mode rpc` JSONL output (moved from src/main/protocol.ts).
+ * Semantic normalization for pi/omp `--mode rpc` frames: raw RPC objects in,
+ * GUI session events out. Both runtime profiles are mapped onto the same
+ * event surface so the renderer never sees protocol versions or renames:
  *
- * Protocol (verified against the installed pi-coding-agent 0.80.3, see
- * docs/protocol-facts.md):
+ *   legacy Pi ≤0.84            current Oh My Pi            normalized
+ *   ───────────────────────    ─────────────────────────   ─────────────────
+ *   compaction_start/end       auto_compaction_start/end   compaction
+ *   (local cmds go to agent)   command_output              system message
+ *                              auto_retry_start            system message
+ *                              retry_fallback_applied      system message
+ *   agent_end                  agent_end (+isTerminal?)    status idle/working
+ *
+ * Verified against pi 0.80.3 and omp 17.2.12 (docs/protocol-facts.md):
  * - Commands (stdin):   { id?, type: 'prompt', message: string, images? }
- * - Responses (stdout): { type: 'response', command, success, data | error }
- * - Events (stdout):    AgentSessionEvent objects streamed as they occur
- * - Tool events carry a stable `toolCallId` and run parallel by default —
+ * - Responses (stdout): { type: 'response', command, success, data | error, code? }
+ * - Tool events carry a stable `toolCallId` and may run concurrently —
  *   match call/result pairs by id, never by name+recency.
- * - `agent_end` IS the terminal event of a run in 0.80.3 (no isTerminal
- *   field); the parser surfaces `isTerminal: true` by default and passes an
- *   explicit upstream `false` through for future versions.
+ * - `agent_end` without an explicit `isTerminal: false` is turn-terminal.
  * - Extension UI:       { type: 'extension_ui_request', id, method, ... }
  *   - select:  title, options[], timeout?
  *   - confirm: title, message, timeout?
  *   - input:   title, placeholder?, timeout?
  *   - editor:  title, prefill?
+ *   - cancel:  targetId — dismisses a pending interactive dialog
+ *   - open_url: url, launchUrl?, instructions? — host must open a browser
  *   - notify / setStatus / setWidget / setTitle / set_editor_text: no response
+ * - Unknown frames are ignored by design (forward compatibility), but the
+ *   discriminators we do read (`type`, ids) are always validated.
  *
  * Pure functions so they can be unit-tested without Electron.
  */
@@ -65,35 +75,67 @@ export type RpcParseResult =
       prefill?: string
       timeout?: number
     }
-  /** Line consumed, nothing to surface */
+  /** An extension dismissed a pending interactive dialog (method: cancel). */
+  | { kind: 'extension_ui_cancel'; targetId: string }
+  /** The runtime asks the host to open a URL in the system browser. */
+  | { kind: 'open_url'; url: string; launchUrl?: string; instructions?: string }
+  /**
+   * Deferred outcome of a prompt command: the agent was not invoked and the
+   * prompt completed locally without agent_start/agent_end.
+   */
+  | { kind: 'prompt_result'; id?: string; agentInvoked: boolean }
+  /**
+   * A failed RPC command response that no pending query claimed. Surfacing
+   * it as an error event is the session's call — the parser only reports.
+   */
+  | { kind: 'command_failed'; id?: string; command?: string; message: string; code?: string }
+  /** Frame consumed (or deliberately ignored), nothing to surface */
   | { kind: 'none' }
 
-export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
-  let payload: Record<string, unknown>
-  try {
-    payload = JSON.parse(line)
-  } catch {
-    // Not JSON — surface as plain assistant text
-    return {
-      kind: 'event',
-      event: { type: 'message', sessionId, role: 'assistant', content: line }
-    }
+function systemMessage(sessionId: string, content: string): RpcParseResult {
+  return {
+    kind: 'event',
+    event: { type: 'message', sessionId, role: 'system', content }
   }
+}
 
+/**
+ * Normalize one parsed RPC object. Frames not claimed by the session's
+ * bookkeeping (pending queries, prompt tracking, the handshake) arrive here.
+ */
+export function normalizeRpcFrame(
+  payload: Record<string, unknown>,
+  sessionId: string
+): RpcParseResult {
   switch (payload.type) {
     case 'response': {
       if (payload.success === false) {
         return {
-          kind: 'event',
-          event: {
-            type: 'error',
-            sessionId,
-            message: String(payload.error ?? 'Unknown RPC error')
-          }
+          kind: 'command_failed',
+          id: typeof payload.id === 'string' ? payload.id : undefined,
+          command: typeof payload.command === 'string' ? payload.command : undefined,
+          message: String(payload.error ?? 'Unknown RPC error'),
+          code: typeof payload.code === 'string' ? payload.code : undefined
         }
       }
       return { kind: 'none' }
     }
+
+    // Deferred prompt outcome (current runtime): a prompt that completed
+    // locally produces no agent events; the session needs this to settle
+    // the turn without waiting for an agent_end that never comes.
+    case 'prompt_result':
+      return {
+        kind: 'prompt_result',
+        id: typeof payload.id === 'string' ? payload.id : undefined,
+        agentInvoked: payload.agentInvoked === true
+      }
+
+    // Output of a locally executed slash command (current runtime). Legacy
+    // pi forwards slash commands to the agent instead, so this is the only
+    // channel through which their result is visible at all.
+    case 'command_output':
+      return systemMessage(sessionId, String(payload.text ?? ''))
 
     case 'message_update': {
       const ev = payload.assistantMessageEvent as { type?: string; delta?: string } | undefined
@@ -113,10 +155,10 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
     }
 
     case 'message_end': {
-      // Provider/transport failures don't produce an error event and pi exits
-      // 0 regardless — the failure only shows up as stopReason:'error' with
-      // errorMessage on the final assistant message. Surface it or the user
-      // sees a silent dead turn.
+      // Provider/transport failures don't produce an error event and the
+      // process exits 0 regardless — the failure only shows up as
+      // stopReason:'error' with errorMessage on the final assistant message.
+      // Surface it or the user sees a silent dead turn.
       const msg = payload.message as
         | { role?: string; stopReason?: string; errorMessage?: string }
         | undefined
@@ -166,16 +208,24 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
 
     case 'extension_ui_request': {
       const method = String(payload.method ?? '')
+      if (method === 'cancel') {
+        return typeof payload.targetId === 'string'
+          ? { kind: 'extension_ui_cancel', targetId: payload.targetId }
+          : { kind: 'none' }
+      }
+      if (method === 'open_url') {
+        return typeof payload.url === 'string'
+          ? {
+              kind: 'open_url',
+              url: payload.url,
+              launchUrl: typeof payload.launchUrl === 'string' ? payload.launchUrl : undefined,
+              instructions:
+                typeof payload.instructions === 'string' ? payload.instructions : undefined
+            }
+          : { kind: 'none' }
+      }
       if (method === 'notify') {
-        return {
-          kind: 'event',
-          event: {
-            type: 'message',
-            sessionId,
-            role: 'system',
-            content: String(payload.message ?? '')
-          }
-        }
+        return systemMessage(sessionId, String(payload.message ?? ''))
       }
       if (
         method === 'select' ||
@@ -225,28 +275,83 @@ export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
           type: 'status',
           sessionId,
           status: 'idle',
-          // pi 0.80.3: agent_end IS terminal and carries no such field —
-          // default true, pass an explicit upstream false through untouched.
+          // Absent means terminal; only an explicit upstream false marks a
+          // non-terminal end (async delivery will resume the session).
           isTerminal: payload.isTerminal === false ? false : true
         }
       }
 
+    // Compaction: legacy names and current names normalize to one event.
     case 'compaction_start':
+    case 'auto_compaction_start':
       return {
         kind: 'event',
         event: { type: 'compaction', sessionId, phase: 'start' }
       }
 
     case 'compaction_end':
+    case 'auto_compaction_end':
       return {
         kind: 'event',
         event: { type: 'compaction', sessionId, phase: 'end' }
       }
 
+    // Provider auto-retry: one informational line per attempt, not a stream
+    // of raw errors. A final failure ends the turn via message_end (above),
+    // so auto_retry_end needs no mapping either way.
+    case 'auto_retry_start': {
+      const attempt = typeof payload.attempt === 'number' ? payload.attempt : undefined
+      const max = typeof payload.maxAttempts === 'number' ? payload.maxAttempts : undefined
+      const reason =
+        typeof payload.errorMessage === 'string'
+          ? payload.errorMessage.split('\n')[0].slice(0, 200)
+          : ''
+      const progress = attempt !== undefined && max !== undefined ? ` (${attempt}/${max})` : ''
+      return systemMessage(sessionId, `Retrying${progress}… ${reason}`.trim())
+    }
+
+    case 'retry_fallback_applied':
+      return systemMessage(
+        sessionId,
+        `Model fallback: ${String(payload.from ?? '?')} → ${String(payload.to ?? '?')}`
+      )
+
+    case 'retry_fallback_succeeded':
+    case 'auto_retry_end':
+      return { kind: 'none' }
+
+    // Runtime notices: warnings/errors are user-relevant; info is MCP-mount
+    // chatter that would pollute the chat.
+    case 'notice':
+      if (payload.level === 'warning' || payload.level === 'error') {
+        return systemMessage(sessionId, String(payload.message ?? ''))
+      }
+      return { kind: 'none' }
+
     default:
-      // turn_*/queue_update/… — not surfaced
+      // Everything else is deliberately not surfaced: turn_*/message_start,
+      // model_changed, thinking_level_changed, session_info_update,
+      // config_update, goal_updated, todo_*, ttsr_triggered, irc_message,
+      // available_commands_update, host_tool_*, host_uri_*, subagent_* …
+      // Unknown future frames land here too — forward compatibility by
+      // construction, and the session debug-logs what we skip.
       return { kind: 'none' }
   }
+}
+
+/** Line-oriented wrapper: parse the JSONL frame, then normalize it. */
+export function parseRpcLine(line: string, sessionId: string): RpcParseResult {
+  let payload: Record<string, unknown>
+  try {
+    payload = JSON.parse(line)
+  } catch {
+    // Not JSON — surface as plain assistant text
+    return {
+      kind: 'event',
+      event: { type: 'message', sessionId, role: 'assistant', content: line }
+    }
+  }
+  return normalizeRpcFrame(payload, sessionId)
 }
 
 /** Build a cancel response for an interactive extension UI request. */

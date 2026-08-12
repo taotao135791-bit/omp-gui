@@ -118,6 +118,20 @@ describe('listSessionHistory', () => {
     expect(list[0].timestamp).toBe(1735689600000)
   })
 
+  it('parses current-omp files with a title line before the session header', async () => {
+    // omp 17 prepends {"type":"title",…} — the header is on line 2.
+    writeSessionFile('current_uuid-c.jsonl', [
+      JSON.stringify({ type: 'title', v: '1', title: '', updatedAt: '2025-01-02T00:00:00.000Z' }),
+      sessionHeader('uuid-c', '2025-01-02T00:00:00.000Z'),
+      JSON.stringify({ type: 'model_change', id: 'x', parentId: null, model: 'deepseek/x' }),
+      userMessage('current runtime session')
+    ])
+    const list = await listSessionHistory(projectDir, agentDir)
+    expect(list).toHaveLength(1)
+    expect(list[0].uuid).toBe('uuid-c')
+    expect(list[0].title).toBe('current runtime session')
+  })
+
   it('truncates long titles to 80 chars and collapses whitespace', async () => {
     const long = `line one\nline two   ${'x'.repeat(100)}`
     writeSessionFile('long_uuid-l.jsonl', [

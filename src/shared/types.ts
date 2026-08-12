@@ -7,15 +7,24 @@ export interface CliInfo {
 }
 
 /**
- * Feature surface of the detected CLI, for the settings page. Statically
- * known for pi 0.80.3 (docs/protocol-facts.md); probed via `--version` plus
- * runtime get_state confirmations (src/main/omp/OmpCapabilities.ts).
+ * Feature surface of the detected CLI, for the settings page. Probed via
+ * `--version` plus runtime session bootstrap: the RPC fields are declared
+ * by the runtime's `ready` frame and the negotiated protocol (see
+ * src/main/omp/OmpHandshake.ts, docs/protocol-facts.md).
  */
 export interface CliCapabilities {
-  /** Parsed `pi --version` output; null when the probe failed. */
+  /** Parsed `<cli> --version` output; null when the probe failed. */
   cliVersion: string | null
-  /** JSONL RPC framing version this host speaks. */
-  protocol: 1
+  /** Negotiated RPC protocol version; 1 until a session bootstraps v2. */
+  protocol: number
+  /** Runtime family detected at session bootstrap (absent before any session). */
+  profile?: 'legacy' | 'current'
+  /** RPC versions the runtime advertised in its ready frame. */
+  protocolVersions?: number[]
+  /** Runtime-declared physical frame limit, bytes. */
+  maxFrameBytes?: number
+  /** Runtime-declared reassembled logical frame limit, bytes. */
+  maxReassembledFrameBytes?: number
   steering: boolean
   followUp: boolean
   images: boolean
@@ -83,6 +92,8 @@ export type SessionEvent =
       prefill?: string
       timeout?: number
     }
+  /** The extension dismissed a pending dialog; drop the matching ui_request. */
+  | { type: 'ui_cancel'; sessionId: string; id: string }
   | { type: 'closed'; sessionId: string }
 
 /** Token/context usage of a session, as returned by the RPC get_session_stats command. */

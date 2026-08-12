@@ -14,6 +14,9 @@ import { CliCapabilities, CliInfo, ModelConfig, PermissionMode, PI_PROVIDERS, Pi
 import { useAppStore } from '../store'
 import { I18nKey, useT } from '../i18n'
 
+/** RPC protocol versions this GUI can drive (mirrors the main-process handshake). */
+const SUPPORTED_RPC_PROTOCOLS: readonly number[] = [1, 2]
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="overflow-hidden rounded-[16px] border border-line bg-ink-850 shadow-card">
@@ -87,7 +90,6 @@ export default function SettingsPage() {
   // Widened from the literal type `1` so a future protocol bump can render
   // the unsupported state instead of being narrowed away by TS.
   const ompProtocol: number | null = caps ? caps.protocol : null
-
   useEffect(() => {
     window.electronAPI.detectCli().then(setCli)
     window.electronAPI.getCapabilities().then(setCaps)
@@ -600,13 +602,15 @@ export default function SettingsPage() {
             </Row>
             <Row label={t('settings.ompProtocol')}>
               <span className="font-mono text-xs text-cream-dim">
-                {ompProtocol === null ? '—' : `v${ompProtocol}`}
+                {ompProtocol === null
+                  ? '—'
+                  : `v${ompProtocol}${caps?.protocolVersions?.length ? ` · ${t('settings.ompProtocolSupported')}: ${caps.protocolVersions.map((v) => `v${v}`).join(', ')}` : ''}`}
               </span>
             </Row>
             <Row label={t('settings.ompCompatibility')}>
               {ompProtocol === null ? (
                 <span className="text-xs text-cream-faint">—</span>
-              ) : ompProtocol === 1 ? (
+              ) : SUPPORTED_RPC_PROTOCOLS.includes(ompProtocol) ? (
                 <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
                   {t('settings.ompCompatSupported')}
                 </span>

@@ -6,18 +6,34 @@ import {
   SessionRuntimeState,
   StreamingBehavior
 } from '../../shared/types'
-import { LineReader, serializeCommand, StderrRing } from './OmpTransport'
-import { extensionUiResponse, parseRpcLine } from './OmpProtocol'
+import {
+  LineReader,
+  RpcFrameDecoder,
+  RpcFrameError,
+  serializeCommand,
+  StderrRing
+} from './OmpTransport'
+import { GUI_SUPPORTED_PROTOCOLS, HandshakeOutcome, OmpHandshake } from './OmpHandshake'
+import { extensionUiResponse, normalizeRpcFrame } from './OmpProtocol'
 
 /**
- * One live `pi --mode rpc` session: the child process, its JSONL transport,
- * in-flight RPC queries and an explicit runtime state machine.
+ * One live `pi/omp --mode rpc` session: the child process, its transport
+ * (physical JSONL + logical v2 chunk reassembly), the protocol handshake,
+ * in-flight RPC queries, prompt tracking and an explicit runtime state
+ * machine.
  *
  * The process is injected (a real ChildProcess in production, an
  * EventEmitter-based fake in tests); this class never spawns by itself —
  * assembly lives in OmpProcess.
  *
- * State machine (SessionRuntimeState):
+ * Frame pipeline (stdout):
+ *
+ *   bytes → LineReader → JSON.parse → OmpHandshake (until active)
+ *         → RpcFrameDecoder (rpc_chunk reassembly)
+ *         → pending query/prompt claim (matched by request id)
+ *         → normalizeRpcFrame → SessionEvent
+ *
+ * Session lifecycle state machine (SessionRuntimeState):
  *
  * | from                          | trigger                                | to               | emitted                     |
  * |-------------------------------|----------------------------------------|------------------|-----------------------------|
@@ -27,23 +43,35 @@ import { extensionUiResponse, parseRpcLine } from './OmpProtocol'
  * | waiting_for_user              | respondExtensionUi                     | working          | — (renderer stays busy)     |
  * | working / waiting_for_user    | abort()                                | aborting         | —                           |
  * | aborting / working            | agent_end (isTerminal !== false)       | idle             | status:idle                 |
- * | working                       | agent_end with isTerminal === false    | working          | — (suppressed, future-proof)|
- * | working / aborting / waiting… | error event (failed cmd / provider)    | idle             | error + status:idle         |
+ * | working                       | agent_end with isTerminal === false    | working          | — (suppressed)              |
+ * | idle                          | prompt ack/result agentInvoked=false   | idle             | status:idle (optimistic-busy clear) |
+ * | working / aborting / waiting… | provider error (message_end)           | idle             | error + status:idle         |
+ * | any (not closed)              | handshake found no common protocol     | failed → closed  | error → closed              |
  * | any (not closed)              | process exit, code ≠ 0                 | failed → closed  | error(+stderr tail) → closed|
  * | any (not closed)              | process exit, code 0 / null            | closed           | closed                      |
  * | any (not closed)              | process 'error' (spawn failure)        | failed → closed  | error → closed              |
  * | any                           | kill()                                 | closed           | — (renderer initiated)      |
  *
- * Duplicate status events are suppressed (e.g. a second agent_end after an
- * error already ended the turn) so the renderer never drains its queue
- * twice for one turn. Pending RPC queries all resolve(null) on failed/closed.
+ * Failed command responses (rejected prompt/steer/…) are surfaced as error
+ * events but NEVER end the turn — a rejection is not a terminal condition;
+ * only agent_end (terminal), a provider error, or process exit settles a
+ * turn. Duplicate status events are suppressed so the renderer never drains
+ * its queue twice for one turn. Pending RPC queries all resolve(null) on
+ * failed/closed.
  */
 export class OmpSession {
   readonly session: Session
   private readonly id: string
   private state: SessionRuntimeState = 'starting'
   private readonly pending = new Map<string, PendingQuery>()
+  /** Request ids of prompts whose ack we still expect. */
+  private readonly pendingPrompts = new Set<string>()
   private readonly reader = new LineReader()
+  private readonly decoder = new RpcFrameDecoder()
+  private readonly handshake = new OmpHandshake()
+  private negotiateTimer: ReturnType<typeof setTimeout> | null = null
+  /** The id OmpHandshake minted for the in-flight negotiate command. */
+  private lastNegotiateId: string | null = null
   private readonly stderrRing = new StderrRing()
   /** Assistant text of the in-flight turn, accumulated from text deltas. */
   private draftText = ''
@@ -69,6 +97,11 @@ export class OmpSession {
     return this.state
   }
 
+  /** Settled handshake outcome (profile, protocol, limits), once known. */
+  get handshakeOutcome(): HandshakeOutcome | null {
+    return this.handshake.result
+  }
+
   /** Assistant text produced by the session's last completed turn ('' if none). */
   get lastAssistantText(): string {
     return this.assistantText
@@ -82,6 +115,11 @@ export class OmpSession {
     this.options.onEvent(event)
   }
 
+  /** Debug-only log channel (never carries user content). */
+  private debug(message: string): void {
+    this.options.onDebug?.(message)
+  }
+
   // ---------------------------------------------------------------- stdin
 
   private write(payload: Record<string, unknown>): boolean {
@@ -92,13 +130,16 @@ export class OmpSession {
 
   /** Send a user prompt. */
   sendPrompt(text: string, images?: PromptImage[], streamingBehavior?: StreamingBehavior): boolean {
-    return this.write({
-      id: crypto.randomUUID(),
+    const id = crypto.randomUUID()
+    const ok = this.write({
+      id,
       type: 'prompt',
       message: text,
       ...(images?.length ? { images } : {}),
       ...(streamingBehavior ? { streamingBehavior } : {})
     })
+    if (ok) this.pendingPrompts.add(id)
+    return ok
   }
 
   /** Ask the agent to abort the current turn; converges at agent_end/exit. */
@@ -146,6 +187,7 @@ export class OmpSession {
   kill(): void {
     if (this.state === 'closed') return
     this.state = 'closed'
+    this.clearNegotiateTimer()
     this.resolvePending(null)
     try {
       this.proc.kill()
@@ -158,6 +200,9 @@ export class OmpSession {
   // --------------------------------------------------------------- stdout
 
   private handleChunk(chunk: Buffer): void {
+    // A closed session ignores any residual output (e.g. the process is
+    // still flushing after a failed handshake killed it).
+    if (this.state === 'closed') return
     for (const event of this.reader.push(chunk)) {
       if (event.kind === 'line') {
         this.handleLine(event.line)
@@ -169,46 +214,244 @@ export class OmpSession {
   }
 
   private handleLine(line: string): void {
-    // Query responses are claimed by id before the generic parser sees them.
-    let raw: Record<string, unknown> | null = null
+    let frame: Record<string, unknown>
     try {
-      raw = JSON.parse(line)
+      frame = JSON.parse(line)
     } catch {
-      raw = null
+      // Not JSON — surface as plain assistant text (legacy behavior).
+      this.handleEvent({ type: 'message', sessionId: this.id, role: 'assistant', content: line })
+      return
     }
-    if (raw && raw.type === 'response' && typeof raw.id === 'string') {
-      const query = this.pending.get(raw.id)
+
+    // 1. Handshake: consumes ready / negotiate-response frames until active.
+    if (this.handshake.currentState !== 'active' && this.handshake.currentState !== 'failed') {
+      const step = this.handshake.handleFrame(frame, () => {
+        const id = crypto.randomUUID()
+        this.lastNegotiateId = id
+        return id
+      })
+      for (const action of step.actions) this.applyHandshakeAction(action)
+      if (step.consumed) return
+    }
+
+    // 2. Logical reassembly. Every parsed object passes through the decoder
+    //    so an interrupted chunk sequence is reported even by a non-chunk.
+    let logical: Record<string, unknown>
+    if (frame.type === 'rpc_chunk' && !this.handshake.chunksArmed) {
+      // Matches the official client: chunks before v2 was negotiated are a
+      // protocol violation, not data.
+      this.debug('rpc_chunk received before protocol negotiation')
+      this.emit({
+        type: 'error',
+        sessionId: this.id,
+        message: 'RPC chunk received before protocol negotiation',
+        recoverable: true
+      })
+      return
+    }
+    try {
+      const out = this.decoder.push(frame)
+      if (out === undefined) return // chunk accepted, sequence incomplete
+      logical = out as Record<string, unknown>
+    } catch (err) {
+      if (err instanceof RpcFrameError) {
+        this.debug(`rpc frame rejected (${err.code})`)
+        this.emit({
+          type: 'error',
+          sessionId: this.id,
+          message: `RPC frame rejected: ${err.message}`,
+          recoverable: true
+        })
+        return
+      }
+      throw err
+    }
+
+    // 3. Bookkeeping claims by request id before semantic normalization.
+    if (logical.type === 'response' && typeof logical.id === 'string') {
+      const query = this.pending.get(logical.id)
       if (query) {
-        this.pending.delete(raw.id)
+        this.pending.delete(logical.id)
         clearTimeout(query.timer)
-        query.resolve(raw)
+        query.resolve(logical)
+        return
+      }
+      if (this.pendingPrompts.delete(logical.id)) {
+        this.handlePromptAck(logical)
         return
       }
     }
+    if (logical.type === 'prompt_result') {
+      this.handlePromptResult({ agentInvoked: logical.agentInvoked === true })
+      return
+    }
 
-    const result = parseRpcLine(line, this.id)
-    if (result.kind === 'event') {
-      this.handleEvent(result.event)
-    } else if (result.kind === 'extension_ui') {
-      // Forward interactive extension dialogs to the renderer; the answer
-      // comes back through respondExtensionUi().
-      this.emit({
-        type: 'ui_request',
-        sessionId: this.id,
-        id: result.id,
-        method: result.method,
-        title: result.title,
-        message: result.message,
-        options: result.options,
-        placeholder: result.placeholder,
-        prefill: result.prefill,
-        timeout: result.timeout
-      })
-      if (this.state === 'working') {
-        this.state = 'waiting_for_user'
-      }
+    // 4. Semantics.
+    const result = normalizeRpcFrame(logical, this.id)
+    this.applyParseResult(result)
+  }
+
+  private applyParseResult(result: ReturnType<typeof normalizeRpcFrame>): void {
+    switch (result.kind) {
+      case 'event':
+        this.handleEvent(result.event)
+        return
+      case 'extension_ui':
+        // Forward interactive extension dialogs to the renderer; the answer
+        // comes back through respondExtensionUi().
+        this.emit({
+          type: 'ui_request',
+          sessionId: this.id,
+          id: result.id,
+          method: result.method,
+          title: result.title,
+          message: result.message,
+          options: result.options,
+          placeholder: result.placeholder,
+          prefill: result.prefill,
+          timeout: result.timeout
+        })
+        if (this.state === 'working') {
+          this.state = 'waiting_for_user'
+        }
+        return
+      case 'extension_ui_cancel':
+        this.emit({ type: 'ui_cancel', sessionId: this.id, id: result.targetId })
+        // The dismissed dialog resolves as cancelled runtime-side; the turn
+        // continues, so leave waiting_for_user like a user answer would.
+        if (this.state === 'waiting_for_user') {
+          this.state = 'working'
+        }
+        return
+      case 'open_url':
+        this.options.onOpenUrl?.(result.url, result.launchUrl, result.instructions)
+        return
+      case 'prompt_result':
+        this.handlePromptResult({ agentInvoked: result.agentInvoked })
+        return
+      case 'command_failed':
+        // A rejected command (e.g. a mid-stream prompt without steer/
+        // followUp) is reported but NEVER settles the turn — the running
+        // turn keeps its own terminal event.
+        this.debug(`rpc command failed (${result.command ?? 'unknown'})`)
+        this.emit({ type: 'error', sessionId: this.id, message: result.message, recoverable: true })
+        return
+      case 'none':
+        return
     }
   }
+
+  // ------------------------------------------------------------ handshake
+
+  private applyHandshakeAction(action: {
+    kind: string
+    protocolVersion?: number
+    outcome?: HandshakeOutcome
+    failure?: { message: string; runtimeProtocols?: number[] }
+  }): void {
+    if (action.kind === 'send_negotiate' && typeof action.protocolVersion === 'number') {
+      // The handshake generated the request id; recover it by re-asking the
+      // handleFrame caller — it stashed the id on the command we write here.
+      // (OmpHandshake owns the id it created via the requestId callback.)
+      const id = this.lastNegotiateId
+      this.write({ id, type: 'negotiate_protocol', protocolVersion: action.protocolVersion })
+      this.clearNegotiateTimer()
+      this.negotiateTimer = setTimeout(() => {
+        this.negotiateTimer = null
+        const step = this.handshake.negotiationTimedOut()
+        for (const a of step.actions) this.applyHandshakeAction(a)
+      }, NEGOTIATE_TIMEOUT_MS)
+      return
+    }
+    if (action.kind === 'activated' && action.outcome) {
+      this.clearNegotiateTimer()
+      const outcome = action.outcome
+      this.debug(
+        outcome.profile === 'legacy'
+          ? 'rpc profile: legacy (no ready frame)'
+          : `rpc profile: current, protocol v${outcome.protocolVersion}`
+      )
+      this.options.onHandshake?.(outcome)
+      return
+    }
+    if (action.kind === 'failed' && action.failure) {
+      this.clearNegotiateTimer()
+      const runtime = action.failure.runtimeProtocols?.join(', ') || 'unknown'
+      const gui = GUI_SUPPORTED_PROTOCOLS.join(', ')
+      this.emit({
+        type: 'error',
+        sessionId: this.id,
+        message:
+          `${action.failure.message}\n` +
+          `Runtime supported RPC versions: ${runtime}. GUI supported RPC versions: ${gui}.`,
+        recoverable: false
+      })
+      // Talking further would be guesswork — close the session cleanly.
+      this.state = 'failed'
+      this.resolvePending(null)
+      try {
+        this.proc.kill()
+      } catch {
+        // already dead — fine
+      }
+      this.state = 'closed'
+      this.emit({ type: 'closed', sessionId: this.id })
+      this.options.onGone?.()
+    }
+  }
+
+  private clearNegotiateTimer(): void {
+    if (this.negotiateTimer) {
+      clearTimeout(this.negotiateTimer)
+      this.negotiateTimer = null
+    }
+  }
+
+  // -------------------------------------------------------- prompt lifecycle
+
+  /**
+   * The prompt ack arrives immediately; success does NOT mean the turn
+   * finished. `data.agentInvoked === false` marks a local-only completion
+   * (slash command): no agent_start/agent_end will follow.
+   */
+  private handlePromptAck(frame: Record<string, unknown>): void {
+    if (frame.success === false) {
+      this.emit({
+        type: 'error',
+        sessionId: this.id,
+        message: String(frame.error ?? 'Prompt rejected'),
+        recoverable: true
+      })
+      // A rejected prompt never starts a turn — release the renderer's
+      // optimistic busy when nothing else is running.
+      this.settleLocalPrompt()
+      return
+    }
+    const data = frame.data
+    const agentInvoked =
+      typeof data === 'object' && data !== null
+        ? (data as { agentInvoked?: unknown }).agentInvoked !== false
+        : true
+    if (!agentInvoked) this.settleLocalPrompt()
+  }
+
+  private handlePromptResult(frame: { agentInvoked: boolean }): void {
+    if (!frame.agentInvoked) this.settleLocalPrompt()
+  }
+
+  /**
+   * A prompt that completed locally produces no agent events. When no real
+   * turn is running, emit the idle transition the renderer is waiting for
+   * (its optimistic busy would otherwise stick forever, stalling the queue).
+   * Mid-turn local commands change nothing: the running turn keeps working.
+   */
+  private settleLocalPrompt(): void {
+    if (this.state === 'idle') {
+      this.emit({ type: 'status', sessionId: this.id, status: 'idle', isTerminal: true })
+    }
+  }
+
+  // ---------------------------------------------------------------- events
 
   private handleEvent(event: SessionEvent): void {
     if (event.type === 'message' && event.role === 'assistant') {
@@ -226,8 +469,9 @@ export class OmpSession {
     }
 
     if (event.type === 'status' && event.status === 'idle') {
-      // agent_end — a future pi may mark it non-terminal (isTerminal: false,
-      // never sent by 0.80.3); honor that and keep the turn open.
+      // agent_end — an explicit isTerminal:false marks a non-terminal end
+      // (maintenance / async delivery follows); honor that and keep the
+      // turn open.
       if (event.isTerminal === false) return
       if (this.state !== 'idle') {
         this.state = 'idle'
@@ -237,11 +481,10 @@ export class OmpSession {
       return
     }
 
-    if (event.type === 'error') {
+    if (event.type === 'error' && event.recoverable !== true) {
       this.emit(event)
       this.finalizeDraft()
-      // A failed command response or provider error ends the turn even
-      // without agent_end.
+      // A provider failure ends the turn even without agent_end.
       if (
         this.state === 'working' ||
         this.state === 'aborting' ||
@@ -269,11 +512,13 @@ export class OmpSession {
       query.resolve(value)
     }
     this.pending.clear()
+    this.pendingPrompts.clear()
   }
 
   /** Spawn failure (ENOENT, EACCES, …). */
   private handleProcessError(err: Error): void {
     if (this.state === 'closed') return
+    this.clearNegotiateTimer()
     this.resolvePending(null)
     this.state = 'failed'
     this.emit({
@@ -289,10 +534,12 @@ export class OmpSession {
 
   private handleExit(code: number | null): void {
     if (this.state === 'closed') return
+    this.clearNegotiateTimer()
     // Surface a trailing line that never got its LF before wrapping up.
     for (const event of this.reader.flush()) {
       if (event.kind === 'line') this.handleLine(event.line)
     }
+    this.decoder.reset()
     this.resolvePending(null)
     if (code !== 0 && code !== null) {
       this.state = 'failed'
@@ -309,6 +556,8 @@ export class OmpSession {
     this.options.onGone?.()
   }
 }
+
+const NEGOTIATE_TIMEOUT_MS = 5_000
 
 interface PendingQuery {
   resolve: (payload: Record<string, unknown> | null) => void
@@ -334,4 +583,10 @@ export interface OmpSessionOptions {
   label?: string
   /** Registry cleanup once the session is gone (exit/error/kill). */
   onGone?: () => void
+  /** Settled handshake outcome (capabilities/diagnostics bookkeeping). */
+  onHandshake?: (outcome: HandshakeOutcome) => void
+  /** The runtime asked to open a URL (OAuth login flows); main wires shell. */
+  onOpenUrl?: (url: string, launchUrl?: string, instructions?: string) => void
+  /** Debug-only log channel — never receives user content. */
+  onDebug?: (message: string) => void
 }

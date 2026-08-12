@@ -2,16 +2,22 @@ import { describe, it, expect } from 'vitest'
 import { parseRpcLine, extensionUiCancel, extensionUiResponse } from '../omp/OmpProtocol'
 
 describe('parseRpcLine', () => {
-  it('maps failed responses to error events', () => {
+  it('reports failed responses as command_failed (never an error event)', () => {
     const line = JSON.stringify({
       type: 'response',
+      id: 'r1',
       command: 'prompt',
       success: false,
       error: 'model not configured'
     })
+    // The session decides whether a failure is user-visible; the parser
+    // only classifies, so a rejected command can never kill a running turn.
     expect(parseRpcLine(line, 's1')).toEqual({
-      kind: 'event',
-      event: { type: 'error', sessionId: 's1', message: 'model not configured' }
+      kind: 'command_failed',
+      id: 'r1',
+      command: 'prompt',
+      message: 'model not configured',
+      code: undefined
     })
   })
 
@@ -234,6 +240,149 @@ describe('parseRpcLine', () => {
       kind: 'event',
       event: { type: 'compaction', sessionId: 's1', phase: 'end' }
     })
+  })
+
+  it('maps current-runtime auto_compaction events to the same phases', () => {
+    const start = JSON.stringify({
+      type: 'auto_compaction_start',
+      reason: 'threshold',
+      action: 'context-full'
+    })
+    expect(parseRpcLine(start, 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'compaction', sessionId: 's1', phase: 'start' }
+    })
+    const end = JSON.stringify({
+      type: 'auto_compaction_end',
+      action: 'context-full',
+      result: undefined,
+      aborted: false,
+      willRetry: false
+    })
+    expect(parseRpcLine(end, 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'compaction', sessionId: 's1', phase: 'end' }
+    })
+  })
+
+  it('maps command_output to a system message (local slash command results)', () => {
+    const line = JSON.stringify({ type: 'command_output', text: 'Current model: deepseek/x' })
+    expect(parseRpcLine(line, 's1')).toEqual({
+      kind: 'event',
+      event: {
+        type: 'message',
+        sessionId: 's1',
+        role: 'system',
+        content: 'Current model: deepseek/x'
+      }
+    })
+  })
+
+  it('maps prompt_result frames to their own kind', () => {
+    expect(
+      parseRpcLine(JSON.stringify({ type: 'prompt_result', id: 'p1', agentInvoked: false }), 's1')
+    ).toEqual({ kind: 'prompt_result', id: 'p1', agentInvoked: false })
+    expect(parseRpcLine(JSON.stringify({ type: 'prompt_result', agentInvoked: true }), 's1')).toEqual(
+      { kind: 'prompt_result', id: undefined, agentInvoked: true }
+    )
+  })
+
+  it('maps auto_retry_start to one informational system message', () => {
+    const line = JSON.stringify({
+      type: 'auto_retry_start',
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 2000,
+      errorMessage: 'rate limited\n{"body":{}}'
+    })
+    expect(parseRpcLine(line, 's1')).toEqual({
+      kind: 'event',
+      event: {
+        type: 'message',
+        sessionId: 's1',
+        role: 'system',
+        content: 'Retrying (1/3)… rate limited'
+      }
+    })
+  })
+
+  it('ignores retry end/success frames (the stream itself shows recovery)', () => {
+    for (const frame of [
+      { type: 'auto_retry_end', success: true, attempt: 1 },
+      { type: 'auto_retry_end', success: false, attempt: 3, finalError: 'x' },
+      { type: 'retry_fallback_succeeded', model: 'm', role: 'main' }
+    ]) {
+      expect(parseRpcLine(JSON.stringify(frame), 's1')).toEqual({ kind: 'none' })
+    }
+  })
+
+  it('maps retry_fallback_applied to a system message', () => {
+    const line = JSON.stringify({ type: 'retry_fallback_applied', from: 'a', to: 'b', role: 'main' })
+    expect(parseRpcLine(line, 's1')).toEqual({
+      kind: 'event',
+      event: {
+        type: 'message',
+        sessionId: 's1',
+        role: 'system',
+        content: 'Model fallback: a → b'
+      }
+    })
+  })
+
+  it('maps warning/error notices to system messages, drops info chatter', () => {
+    expect(
+      parseRpcLine(JSON.stringify({ type: 'notice', level: 'warning', message: 'careful' }), 's1')
+    ).toEqual({
+      kind: 'event',
+      event: { type: 'message', sessionId: 's1', role: 'system', content: 'careful' }
+    })
+    expect(
+      parseRpcLine(JSON.stringify({ type: 'notice', level: 'info', message: 'mounted mcp' }), 's1')
+    ).toEqual({ kind: 'none' })
+  })
+
+  it('maps extension_ui cancel to its own kind with the target id', () => {
+    const line = JSON.stringify({ type: 'extension_ui_request', id: 'c1', method: 'cancel', targetId: 'x1' })
+    expect(parseRpcLine(line, 's1')).toEqual({ kind: 'extension_ui_cancel', targetId: 'x1' })
+  })
+
+  it('maps open_url requests with the optional launchUrl', () => {
+    const line = JSON.stringify({
+      type: 'extension_ui_request',
+      id: 'o1',
+      method: 'open_url',
+      url: 'https://example.com/auth',
+      launchUrl: 'http://127.0.0.1:8080/launch'
+    })
+    expect(parseRpcLine(line, 's1')).toEqual({
+      kind: 'open_url',
+      url: 'https://example.com/auth',
+      launchUrl: 'http://127.0.0.1:8080/launch',
+      instructions: undefined
+    })
+  })
+
+  it('ignores current-runtime frames the GUI does not surface', () => {
+    for (const frame of [
+      { type: 'available_commands_update', commands: [] },
+      { type: 'session_info_update', title: 'x', sessionId: 'abc' },
+      { type: 'config_update', model: {}, thinkingLevel: 'high' },
+      { type: 'model_changed' },
+      { type: 'thinking_level_changed', thinkingLevel: 'high' },
+      { type: 'goal_updated', goal: null },
+      { type: 'todo_reminder', todos: [], attempt: 1, maxAttempts: 3 },
+      { type: 'todo_auto_clear' },
+      { type: 'ttsr_triggered', rules: [] },
+      { type: 'host_tool_call', id: 'h1', toolCallId: 't1', toolName: 'x', arguments: {} },
+      { type: 'host_tool_cancel', id: 'h2', targetId: 'h1' },
+      { type: 'host_uri_request', id: 'u1', operation: 'read', url: 'db://x' },
+      { type: 'subagent_lifecycle', payload: {} },
+      { type: 'subagent_progress', payload: {} },
+      { type: 'subagent_event', payload: {} },
+      { type: 'a_future_frame_nobody_knows', whatever: true }
+    ]) {
+      expect(parseRpcLine(JSON.stringify(frame), 's1')).toEqual({ kind: 'none' })
+    }
   })
 
   it('ignores turn and queue events', () => {

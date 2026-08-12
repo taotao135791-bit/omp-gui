@@ -3,26 +3,30 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { CliCapabilities, CliInfo, SessionState } from '../../shared/types'
+import { HandshakeOutcome } from './OmpHandshake'
 
 /**
  * CLI detection and capability probing.
  *
  * Detection finds the `omp`/`pi` executable (GUI apps get a minimal PATH, so
  * well-known package-manager bin dirs are searched too). Capabilities come
- * from two probes:
- * - `pi --version` (or omp) at detect time → cliVersion;
- * - a live session's get_state response at runtime → confirms the RPC
- *   command surface even when the version probe fails (shim wrappers…).
+ * from three probes, in increasing order of authority:
+ * - `<cli> --version` at detect time → cliVersion;
+ * - the session bootstrap handshake → runtime profile, negotiated RPC
+ *   protocol version and frame limits (declared by the runtime itself);
+ * - a live session's get_state response → confirms the RPC command surface
+ *   even when the version probe fails (shim wrappers…).
  *
- * The feature matrix itself is static, verified against the installed pi
- * 0.80.3 (docs/protocol-facts.md): steer/follow_up/images/compact/
- * extension_ui/fork/set_thinking_level all exist in this version.
+ * Feature flags flip on once the CLI proved responsive. RPC facts are never
+ * guessed from version numbers — they come from the handshake alone.
  */
 
 // Only successful detections are cached; a negative result is re-checked
 // every time so the app picks up a CLI installed after launch.
 let cliInfoCache: CliInfo | null = null
 let capabilitiesCache: CliCapabilities | null = null
+/** Handshake facts observed before the first getCapabilities() call. */
+let pendingHandshake: HandshakeOutcome | null = null
 
 export function detectCli(): CliInfo {
   if (cliInfoCache) return cliInfoCache
@@ -42,6 +46,7 @@ export function detectCli(): CliInfo {
 export function invalidateCliCache(): void {
   cliInfoCache = null
   capabilitiesCache = null
+  pendingHandshake = null
 }
 
 /**
@@ -109,6 +114,19 @@ function featureMatrix(enabled: boolean): Omit<CliCapabilities, 'cliVersion' | '
   }
 }
 
+/** RPC facts declared by a settled handshake, mapped onto the capability shape. */
+function handshakeFacts(outcome: HandshakeOutcome): Partial<CliCapabilities> {
+  return {
+    protocol: outcome.protocolVersion,
+    profile: outcome.profile,
+    ...(outcome.runtimeProtocols ? { protocolVersions: outcome.runtimeProtocols } : {}),
+    ...(outcome.maxFrameBytes !== undefined ? { maxFrameBytes: outcome.maxFrameBytes } : {}),
+    ...(outcome.maxReassembledFrameBytes !== undefined
+      ? { maxReassembledFrameBytes: outcome.maxReassembledFrameBytes }
+      : {})
+  }
+}
+
 /**
  * Capabilities of the detected CLI, cached for the process lifetime.
  * Feature flags are only advertised once the CLI proved responsive — via
@@ -120,17 +138,29 @@ export async function getCapabilities(): Promise<CliCapabilities> {
   const cliVersion = await probeCliVersion(cli)
   capabilitiesCache = {
     cliVersion,
-    protocol: 1,
+    protocol: pendingHandshake?.protocolVersion ?? 1,
+    ...(pendingHandshake ? handshakeFacts(pendingHandshake) : {}),
     ...featureMatrix(cliVersion !== null)
   }
   return capabilitiesCache
 }
 
 /**
+ * Runtime probe, highest authority: a settled session bootstrap declares
+ * the runtime profile, the negotiated RPC protocol version and the frame
+ * limits. Called by OmpSession via its onHandshake callback.
+ */
+export function noteHandshake(outcome: HandshakeOutcome): void {
+  pendingHandshake = outcome
+  if (!capabilitiesCache) return
+  capabilitiesCache = { ...capabilitiesCache, ...handshakeFacts(outcome) }
+}
+
+/**
  * Runtime probe: a successful get_state response proves this build answers
- * the 0.80.x RPC command surface (get_state rides with the rest of the
- * command set), so flip every feature flag on even when --version probing
- * failed. Called with the parsed get_state payload.
+ * the RPC command surface (get_state rides with the rest of the command
+ * set), so flip every feature flag on even when --version probing failed.
+ * Called with the parsed get_state payload.
  */
 export function noteSessionState(_state: SessionState): void {
   if (!capabilitiesCache) return

@@ -12,8 +12,9 @@ import { defaultPiAgentDir } from './piSettings'
  *   `--${resolvedCwd.replace(/^[/\\]/,'').replace(/[/\\:]/g,'-')}--`
  * where resolvedCwd is the realpath of the cwd (/tmp → /private/tmp on macOS).
  *
- * Each jsonl file starts with {"type":"session","id","timestamp","cwd"},
- * followed by entries such as {"type":"message","message":<AgentMessage>}.
+ * The file opens with an optional {"type":"title",…} line (current omp),
+ * then the {"type":"session","id","timestamp","cwd"} header, followed by
+ * entries such as {"type":"message","message":<AgentMessage>}.
  */
 
 /** Bytes of a session file scanned for the first user message (title source). */
@@ -78,9 +79,13 @@ function textContentOf(content: unknown): string {
 }
 
 /**
- * Parse one session file: header for id/timestamp/cwd, then the first user
- * message (within TITLE_SCAN_BYTES) for the title. Returns null for files
- * without a parseable session header.
+ * Parse one session file: the session header for id/timestamp/cwd, then the
+ * first user message (within TITLE_SCAN_BYTES) for the title. Returns null
+ * for files without a parseable session header.
+ *
+ * Header position is deliberately not pinned to line 0: legacy pi opens the
+ * file with {"type":"session",…} directly, current omp prepends a
+ * {"type":"title",…} line. Scan the first few lines for the header instead.
  */
 async function parseSessionFile(filePath: string): Promise<HistorySessionInfo | null> {
   let head: string
@@ -90,13 +95,23 @@ async function parseSessionFile(filePath: string): Promise<HistorySessionInfo | 
     return null
   }
   const lines = head.split('\n')
-  let header: { type?: unknown; id?: unknown; timestamp?: unknown; cwd?: unknown }
-  try {
-    header = JSON.parse(lines[0])
-  } catch {
-    return null
+  let header: { type?: unknown; id?: unknown; timestamp?: unknown; cwd?: unknown } | null = null
+  let headerIndex = -1
+  for (let i = 0; i < Math.min(lines.length, 5); i++) {
+    if (!lines[i].trim()) continue
+    let candidate: { type?: unknown; id?: unknown; timestamp?: unknown; cwd?: unknown }
+    try {
+      candidate = JSON.parse(lines[i])
+    } catch {
+      continue
+    }
+    if (candidate?.type === 'session' && typeof candidate.id === 'string') {
+      header = candidate
+      headerIndex = i
+      break
+    }
   }
-  if (header?.type !== 'session' || typeof header.id !== 'string') return null
+  if (!header) return null
 
   let timestamp =
     typeof header.timestamp === 'number' ? header.timestamp : Date.parse(String(header.timestamp))
@@ -106,7 +121,7 @@ async function parseSessionFile(filePath: string): Promise<HistorySessionInfo | 
   }
 
   let title = UNTITLED
-  for (const line of lines.slice(1)) {
+  for (const line of lines.slice(headerIndex + 1)) {
     if (!line.trim()) continue
     let entry: { type?: unknown; message?: { role?: unknown; content?: unknown } }
     try {

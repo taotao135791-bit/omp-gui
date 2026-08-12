@@ -1,6 +1,6 @@
 {
   "name": "omp-gui",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "A Codex-style GUI for Oh My Pi with modular Pi assembly.",
   "author": "OMP GUI Team",
   "private": true,
@@ -12,6 +12,7 @@
     "package": "electron-builder",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:omp": "vitest run --config vitest.omp.config.ts",
     "postinstall": "electron-builder install-app-deps"
   },
   "devDependencies": {
