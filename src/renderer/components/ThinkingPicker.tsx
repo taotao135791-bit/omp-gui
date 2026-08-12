@@ -1,31 +1,31 @@
 import { useEffect, useRef, useState } from 'react'
 import { Brain, Check, ChevronUp } from 'lucide-react'
 import { ThinkingLevel } from '@shared/types'
+import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
 import MenuPortal from './MenuPortal'
 
-/** The four levels offered in the composer (pi accepts six; we keep it simple). */
+/** Levels offered in the composer, least to most intensive. */
 const LEVELS: Array<{ id: ThinkingLevel; labelKey: I18nKey }> = [
   { id: 'off', labelKey: 'composer.thinkingOff' },
+  { id: 'minimal', labelKey: 'composer.thinkingMinimal' },
   { id: 'low', labelKey: 'composer.thinkingLow' },
   { id: 'medium', labelKey: 'composer.thinkingMedium' },
-  { id: 'high', labelKey: 'composer.thinkingHigh' }
+  { id: 'high', labelKey: 'composer.thinkingHigh' },
+  { id: 'xhigh', labelKey: 'composer.thinkingXhigh' },
+  { id: 'max', labelKey: 'composer.thinkingMax' }
 ]
 
-/** Map pi's six-level value onto the four offered here, for display. */
-function displayLevel(raw: string | undefined): ThinkingLevel {
-  switch (raw) {
-    case 'off':
-      return 'off'
-    case 'minimal':
-    case 'low':
-      return 'low'
-    case 'high':
-    case 'xhigh':
-      return 'high'
-    default:
-      return 'medium'
-  }
+/**
+ * Display a runtime-reported level. Known values render via i18n; unknown
+ * future levels (e.g. a new "ultra") still render readably instead of
+ * breaking the picker. undefined means the runtime's "auto".
+ */
+function levelLabel(raw: string | undefined, t: ReturnType<typeof useT>): string {
+  if (!raw) return t('composer.thinkingAuto')
+  const known = LEVELS.find((l) => l.id === raw)
+  if (known) return t(known.labelKey)
+  return raw.charAt(0).toUpperCase() + raw.slice(1)
 }
 
 interface ThinkingPickerProps {
@@ -35,44 +35,74 @@ interface ThinkingPickerProps {
 
 /**
  * Thinking-level dropdown next to the model picker. With a live session it
- * reads/switches the session's level immediately (even mid-stream); without
- * one it edits the default level used by future sessions, so it's never a
- * dead control on the welcome screen.
+ * switches the session's level immediately (even mid-stream); without one it
+ * edits the runtime default used by future sessions.
+ *
+ * Display follows runtime-resolved state, never the optimistic request:
+ * current runtimes may clamp an unsupported level (e.g. xhigh → high on a
+ * model that tops out at high) — the thinking_level_changed event reports
+ * what actually happened.
  */
 export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
-  const [level, setLevel] = useState<ThinkingLevel | null>(null)
+  const [level, setLevel] = useState<string | undefined>(undefined)
+  const [loaded, setLoaded] = useState(false)
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const t = useT()
+  const overview = useAppStore((s) => s.runtimeOverview)
+  const eventLevel = useAppStore((s) => (sessionId ? s.sessionThinking[sessionId] : undefined))
+  const hasEventLevel = useAppStore((s) => sessionId !== null && sessionId in s.sessionThinking)
 
-  // Sync the current level: from the live session, else from the default
+  // Sync the current level: event-resolved first, then a one-time probe.
   useEffect(() => {
-    setLevel(null)
+    if (hasEventLevel) {
+      setLevel(eventLevel)
+      setLoaded(true)
+      return
+    }
+    setLoaded(false)
     let cancelled = false
     if (sessionId) {
       window.electronAPI.getSessionState(sessionId).then((state) => {
-        if (!cancelled && state) setLevel(displayLevel(state.thinkingLevel))
+        if (!cancelled) {
+          setLevel(state?.thinkingLevel ?? undefined)
+          setLoaded(true)
+        }
       })
+    } else if (overview?.profile === 'current') {
+      setLevel(overview.modelState.defaultThinkingLevel || undefined)
+      setLoaded(true)
     } else {
       window.electronAPI.getModelConfig().then((cfg) => {
-        if (!cancelled) setLevel(displayLevel(cfg.defaultThinkingLevel || undefined))
+        if (!cancelled) {
+          setLevel(cfg.defaultThinkingLevel || undefined)
+          setLoaded(true)
+        }
       })
     }
     return () => {
       cancelled = true
     }
-  }, [sessionId])
+  }, [sessionId, hasEventLevel, eventLevel, overview?.profile, overview?.modelState.defaultThinkingLevel])
 
   const pick = async (next: ThinkingLevel) => {
     setOpen(false)
-    setLevel(next)
-    // Always persist as the default for future sessions…
-    await window.electronAPI.setModelConfig({ defaultThinkingLevel: next })
-    // …and hot-switch the live session when there is one
-    if (sessionId) await window.electronAPI.setThinkingLevel(sessionId, next)
+    // Persist the default for future sessions (profile-appropriate path)…
+    if (overview?.profile === 'current') {
+      await useAppStore.getState().setRuntimeDefaultThinking(next)
+    } else {
+      await window.electronAPI.setModelConfig({ defaultThinkingLevel: next })
+    }
+    // …and hot-switch the live session when there is one. The display does
+    // NOT optimistic-update here on current runtimes: the runtime resolves
+    // (and may clamp) the level, reported back via thinking_level_changed.
+    if (sessionId) {
+      await window.electronAPI.setThinkingLevel(sessionId, next)
+      if (overview?.profile !== 'current') setLevel(next)
+    } else {
+      setLevel(next)
+    }
   }
-
-  const current = LEVELS.find((l) => l.id === level)
 
   return (
     <div className="relative">
@@ -84,7 +114,7 @@ export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
       >
         <Brain size={12} />
         <span>
-          {t('composer.thinking')} · {current ? t(current.labelKey) : '—'}
+          {t('composer.thinking')} · {loaded ? levelLabel(level, t) : '—'}
         </span>
         <ChevronUp size={11} className={`transition ${open ? 'rotate-180' : ''}`} />
       </button>

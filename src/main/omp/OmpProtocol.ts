@@ -320,6 +320,24 @@ export function normalizeRpcFrame(
     case 'auto_retry_end':
       return { kind: 'none' }
 
+    // The runtime resolved a thinking-level change — carries the RESOLVED
+    // level (requested values may be clamped to what the model supports);
+    // absent thinkingLevel means "auto". This is the display source of truth.
+    case 'thinking_level_changed':
+      return {
+        kind: 'event',
+        event: {
+          type: 'thinking_level_changed',
+          sessionId,
+          level: typeof payload.thinkingLevel === 'string' ? payload.thinkingLevel : undefined
+        }
+      }
+
+    // The session's model changed (set_model, fallback); the renderer
+    // refetches get_state for the full model object.
+    case 'model_changed':
+      return { kind: 'event', event: { type: 'model_changed', sessionId } }
+
     // Runtime notices: warnings/errors are user-relevant; info is MCP-mount
     // chatter that would pollute the chat.
     case 'notice':
@@ -330,11 +348,11 @@ export function normalizeRpcFrame(
 
     default:
       // Everything else is deliberately not surfaced: turn_*/message_start,
-      // model_changed, thinking_level_changed, session_info_update,
-      // config_update, goal_updated, todo_*, ttsr_triggered, irc_message,
-      // available_commands_update, host_tool_*, host_uri_*, subagent_* …
-      // Unknown future frames land here too — forward compatibility by
-      // construction, and the session debug-logs what we skip.
+      // session_info_update, config_update, goal_updated, todo_*,
+      // ttsr_triggered, irc_message, available_commands_update, host_tool_*,
+      // host_uri_*, subagent_* … Unknown future frames land here too —
+      // forward compatibility by construction, and the session debug-logs
+      // what we skip.
       return { kind: 'none' }
   }
 }

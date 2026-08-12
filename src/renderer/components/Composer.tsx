@@ -563,7 +563,7 @@ export default function Composer({
               >
                 <ImageIcon size={12} />
               </button>
-              <ModelPicker />
+              <ModelPicker sessionId={currentSessionId} />
               <ThinkingPicker sessionId={currentSessionId} />
               <PermissionPicker />
             </div>

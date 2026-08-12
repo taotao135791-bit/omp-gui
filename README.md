@@ -31,7 +31,8 @@ The app auto-detects an installed `omp`/`pi` CLI, or offers to install Oh My Pi 
 - **Composer power-ups** — `@` fuzzy file references, image paste & attach (up to 4×10MB), a thinking-level picker (off/low/medium/high) synced with the live session, and self-teaching placeholders.
 - **Auto-update** — checks GitHub Releases on launch and from Settings → About; downloads in the background and installs on restart.
 - **Session export** — one click exports the transcript to a styled HTML file in ~/Downloads.
-- **Model & API keys** — pick from 26 providers (Anthropic, OpenAI, Gemini, DeepSeek, Kimi, MiniMax, ZAI, OpenRouter, …) and paste your API key in Settings. Keys are written to pi's own `~/.pi/agent/auth.json` (chmod 600) — the CLI and the GUI share them. The default-model dropdown is fed by pi's built-in model registry (1,000+ models), so every model a provider supports is selectable even before its key is stored; the composer picker lists the models your keys can actually run and switches the live session mid-chat.
+- **Model & provider sign-in** — Settings → Authentication lists every provider the runtime reports (66+), with its real connection state. Connect runs Oh My Pi's **native login flow** (browser OAuth or paste-key prompt, validated by the provider itself); Sign out removes the credential through the official channel with read-after-write verification. The GUI never stores keys itself, and never pretends a write succeeded when the runtime didn't confirm it. Legacy Pi installs keep their file-based auth.json compatibility path.
+- **Runtime-faithful models & thinking** — the composer model picker lists only models the runtime can actually run (credential-filtered by Oh My Pi itself), shows the live session's real model, and persists the default through the runtime's own config (`enabledModels`). The thinking picker covers the full level set (off → **max**) and displays the runtime-resolved level — if a model clamps your choice, you see the clamped truth, not your click.
 - **Permissions** — tool access modes (full access / no Bash / read-only) applied to new sessions, plus project-trust control for project-local plugins.
 - **Assemble your Pi** — the plugin page works like a mecha bay: drag parts onto the core to mount them, drag back to the rack to detach, drop to the red zone to uninstall. Install npm/git/local packages or drop a folder straight from Finder. Only mounted parts load into new chats, keeping pi lean.
 - **Discover & build plugins** — curated picks and a live search of the npm `pi-package` ecosystem sit right on the plugin page, one click to install. Nothing fits? The "build your own" entry starts a chat that scaffolds a pi extension or skill for you.
@@ -63,6 +64,24 @@ compatibility message (both version lists), not a parse error. Settings →
 About shows the detected version, the negotiated protocol, and the runtime's
 supported versions. The tested matrix lives in `docs/protocol-facts.md`; the
 real-binary suite runs with `pnpm test:omp`.
+
+## Settings & authentication compatibility
+
+Settings are runtime-faithful: **GUI says Connected = the runtime is actually
+authenticated; GUI says Model X = the runtime is actually using Model X.**
+
+- **Current Oh My Pi** — providers and their auth state come from
+  `get_login_providers`; sign-in rides the runtime's native login flow
+  (browser/key prompt, provider-validated); defaults live in the runtime's
+  own config (`enabledModels`, `defaultThinkingLevel`,
+  `skills.enableAgentsUser`), written via `omp config` and verified by
+  re-reading the runtime.
+- **Legacy Pi** — keeps the file-based compatibility path
+  (`auth.json` / `settings.json`), clearly labeled as legacy in the UI.
+
+The GUI never maintains its own credential store, static model database, or
+"saved successfully" states the runtime didn't confirm. Domain details live
+in `docs/settings-auth.md`.
 
 ## Tech Stack
 

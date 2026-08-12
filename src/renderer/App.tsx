@@ -34,6 +34,9 @@ function App() {
     window.electronAPI.detectCli().then((info) => {
       setCliAvailable(info.available)
     })
+    // Runtime-reported settings/auth/model state (profile-aware adapters).
+    useAppStore.getState().loadRuntimeOverview()
+    useAppStore.getState().loadRuntimeModels()
     window.electronAPI.listPackages().then((packages) => {
       useAppStore.getState().setPackages(packages)
     })
@@ -48,6 +51,22 @@ function App() {
       applySessionEvent(event)
     })
 
+    // Native login flow state (Settings → Authentication)
+    const unsubscribeLogin = window.electronAPI.onLoginState((loginState) => {
+      useAppStore.setState({ loginState })
+      if (
+        loginState.status === 'connected' ||
+        loginState.status === 'failed' ||
+        loginState.status === 'cancelled'
+      ) {
+        // The flow settled: auth state and model availability may have
+        // changed — refresh everything the runtime reports.
+        void useAppStore.getState().loadRuntimeOverview(true)
+        void useAppStore.getState().loadRuntimeModels()
+        void useAppStore.getState().loadModelState()
+      }
+    })
+
     // Clicking a completion notification focuses that session's chat
     const unsubscribeNotify = window.electronAPI.onNotifySelectSession((sessionId) => {
       const state = useAppStore.getState()
@@ -60,6 +79,7 @@ function App() {
     return () => {
       unsubscribe()
       unsubscribeNotify()
+      unsubscribeLogin()
     }
   }, [setTheme, setLanguage, setCliAvailable, setSetupComplete, applySessionEvent, navigate])
 

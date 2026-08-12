@@ -13,6 +13,8 @@ import {
 import { CliCapabilities, CliInfo, ModelConfig, PermissionMode, PI_PROVIDERS, PiModel, UpdaterStatus } from '@shared/types'
 import { useAppStore } from '../store'
 import { I18nKey, useT } from '../i18n'
+import AuthSection from '../components/AuthSection'
+import RuntimeModelSection from '../components/RuntimeModelSection'
 
 /** RPC protocol versions this GUI can drive (mirrors the main-process handshake). */
 const SUPPORTED_RPC_PROTOCOLS: readonly number[] = [1, 2]
@@ -87,6 +89,10 @@ export default function SettingsPage() {
   // the credential-filtered list is only a fallback if the registry is unreadable.
   const catalogForProvider = provider ? catalog.filter((m) => m.provider === provider) : []
   const selectableModels = catalogForProvider.length > 0 ? catalogForProvider : providerModels
+  // Runtime profile decides which settings surface applies: current (omp
+  // config/RPC-backed) vs legacy (auth.json/settings.json file-backed).
+  const runtimeOverview = useAppStore((s) => s.runtimeOverview)
+  const isCurrent = runtimeOverview?.profile === 'current'
   // Widened from the literal type `1` so a future protocol bump can render
   // the unsupported state instead of being narrowed away by TS.
   const ompProtocol: number | null = caps ? caps.protocol : null
@@ -96,15 +102,26 @@ export default function SettingsPage() {
     window.electronAPI.getAppVersion().then(setVersion)
     window.electronAPI.listCatalogModels().then(setCatalog)
     loadModelState()
+    useAppStore.getState().loadRuntimeOverview(true)
+    useAppStore.getState().loadRuntimeModels()
     window.electronAPI.getStore('permissionMode').then((v) => setPermissionModeState(v ?? 'ask'))
     window.electronAPI.getStore('notifications').then((v) => setNotificationsState(v ?? true))
     window.electronAPI.getStore('machineSkills').then((v) => {
       const enabled = v ?? false
       setMachineSkillsState(enabled)
-      // Idempotent re-sync doubles as the machine-skill count probe
+      // Idempotent re-sync doubles as the machine-skill count probe (legacy
+      // profile; the current profile reads state from the runtime overview).
       window.electronAPI.setMachineSkills(enabled).then((r) => setMachineSkillCount(r.available.length))
     })
+    window.electronAPI.listMachineSkills().then((names) => setMachineSkillCount(names.length))
   }, [loadModelState])
+
+  // Current profile: the machine-skills toggle state comes from the runtime.
+  useEffect(() => {
+    if (runtimeOverview?.profile === 'current') {
+      setMachineSkillsState(runtimeOverview.machineSkillsEnabled)
+    }
+  }, [runtimeOverview])
 
   useEffect(() => {
     window.electronAPI.updaterGetStatus().then(setUpdater)
@@ -208,6 +225,12 @@ export default function SettingsPage() {
 
   const changeMachineSkills = async (enabled: boolean) => {
     setMachineSkillsState(enabled)
+    if (useAppStore.getState().runtimeOverview?.profile === 'current') {
+      // Current profile: the toggle lives in the runtime config; the
+      // legacy file path stays untouched.
+      await window.electronAPI.runtimeSetMachineSkills(enabled)
+      return
+    }
     const r = await window.electronAPI.setMachineSkills(enabled)
     setMachineSkillCount(r.available.length)
   }
@@ -227,6 +250,13 @@ export default function SettingsPage() {
 
       <div className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto max-w-[680px] space-y-4">
+          {isCurrent && (
+            <>
+              <AuthSection />
+              <RuntimeModelSection />
+            </>
+          )}
+          {!isCurrent && (
           <Section title={t('settings.model')}>
             <Row label={t('settings.provider')}>
               <select
@@ -353,6 +383,7 @@ export default function SettingsPage() {
             </Row>
             <Note>{t('settings.modelNote')}</Note>
           </Section>
+          )}
 
           <Section title={t('settings.permissions')}>
             <Row label={t('settings.permissionMode')}>
@@ -369,6 +400,7 @@ export default function SettingsPage() {
               </div>
             </Row>
             <Note>{t(PERMISSION_MODES.find((m) => m.value === permissionMode)?.note ?? 'settings.permissionsNote.ask')}</Note>
+            {!isCurrent && (
             <Row label={t('settings.projectTrust')}>
               <div className="flex items-center gap-2">
                 <ShieldCheck size={13} className="text-cream-faint" />
@@ -394,7 +426,8 @@ export default function SettingsPage() {
                 </div>
               </div>
             </Row>
-            <Note>{t('settings.trustNote')}</Note>
+            )}
+            {!isCurrent && <Note>{t('settings.trustNote')}</Note>}
           </Section>
 
           <Section title={t('settings.skills')}>

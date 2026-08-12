@@ -367,8 +367,6 @@ describe('parseRpcLine', () => {
       { type: 'available_commands_update', commands: [] },
       { type: 'session_info_update', title: 'x', sessionId: 'abc' },
       { type: 'config_update', model: {}, thinkingLevel: 'high' },
-      { type: 'model_changed' },
-      { type: 'thinking_level_changed', thinkingLevel: 'high' },
       { type: 'goal_updated', goal: null },
       { type: 'todo_reminder', todos: [], attempt: 1, maxAttempts: 3 },
       { type: 'todo_auto_clear' },
@@ -383,6 +381,27 @@ describe('parseRpcLine', () => {
     ]) {
       expect(parseRpcLine(JSON.stringify(frame), 's1')).toEqual({ kind: 'none' })
     }
+  })
+
+  it('maps thinking_level_changed with the runtime-resolved level', () => {
+    expect(
+      parseRpcLine(JSON.stringify({ type: 'thinking_level_changed', thinkingLevel: 'max' }), 's1')
+    ).toEqual({
+      kind: 'event',
+      event: { type: 'thinking_level_changed', sessionId: 's1', level: 'max' }
+    })
+    // Absent level = runtime "auto"
+    expect(parseRpcLine(JSON.stringify({ type: 'thinking_level_changed' }), 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'thinking_level_changed', sessionId: 's1', level: undefined }
+    })
+  })
+
+  it('maps model_changed to a refetch hint', () => {
+    expect(parseRpcLine(JSON.stringify({ type: 'model_changed' }), 's1')).toEqual({
+      kind: 'event',
+      event: { type: 'model_changed', sessionId: 's1' }
+    })
   })
 
   it('ignores turn and queue events', () => {

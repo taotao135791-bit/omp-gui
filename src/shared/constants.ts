@@ -39,6 +39,7 @@ export const IPC_CHANNELS = {
   PI_LIST_MODELS: 'pi:list-models',
   PI_LIST_CATALOG_MODELS: 'pi:list-catalog-models',
   PI_SET_MACHINE_SKILLS: 'pi:set-machine-skills',
+  PI_LIST_MACHINE_SKILLS: 'pi:list-machine-skills',
   APP_VERSION: 'app:version',
   OMP_STEER: 'omp:steer',
   OMP_FOLLOW_UP: 'omp:follow-up',
@@ -61,7 +62,17 @@ export const IPC_CHANNELS = {
   UPDATER_DOWNLOAD: 'updater:download',
   UPDATER_QUIT_INSTALL: 'updater:quit-install',
   UPDATER_OPEN_PAGE: 'updater:open-release-page',
-  NOTIFY_SELECT_SESSION: 'notify:select-session'
+  NOTIFY_SELECT_SESSION: 'notify:select-session',
+  RUNTIME_OVERVIEW: 'runtime:overview',
+  RUNTIME_LIST_MODELS: 'runtime:list-models',
+  RUNTIME_SET_DEFAULT_MODEL: 'runtime:set-default-model',
+  RUNTIME_SET_DEFAULT_THINKING: 'runtime:set-default-thinking',
+  RUNTIME_SET_MACHINE_SKILLS: 'runtime:set-machine-skills',
+  AUTH_START_LOGIN: 'auth:start-login',
+  AUTH_ANSWER_LOGIN: 'auth:answer-login',
+  AUTH_CANCEL_LOGIN: 'auth:cancel-login',
+  AUTH_LOGOUT: 'auth:logout',
+  AUTH_LOGIN_STATE: 'auth:login-state'
 } as const
 
 export const OMP_GLOBAL_DIR = '.omp'

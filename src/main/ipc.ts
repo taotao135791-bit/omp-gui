@@ -13,7 +13,9 @@ import {
   PromptImage,
   StreamingBehavior,
   ThinkingLevel,
-  SelectImageResult
+  SelectImageResult,
+  LoginAnswer,
+  LoginState
 } from '../shared/types'
 import {
   detectCli,
@@ -72,8 +74,21 @@ import {
   updaterQuitAndInstall,
   updaterOpenReleasePage
 } from './updater'
+import { RuntimeSettings, PROVIDER_ID_PATTERN } from './omp/settings/RuntimeSettings'
+import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
 
 const fsGuard = new FsGuard()
+
+/** Runtime-settings facade, rebuilt whenever the CLI detection is invalidated. */
+let runtimeSettings = new RuntimeSettings()
+let loginFlow: OmpLoginFlow | null = null
+
+function broadcastLoginState(state: LoginState): void {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(IPC_CHANNELS.AUTH_LOGIN_STATE, state)
+  }
+}
 
 const MAX_READ_FILE_BYTES = 2 * 1024 * 1024
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -131,13 +146,18 @@ function sanitizeDialogFilters(value: unknown): { name: string; extensions: stri
   return out.length ? out : fallback
 }
 
-const THINKING_LEVELS: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+const THINKING_LEVELS: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 const PERMISSION_MODES: PermissionMode[] = ['full', 'no-bash', 'readonly', 'ask']
 
 export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.OMP_DETECT, async (_event: IpcMainInvokeEvent, force?: boolean) => {
-    if (force) invalidateCliCache()
+    if (force) {
+      invalidateCliCache()
+      // CLI may have changed (install/upgrade): rebuild the runtime-settings
+      // facade and drop every cached probe result.
+      runtimeSettings = new RuntimeSettings()
+    }
     return detectCli()
   })
 
@@ -438,6 +458,11 @@ export function registerIpc() {
     }
   )
 
+  // Read-only probe: which machine-local skills exist (no writes either way).
+  ipcMain.handle(IPC_CHANNELS.PI_LIST_MACHINE_SKILLS, async () => {
+    return listMachineSkillNames()
+  })
+
   ipcMain.handle(IPC_CHANNELS.PI_LIST_CATALOG_MODELS, async () => {
     return listCatalogModels()
   })
@@ -467,6 +492,103 @@ export function registerIpc() {
     const result = clearApiKey(String(provider ?? ''))
     if (result.ok) invalidateModelCache()
     return result
+  })
+
+  // ------------------------------------------------------- runtime settings
+  // Unified runtime settings/auth API — the renderer renders profile +
+  // capabilities; all version differences are absorbed in main.
+
+  ipcMain.handle(IPC_CHANNELS.RUNTIME_OVERVIEW, async (_event, force?: boolean) => {
+    return runtimeSettings.getOverview(force === true)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.RUNTIME_LIST_MODELS, async () => {
+    return runtimeSettings.listModels()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.RUNTIME_SET_DEFAULT_MODEL,
+    async (_event, selector: unknown) => {
+      if (
+        typeof selector !== 'string' ||
+        (selector !== '' && !/^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9._-]*$/i.test(selector))
+      ) {
+        return { ok: false, error: 'invalid model selector' }
+      }
+      return runtimeSettings.setDefaultModel(selector)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.RUNTIME_SET_DEFAULT_THINKING,
+    async (_event, level: unknown) => {
+      if (typeof level !== 'string' || (level !== '' && !THINKING_LEVELS.includes(level as ThinkingLevel))) {
+        return { ok: false, error: 'invalid thinking level' }
+      }
+      return runtimeSettings.setDefaultThinking(level)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.RUNTIME_SET_MACHINE_SKILLS,
+    async (_event, enabled: unknown) => {
+      return runtimeSettings.setMachineSkills(enabled === true)
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.AUTH_START_LOGIN, async (_event, providerId: unknown) => {
+    if (typeof providerId !== 'string' || !PROVIDER_ID_PATTERN.test(providerId)) {
+      return { ok: false, error: 'invalid provider id' }
+    }
+    if (loginFlow?.active) {
+      return { ok: false, error: 'a login flow is already running' }
+    }
+    const cli = detectCli()
+    const flow = new OmpLoginFlow({
+      cli,
+      onState: broadcastLoginState,
+      onOpenUrl: (url) => {
+        // Login URLs come from the runtime's own login flow; https only
+        // (loopback launch URLs included — they 302 to the https target).
+        if (/^https:\/\//i.test(url) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) {
+          void shell.openExternal(url)
+        }
+      }
+    })
+    loginFlow = flow
+    // Fire-and-forget: progress rides the AUTH_LOGIN_STATE channel.
+    void flow.start(providerId).finally(() => {
+      runtimeSettings.invalidate()
+      if (loginFlow === flow) loginFlow = null
+    })
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AUTH_ANSWER_LOGIN, async (_event, answer: LoginAnswer) => {
+    if (!loginFlow?.active) return { ok: false, error: 'no active login flow' }
+    if (
+      typeof answer !== 'object' ||
+      answer === null ||
+      !('cancelled' in answer || 'value' in answer || 'confirmed' in answer)
+    ) {
+      return { ok: false, error: 'invalid answer' }
+    }
+    if ('value' in answer && typeof answer.value !== 'string') {
+      return { ok: false, error: 'invalid answer' }
+    }
+    return { ok: loginFlow.answer(answer) }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AUTH_CANCEL_LOGIN, async () => {
+    loginFlow?.cancel()
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async (_event, providerId: unknown) => {
+    if (typeof providerId !== 'string' || !PROVIDER_ID_PATTERN.test(providerId)) {
+      return { ok: false, error: 'invalid provider id' }
+    }
+    return runtimeSettings.logout(providerId)
   })
 
   ipcMain.handle(IPC_CHANNELS.APP_VERSION, async () => {

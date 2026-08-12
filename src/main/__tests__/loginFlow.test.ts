@@ -1,0 +1,155 @@
+import { describe, it, expect, vi } from 'vitest'
+import { OmpLoginFlow } from '../omp/settings/OmpLoginFlow'
+import { RuntimeRpcClient } from '../omp/settings/RuntimeRpcClient'
+import { CliInfo, ExtensionUiAnswer, LoginState } from '../../shared/types'
+
+/**
+ * Login flow state machine with a fully fake probe client — covers the
+ * documented native flow: open_url → input → notify → response verdict,
+ * plus cancel, failure and mid-flow crash. The login response is a deferred
+ * the test settles after emitting the flow's events.
+ */
+
+const CLI: CliInfo = { command: 'omp', path: '/usr/local/bin/omp', available: true }
+
+interface FakeClient {
+  query: ReturnType<typeof vi.fn>
+  respond: ReturnType<typeof vi.fn>
+  kill: ReturnType<typeof vi.fn>
+  emit: (event: Record<string, unknown>) => void
+  openUrl: (url: string) => void
+  exit: (code: number) => void
+  resolveLogin: (response: Record<string, unknown> | null) => void
+}
+
+function makeFlow(opts: { spawnNull?: boolean } = {}) {
+  const states: LoginState[] = []
+  const urls: string[] = []
+  let eventCb: ((event: Record<string, unknown>) => void) | null = null
+  let urlCb: ((url: string, launchUrl?: string) => void) | null = null
+  let exitCb: ((code: number) => void) | null = null
+  let resolveLogin: (response: Record<string, unknown> | null) => void = () => {}
+  const client: FakeClient = {
+    query: vi.fn(
+      (_cmd: Record<string, unknown>, _t?: number) =>
+        new Promise((resolve) => {
+          resolveLogin = resolve
+        })
+    ),
+    respond: vi.fn((_id: string, _a: ExtensionUiAnswer) => true),
+    kill: vi.fn(() => {}),
+    emit: (event) => eventCb?.(event),
+    openUrl: (url) => urlCb?.(url),
+    exit: (code) => exitCb?.(code),
+    resolveLogin: (response) => resolveLogin(response)
+  }
+  const spawnProbe: typeof RuntimeRpcClient.spawnWithBootstrap = async (
+    _cli,
+    _opts,
+    events
+  ) => {
+    if (opts.spawnNull) return null
+    eventCb = (e) => events?.onEvent?.(e as never)
+    urlCb = (url, launchUrl) => events?.onOpenUrl?.(url, launchUrl)
+    exitCb = (code) => events?.onExit?.(code, '')
+    return { client: client as unknown as RuntimeRpcClient, bootstrap: false }
+  }
+  const flow = new OmpLoginFlow({
+    cli: CLI,
+    onState: (s) => states.push(s),
+    onOpenUrl: (url) => urls.push(url),
+    spawnProbe
+  })
+  return { flow, states, urls, client }
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 0))
+
+describe('OmpLoginFlow', () => {
+  it('completes the api-key flow: open_url → input → verifying → connected', async () => {
+    const { flow, states, urls, client } = makeFlow()
+    const started = flow.start('deepseek')
+    await vi.waitFor(() => expect(states.some((s) => s.status === 'starting')).toBe(true))
+    client.openUrl('https://platform.deepseek.com/api_keys')
+    client.emit({ type: 'ui_request', id: 'i1', method: 'input', title: 'Paste your DeepSeek API key', placeholder: 'sk-...' })
+    await tick()
+    expect(states.map((s) => s.status)).toEqual(['starting', 'waiting_for_browser', 'waiting_for_input'])
+    const answered = flow.answer({ value: 'sk-fake' })
+    expect(answered).toBe(true)
+    expect(client.respond).toHaveBeenCalledWith('i1', { value: 'sk-fake' })
+    client.emit({ type: 'message', role: 'system', content: 'Validating API key...' })
+    await tick()
+    expect(states.at(-1)?.status).toBe('verifying')
+    client.resolveLogin({ type: 'response', command: 'login', success: true, data: { providerId: 'deepseek' } })
+    await started
+    expect(states.at(-1)?.status).toBe('connected')
+    expect(urls).toEqual(['https://platform.deepseek.com/api_keys'])
+    expect(client.kill).toHaveBeenCalled()
+  })
+
+  it('surfaces the provider error on a rejected key', async () => {
+    const { flow, states, client } = makeFlow()
+    const started = flow.start('deepseek')
+    await vi.waitFor(() => expect(states.some((s) => s.status === 'starting')).toBe(true))
+    client.resolveLogin({
+      type: 'response',
+      command: 'login',
+      success: false,
+      error: 'deepseek API key validation failed (401)'
+    })
+    await started
+    const last = states.at(-1)
+    expect(last?.status).toBe('failed')
+    expect(last && 'message' in last && last.message).toContain('401')
+  })
+
+  it('cancel kills the runtime operation and reports cancelled', async () => {
+    const { flow, states, client } = makeFlow()
+    const started = flow.start('deepseek')
+    await vi.waitFor(() => expect(states.some((s) => s.status === 'starting')).toBe(true))
+    flow.cancel()
+    client.resolveLogin(null) // the killed process never answers; harmless
+    await started
+    expect(states.at(-1)?.status).toBe('cancelled')
+    expect(client.kill).toHaveBeenCalled()
+    // Late answers after cancel are refused.
+    expect(flow.answer({ value: 'x' })).toBe(false)
+  })
+
+  it('a mid-flow process exit fails the flow', async () => {
+    const { flow, states, client } = makeFlow()
+    const started = flow.start('deepseek')
+    await vi.waitFor(() => expect(states.some((s) => s.status === 'starting')).toBe(true))
+    client.exit(1)
+    client.resolveLogin(null)
+    await started
+    expect(states.at(-1)?.status).toBe('failed')
+    const last = states.at(-1)
+    expect(last && 'message' in last && (last as { message: string }).message).toMatch(/exited/)
+  })
+
+  it('reports failure when the runtime cannot start at all', async () => {
+    const { flow, states } = makeFlow({ spawnNull: true })
+    await flow.start('deepseek')
+    expect(states.at(-1)?.status).toBe('failed')
+  })
+
+  it('maps select and confirm prompts', async () => {
+    const { flow, states, client } = makeFlow()
+    const started = flow.start('anthropic')
+    await vi.waitFor(() => expect(states.some((s) => s.status === 'starting')).toBe(true))
+    client.emit({ type: 'ui_request', id: 's1', method: 'select', title: 'Pick', options: ['a', 'b'] })
+    await tick()
+    expect(states.at(-1)?.status).toBe('waiting_for_select')
+    flow.answer({ value: 'a' })
+    expect(client.respond).toHaveBeenCalledWith('s1', { value: 'a' })
+    client.emit({ type: 'ui_request', id: 'c1', method: 'confirm', title: 'Sure?' })
+    await tick()
+    expect(states.at(-1)?.status).toBe('waiting_for_confirm')
+    flow.answer({ confirmed: true })
+    expect(client.respond).toHaveBeenCalledWith('c1', { confirmed: true })
+    flow.cancel()
+    client.resolveLogin(null)
+    await started
+  })
+})

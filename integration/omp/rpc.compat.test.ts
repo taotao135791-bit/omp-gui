@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { OmpSession, OmpProcessLike } from '../../src/main/omp/OmpSession'
 import { SessionEvent } from '../../src/shared/types'
+import { makeExecRunner, configGet, configSet, configReset } from '../../src/main/omp/settings/OmpConfigCli'
+import { RuntimeSettings } from '../../src/main/omp/settings/RuntimeSettings'
 
 /**
  * Real-binary RPC compatibility suite — the GUI's own OmpSession driving
@@ -184,6 +186,58 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
     } finally {
       live.session.kill()
     }
+  })
+
+  it('runtime settings: providers, config roundtrip and model catalog are real', async () => {
+    if (!available) return
+    const run = makeExecRunner(OMP_BIN)
+
+    // Providers: get_login_providers via a live RPC probe — at least one
+    // provider is authenticated (the suite only runs when one exists).
+    const live = startSession(OMP_BIN)
+    try {
+      await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
+      if (diedEarly(live)) return
+      const res = await live.session.query({ type: 'get_login_providers' })
+      expect(res?.success).toBe(true)
+      const providers = (res?.data as { providers: { id: string; authenticated: boolean }[] })
+        .providers
+      expect(providers.length).toBeGreaterThan(10)
+      expect(providers.some((p) => p.authenticated)).toBe(true)
+    } finally {
+      live.session.kill()
+    }
+
+    // Config: defaultThinkingLevel set → read-back confirms → reset.
+    const before = await configGet(run, 'defaultThinkingLevel')
+    expect(before).not.toBeNull()
+    expect(await configSet(run, 'defaultThinkingLevel', 'max')).toBe(true)
+    const after = await configGet(run, 'defaultThinkingLevel')
+    expect(after?.value).toBe('max')
+    expect(await configReset(run, 'defaultThinkingLevel')).toBe(true)
+    const restored = await configGet(run, 'defaultThinkingLevel')
+    expect(typeof restored?.value === 'string').toBe(true)
+    if (before?.value && restored?.value !== before.value) {
+      // best-effort restore of the user's original value
+      await configSet(run, 'defaultThinkingLevel', before.value)
+    }
+
+    // Catalog: omp models --json parses with per-model thinking levels.
+    const modelsRes = await run(['models', '--json'])
+    expect(modelsRes.ok).toBe(true)
+    const parsed = JSON.parse(modelsRes.stdout) as {
+      models: { selector: string; thinking?: string[] }[]
+    }
+    expect(parsed.models.length).toBeGreaterThan(0)
+    expect(parsed.models[0].selector).toContain('/')
+    expect(Array.isArray(parsed.models[0].thinking)).toBe(true)
+
+    // The full service facade over the real binary agrees.
+    const svc = new RuntimeSettings({ cli: { command: 'omp', path: OMP_BIN, available: true } })
+    const overview = await svc.getOverview(true)
+    expect(overview.profile).toBe('current')
+    expect(overview.capabilities.providers).toBe('supported')
+    expect(overview.providers.some((p) => p.authenticated)).toBe(true)
   })
 
   it('rpc_chunk: a >1 MiB get_messages response reassembles byte-exactly', async () => {

@@ -26,7 +26,11 @@ import {
   SelectImageResult,
   UpdaterStatus,
   ChatMessage,
-  HistorySessionInfo
+  HistorySessionInfo,
+  RuntimeOverview,
+  RuntimeModelInfo,
+  LoginState,
+  LoginAnswer
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -111,6 +115,8 @@ export interface ElectronAPI {
   gitFileDiff: (projectDir: string, filePath: string) => Promise<string | null>
   /** Toggle loading of machine-local ~/.agents/skills; returns what changed. */
   setMachineSkills: (enabled: boolean) => Promise<{ enabled: boolean; excluded: string[]; available: string[] }>
+  /** Read-only: names of machine-local skills present under ~/.agents/skills. */
+  listMachineSkills: () => Promise<string[]>
   getModelConfig: () => Promise<ModelConfig>
   setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) => Promise<PackageActionResult>
   setApiKey: (provider: string, key: string) => Promise<PackageActionResult>
@@ -133,6 +139,28 @@ export interface ElectronAPI {
   onNotifySelectSession: (callback: (sessionId: string) => void) => () => void
   /** Real filesystem path for a File dropped from Finder (contextIsolation-safe). */
   getPathForFile: (file: File) => string
+
+  // ------------------------------------------------------- runtime settings
+  /** Runtime-reported settings overview (profile, providers, capabilities, defaults). */
+  runtimeOverview: (force?: boolean) => Promise<RuntimeOverview>
+  /** Runtime model catalog (credential-filtered by the runtime). */
+  runtimeListModels: () => Promise<RuntimeModelInfo[]>
+  /** Set the new-session default model; '' resets to the runtime default. Read-after-write verified. */
+  runtimeSetDefaultModel: (selector: string) => Promise<{ ok: boolean; error?: string }>
+  /** Set the default thinking level for new sessions. Read-after-write verified. */
+  runtimeSetDefaultThinking: (level: string) => Promise<{ ok: boolean; error?: string }>
+  /** Toggle machine-local skills via the runtime config (current profile). */
+  runtimeSetMachineSkills: (enabled: boolean) => Promise<{ ok: boolean; error?: string }>
+  /** Start the runtime's native login flow; progress rides onLoginState. */
+  authStartLogin: (providerId: string) => Promise<{ ok: boolean; error?: string }>
+  /** Answer the pending login prompt (input/select/confirm, or cancel). */
+  authAnswerLogin: (answer: LoginAnswer) => Promise<{ ok: boolean; error?: string }>
+  /** Cancel the running login flow (kills the runtime operation). */
+  authCancelLogin: () => Promise<{ ok: boolean; error?: string }>
+  /** Remove a provider credential via the runtime; read-after-write verified. */
+  authLogout: (providerId: string) => Promise<{ ok: boolean; error?: string }>
+  /** Login flow state stream. */
+  onLoginState: (callback: (state: LoginState) => void) => () => void
 }
 
 const api: ElectronAPI = {
@@ -225,6 +253,7 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.GIT_FILE_DIFF, projectDir, filePath),
   setMachineSkills: (enabled: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.PI_SET_MACHINE_SKILLS, enabled),
+  listMachineSkills: () => ipcRenderer.invoke(IPC_CHANNELS.PI_LIST_MACHINE_SKILLS),
   getModelConfig: () => ipcRenderer.invoke(IPC_CHANNELS.PI_GET_MODEL_CONFIG),
   setModelConfig: (patch: Partial<Omit<ModelConfig, 'authProviders'>>) =>
     ipcRenderer.invoke(IPC_CHANNELS.PI_SET_MODEL_CONFIG, patch),
@@ -253,7 +282,30 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener(IPC_CHANNELS.NOTIFY_SELECT_SESSION, handler)
     }
   },
-  getPathForFile: (file: File) => webUtils.getPathForFile(file)
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
+
+  runtimeOverview: (force?: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_OVERVIEW, force),
+  runtimeListModels: () => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_LIST_MODELS),
+  runtimeSetDefaultModel: (selector: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_SET_DEFAULT_MODEL, selector),
+  runtimeSetDefaultThinking: (level: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_SET_DEFAULT_THINKING, level),
+  runtimeSetMachineSkills: (enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_SET_MACHINE_SKILLS, enabled),
+  authStartLogin: (providerId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTH_START_LOGIN, providerId),
+  authAnswerLogin: (answer: LoginAnswer) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTH_ANSWER_LOGIN, answer),
+  authCancelLogin: () => ipcRenderer.invoke(IPC_CHANNELS.AUTH_CANCEL_LOGIN),
+  authLogout: (providerId: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGOUT, providerId),
+  onLoginState: (callback: (state: LoginState) => void) => {
+    const handler = (_event: IpcRendererEvent, state: LoginState) => callback(state)
+    ipcRenderer.on(IPC_CHANNELS.AUTH_LOGIN_STATE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AUTH_LOGIN_STATE, handler)
+    }
+  }
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)

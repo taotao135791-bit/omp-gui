@@ -94,6 +94,10 @@ export type SessionEvent =
     }
   /** The extension dismissed a pending dialog; drop the matching ui_request. */
   | { type: 'ui_cancel'; sessionId: string; id: string }
+  /** Runtime resolved a new thinking level (may differ from the requested one). */
+  | { type: 'thinking_level_changed'; sessionId: string; level?: string }
+  /** The session's model changed (set_model / fallback); refetch get_state. */
+  | { type: 'model_changed'; sessionId: string }
   | { type: 'closed'; sessionId: string }
 
 /** Token/context usage of a session, as returned by the RPC get_session_stats command. */
@@ -130,7 +134,7 @@ export type ExtensionUiAnswer = { cancelled: true } | { value: string } | { conf
 export interface ModelConfig {
   defaultProvider: string
   defaultModel: string
-  defaultThinkingLevel: '' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  defaultThinkingLevel: '' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   projectTrust: 'ask' | 'always' | 'never'
   /** Providers with stored credentials in auth.json (ids only, never secrets). */
   authProviders: string[]
@@ -178,7 +182,115 @@ export const PI_PROVIDERS: { id: string; label: string }[] = [
 ]
 
 /** Thinking levels accepted by the RPC set_thinking_level command. */
-export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/** Ordered thinking levels (least to most intensive), mirroring the runtime. */
+export const THINKING_LEVEL_ORDER: readonly ThinkingLevel[] = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max'
+]
+
+// ---------------------------------------------------------------------------
+// Runtime settings / auth / models (normalized; never upstream-internal schema)
+// ---------------------------------------------------------------------------
+
+/** Which runtime family the detected CLI belongs to. */
+export type RuntimeProfile = 'current' | 'legacy'
+
+export type CapabilityState = 'supported' | 'unsupported' | 'unknown'
+
+/** A provider as the runtime reports it (get_login_providers). */
+export interface RuntimeProvider {
+  id: string
+  name: string
+  available: boolean
+  authenticated: boolean
+}
+
+/** A model as the runtime catalogs it (credential-filtered availability). */
+export interface RuntimeModelInfo {
+  provider: string
+  id: string
+  /** provider/id — the form config and set_model take. */
+  selector: string
+  name: string
+  contextWindow?: number
+  maxTokens?: number
+  reasoning: boolean
+  /** Per-model supported thinking levels (off is universal); empty = unknown. */
+  thinking: string[]
+}
+
+/** Runtime-resolved default model/thinking state (new sessions). */
+export interface RuntimeModelState {
+  /** Default model selector; '' = runtime catalog default. */
+  defaultModel: string
+  defaultThinkingLevel: string
+}
+
+export interface RuntimeCapabilities {
+  providers: CapabilityState
+  nativeLogin: CapabilityState
+  logout: CapabilityState
+  modelCatalog: CapabilityState
+  defaultModelConfig: CapabilityState
+  defaultThinkingConfig: CapabilityState
+  machineSkillsConfig: CapabilityState
+}
+
+/** Settings-page overview: everything is runtime-reported, nothing assumed. */
+export interface RuntimeOverview {
+  profile: RuntimeProfile
+  capabilities: RuntimeCapabilities
+  providers: RuntimeProvider[]
+  modelState: RuntimeModelState
+  machineSkillsEnabled: boolean
+}
+
+/**
+ * Login flow state machine. Interactive prompts arrive as part of the state
+ * (input/select/confirm); the renderer answers them via auth:answerLogin.
+ */
+export type LoginState =
+  | { status: 'idle' }
+  | { status: 'starting'; providerId: string }
+  | { status: 'waiting_for_browser'; providerId: string; instructions?: string }
+  | {
+      status: 'waiting_for_input'
+      providerId: string
+      requestId: string
+      title: string
+      placeholder?: string
+      timeoutMs?: number
+    }
+  | {
+      status: 'waiting_for_select'
+      providerId: string
+      requestId: string
+      title: string
+      options: string[]
+      timeoutMs?: number
+    }
+  | {
+      status: 'waiting_for_confirm'
+      providerId: string
+      requestId: string
+      title: string
+      message?: string
+      timeoutMs?: number
+    }
+  | { status: 'verifying'; providerId: string; message?: string }
+  | { status: 'connected'; providerId: string }
+  | { status: 'failed'; providerId: string; message: string }
+  | { status: 'cancelled'; providerId: string }
+
+/** Answer to a login prompt (mirrors the extension UI answer shapes). */
+export type LoginAnswer = { value: string } | { confirmed: boolean } | { cancelled: true }
 
 /** An image attached to a prompt/steer/follow_up RPC command. */
 export interface PromptImage {

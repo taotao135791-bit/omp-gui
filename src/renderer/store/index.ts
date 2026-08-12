@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 
 export interface MessageLike {
@@ -169,6 +169,16 @@ interface AppState {
   recentProjects: string[]
   /** Persisted session files of the current project (pi history), newest first. */
   historySessions: HistorySessionInfo[]
+  /** Runtime-reported settings overview (profile/capabilities/providers/defaults). */
+  runtimeOverview: RuntimeOverview | null
+  /** Runtime model catalog (current profile; legacy rides `models`). */
+  runtimeModels: RuntimeModelInfo[]
+  /** sessionId -> runtime-resolved thinking level (thinking_level_changed events). */
+  sessionThinking: Record<string, string | undefined>
+  /** sessionId -> bumped on model_changed; pickers refetch get_state. */
+  sessionModelVersion: Record<string, number>
+  /** Native login flow state (idle when no flow runs). */
+  loginState: LoginState
   setTheme: (theme: 'dark' | 'light') => void
   setLanguage: (language: Language) => void
   setCurrentProject: (path: string | null) => void
@@ -244,6 +254,22 @@ interface AppState {
   loadModelState: () => Promise<void>
   /** Persist a model choice and hot-apply it to the live session, if any. */
   selectModel: (provider: string, modelId: string) => Promise<void>
+  /** Refresh the runtime settings overview (profile/capabilities/providers). */
+  loadRuntimeOverview: (force?: boolean) => Promise<void>
+  /** Refresh the runtime model catalog (current profile). */
+  loadRuntimeModels: () => Promise<void>
+  /** Persist the runtime default model (current profile; '' = runtime default). */
+  selectRuntimeDefaultModel: (selector: string) => Promise<{ ok: boolean; error?: string }>
+  /** Persist the runtime default thinking level (current profile). */
+  setRuntimeDefaultThinking: (level: string) => Promise<{ ok: boolean; error?: string }>
+  /** Start the native login flow for a provider. */
+  startLogin: (providerId: string) => Promise<{ ok: boolean; error?: string }>
+  /** Answer the pending login prompt. */
+  answerLogin: (answer: LoginAnswer) => Promise<void>
+  /** Cancel the running login flow. */
+  cancelLogin: () => Promise<void>
+  /** Remove a provider credential via the runtime. */
+  logoutProvider: (providerId: string) => Promise<{ ok: boolean; error?: string }>
   applySessionEvent: (event: SessionEvent) => void
 }
 
@@ -279,6 +305,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   composerPrefill: null,
   recentProjects: [],
   historySessions: [],
+  runtimeOverview: null,
+  runtimeModels: [],
+  sessionThinking: {},
+  sessionModelVersion: {},
+  loginState: { status: 'idle' },
 
   setTheme: (theme) => {
     set({ theme })
@@ -553,6 +584,46 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setInstallStatus: (installStatus) => set({ installStatus }),
 
+  loadRuntimeOverview: async (force = false) => {
+    const runtimeOverview = await window.electronAPI.runtimeOverview(force)
+    set({ runtimeOverview })
+  },
+
+  loadRuntimeModels: async () => {
+    const runtimeModels = await window.electronAPI.runtimeListModels()
+    set({ runtimeModels })
+  },
+
+  selectRuntimeDefaultModel: async (selector) => {
+    const result = await window.electronAPI.runtimeSetDefaultModel(selector)
+    await get().loadRuntimeOverview(true)
+    return result
+  },
+
+  setRuntimeDefaultThinking: async (level) => {
+    const result = await window.electronAPI.runtimeSetDefaultThinking(level)
+    await get().loadRuntimeOverview(true)
+    return result
+  },
+
+  startLogin: async (providerId) => {
+    return window.electronAPI.authStartLogin(providerId)
+  },
+
+  answerLogin: async (answer) => {
+    await window.electronAPI.authAnswerLogin(answer)
+  },
+
+  cancelLogin: async () => {
+    await window.electronAPI.authCancelLogin()
+  },
+
+  logoutProvider: async (providerId) => {
+    const result = await window.electronAPI.authLogout(providerId)
+    await get().loadRuntimeOverview(true)
+    return result
+  },
+
   loadModelState: async () => {
     const [modelConfig, models] = await Promise.all([
       window.electronAPI.getModelConfig(),
@@ -562,6 +633,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectModel: async (provider, modelId) => {
+    const current = get().runtimeOverview?.profile === 'current'
+    if (current) {
+      // Current profile: default via runtime config (read-after-write),
+      // session via set_model. No legacy files involved.
+      const selector = provider && modelId ? `${provider}/${modelId}` : ''
+      const result = await get().selectRuntimeDefaultModel(selector)
+      if (!result.ok) return
+      const sid = get().currentSessionId
+      if (sid && provider && modelId) {
+        await window.electronAPI.setSessionModel(sid, provider, modelId)
+      }
+      return
+    }
     await window.electronAPI.setModelConfig({ defaultProvider: provider, defaultModel: modelId })
     const sid = get().currentSessionId
     if (sid) {
@@ -720,6 +804,20 @@ export const useAppStore = create<AppState>((set, get) => ({
           [event.sessionId]: (state.uiRequests[event.sessionId] || []).filter(
             (r) => r.id !== event.id
           )
+        }
+      }))
+    } else if (event.type === 'thinking_level_changed') {
+      // Runtime-resolved level (may be clamped from the requested one);
+      // pickers display exactly this, never the optimistic request.
+      set((state) => ({
+        sessionThinking: { ...state.sessionThinking, [event.sessionId]: event.level }
+      }))
+    } else if (event.type === 'model_changed') {
+      // Session model changed; pickers refetch get_state for details.
+      set((state) => ({
+        sessionModelVersion: {
+          ...state.sessionModelVersion,
+          [event.sessionId]: (state.sessionModelVersion[event.sessionId] ?? 0) + 1
         }
       }))
     } else if (event.type === 'error') {
