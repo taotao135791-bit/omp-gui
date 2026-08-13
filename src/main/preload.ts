@@ -157,6 +157,8 @@ export interface ElectronAPI {
   runtimeSetMachineSkills: (enabled: boolean) => Promise<{ ok: boolean; error?: string }>
   /** Start the runtime's native login flow; progress rides onLoginState. */
   authStartLogin: (providerId: string) => Promise<{ ok: boolean; error?: string }>
+  /** Set a provider's API key directly (paste-key form, provider-validated). */
+  authSetApiKey: (providerId: string, key: string) => Promise<{ ok: boolean; error?: string }>
   /** Answer the pending login prompt (input/select/confirm, or cancel). */
   authAnswerLogin: (answer: LoginAnswer) => Promise<{ ok: boolean; error?: string }>
   /** Cancel the running login flow (kills the runtime operation). */
@@ -302,6 +304,8 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_SET_MACHINE_SKILLS, enabled),
   authStartLogin: (providerId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.AUTH_START_LOGIN, providerId),
+  authSetApiKey: (providerId: string, key: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUTH_SET_API_KEY, providerId, key),
   authAnswerLogin: (answer: LoginAnswer) =>
     ipcRenderer.invoke(IPC_CHANNELS.AUTH_ANSWER_LOGIN, answer),
   authCancelLogin: () => ipcRenderer.invoke(IPC_CHANNELS.AUTH_CANCEL_LOGIN),

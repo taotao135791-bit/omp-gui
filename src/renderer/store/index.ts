@@ -288,6 +288,8 @@ interface AppState {
   setRuntimeDefaultThinking: (level: string) => Promise<{ ok: boolean; error?: string }>
   /** Toggle machine skills via the runtime config (current profile). */
   setRuntimeMachineSkills: (enabled: boolean) => Promise<{ ok: boolean; error?: string }>
+  /** Set a provider's API key directly (paste-key form, provider-validated). */
+  setRuntimeApiKey: (providerId: string, key: string) => Promise<{ ok: boolean; error?: string }>
   /** Start the native login flow for a provider. */
   startLogin: (providerId: string) => Promise<{ ok: boolean; error?: string }>
   /** Answer the pending login prompt. */
@@ -638,6 +640,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setRuntimeMachineSkills: async (enabled) => {
     const result = await window.electronAPI.runtimeSetMachineSkills(enabled)
+    await get().loadRuntimeOverview(true)
+    return result
+  },
+
+  setRuntimeApiKey: async (providerId, key) => {
+    const result = await window.electronAPI.authSetApiKey(providerId, key)
     await get().loadRuntimeOverview(true)
     return result
   },

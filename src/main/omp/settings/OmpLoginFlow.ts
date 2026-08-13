@@ -34,6 +34,8 @@ export class OmpLoginFlow {
   private client: RuntimeRpcClient | null = null
   private providerId = ''
   private finished = false
+  /** When set, the first `input` prompt is auto-answered with this key. */
+  private autoKey: string | null = null
 
   constructor(private readonly opts: LoginFlowOptions) {}
 
@@ -44,6 +46,21 @@ export class OmpLoginFlow {
 
   get active(): boolean {
     return !this.finished
+  }
+
+  /**
+   * Set an API key for a provider and resolve when the flow settles.
+   * Reuses the exact `login` flow + read-after-write verification, but
+   * auto-answers the runtime's "paste API key" prompt with `key`.
+   */
+  async setApiKey(providerId: string, key: string): Promise<LoginState> {
+    this.autoKey = key
+    try {
+      await this.start(providerId)
+      return this.currentState
+    } finally {
+      this.autoKey = null
+    }
   }
 
   async start(providerId: string): Promise<void> {
@@ -147,6 +164,12 @@ export class OmpLoginFlow {
       const timeoutMs = typeof event.timeout === 'number' ? event.timeout : undefined
       switch (event.method) {
         case 'input':
+          // Auto-answer when a key was pre-supplied (setApiKey): never block
+          // on the interactive input prompt in that case.
+          if (this.autoKey !== null && this.client) {
+            this.client.respond(requestId, { value: this.autoKey })
+            return
+          }
           this.setState({
             status: 'waiting_for_input',
             providerId: this.providerId,

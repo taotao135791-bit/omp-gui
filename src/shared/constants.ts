@@ -69,6 +69,7 @@ export const IPC_CHANNELS = {
   RUNTIME_SET_DEFAULT_THINKING: 'runtime:set-default-thinking',
   RUNTIME_SET_MACHINE_SKILLS: 'runtime:set-machine-skills',
   AUTH_START_LOGIN: 'auth:start-login',
+  AUTH_SET_API_KEY: 'auth:set-api-key',
   AUTH_ANSWER_LOGIN: 'auth:answer-login',
   AUTH_CANCEL_LOGIN: 'auth:cancel-login',
   AUTH_LOGOUT: 'auth:logout',

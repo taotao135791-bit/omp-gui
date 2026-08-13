@@ -161,6 +161,22 @@ describe('OmpLoginFlow', () => {
     expect(last && 'message' in last && (last as { message: string }).message).toMatch(/exited/)
   })
 
+  it('setApiKey auto-answers the paste-key prompt and verifies', async () => {
+    const { flow, states, client } = makeFlow()
+    const done = flow.setApiKey('deepseek', 'sk-direct')
+    await vi.waitFor(() => expect(states.some((s) => s.status === 'starting')).toBe(true))
+    client.openUrl('https://platform.deepseek.com/api_keys')
+    client.emit({ type: 'ui_request', id: 'i1', method: 'input', title: 'Paste your DeepSeek API key' })
+    await tick()
+    // The key was auto-answered, never left waiting for manual input.
+    expect(states.some((s) => s.status === 'waiting_for_input')).toBe(false)
+    expect(client.respond).toHaveBeenCalledWith('i1', { value: 'sk-direct' })
+    client.resolveLogin({ type: 'response', command: 'login', success: true, data: { providerId: 'deepseek' } })
+    const state = await done
+    expect(state.status).toBe('connected')
+    expect(client.kill).toHaveBeenCalled()
+  })
+
   it('reports failure when the runtime cannot start at all', async () => {
     const { flow, states } = makeFlow({ spawnNull: true })
     await flow.start('deepseek')

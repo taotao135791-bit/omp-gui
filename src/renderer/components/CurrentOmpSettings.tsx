@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
-import AuthSection from './AuthSection'
 import RuntimeModelSection from './RuntimeModelSection'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -89,7 +88,6 @@ export default function CurrentOmpSettings() {
 
   return (
     <>
-      <AuthSection />
       <RuntimeModelSection />
 
       <Section title={t('settings.skills')}>

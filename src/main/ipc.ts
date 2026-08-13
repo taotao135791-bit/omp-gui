@@ -602,6 +602,37 @@ export function registerIpc() {
     return { ok: loginFlow.answer(answer) }
   })
 
+  ipcMain.handle(
+    IPC_CHANNELS.AUTH_SET_API_KEY,
+    async (_event, providerId: unknown, key: unknown) => {
+      if (typeof providerId !== 'string' || !PROVIDER_ID_PATTERN.test(providerId)) {
+        return { ok: false, error: 'invalid provider id' }
+      }
+      if (typeof key !== 'string' || !key.trim()) {
+        return { ok: false, error: 'invalid api key' }
+      }
+      if (loginFlow?.active) {
+        return { ok: false, error: 'a login flow is already running' }
+      }
+      const cli = detectCli()
+      const flow = new OmpLoginFlow({
+        cli,
+        onState: broadcastLoginState,
+        onOpenUrl: () => {}
+      })
+      loginFlow = flow
+      try {
+        const state = await flow.setApiKey(providerId, key.trim())
+        runtimeSettings.invalidate()
+        return state.status === 'connected'
+          ? { ok: true }
+          : { ok: false, error: 'message' in state ? state.message : 'failed' }
+      } finally {
+        if (loginFlow === flow) loginFlow = null
+      }
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.AUTH_CANCEL_LOGIN, async () => {
     loginFlow?.cancel()
     return { ok: true }
