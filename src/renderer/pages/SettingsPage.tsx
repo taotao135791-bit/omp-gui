@@ -67,7 +67,10 @@ export default function SettingsPage() {
   // config/RPC-backed) vs legacy (auth.json/settings.json file-backed). The
   // two surfaces are physically separate components — no shared mutations.
   const runtimeOverview = useAppStore((s) => s.runtimeOverview)
-  const isCurrent = runtimeOverview?.profile === 'current'
+  const [overviewError, setOverviewError] = useState(false)
+  const profile = runtimeOverview?.profile
+  const isCurrent = profile === 'current'
+  const isLegacy = profile === 'legacy'
   // Widened from the literal type `1` so a future protocol bump can render
   // the unsupported state instead of being narrowed away by TS.
   const ompProtocol: number | null = caps ? caps.protocol : null
@@ -76,7 +79,11 @@ export default function SettingsPage() {
     window.electronAPI.detectCli().then(setCli)
     window.electronAPI.getCapabilities().then(setCaps)
     window.electronAPI.getAppVersion().then(setVersion)
-    useAppStore.getState().loadRuntimeOverview(true)
+    // Explicit error tracking: a failed overview must NOT fall back to Legacy.
+    useAppStore
+      .getState()
+      .loadRuntimeOverview(true)
+      .catch(() => setOverviewError(true))
     useAppStore.getState().loadRuntimeModels()
     window.electronAPI.getStore('permissionMode').then((v) => setPermissionModeState(v ?? 'ask'))
     window.electronAPI.getStore('notifications').then((v) => setNotificationsState(v ?? true))
@@ -138,7 +145,33 @@ export default function SettingsPage() {
 
       <div className="flex-1 overflow-y-auto p-5">
         <div className="mx-auto max-w-[680px] space-y-4">
-          {isCurrent ? <CurrentOmpSettings /> : <LegacyPiSettings />}
+          {isCurrent ? (
+            <CurrentOmpSettings />
+          ) : isLegacy ? (
+            <LegacyPiSettings />
+          ) : overviewError ? (
+            <Section title="Oh My Pi">
+              <Row label={t('settings.ompCompatibility')}>
+                <span className="text-xs text-red-500">{t('settings.runtimeError')}</span>
+              </Row>
+              <Note>
+                <button
+                  onClick={() => {
+                    setOverviewError(false)
+                    useAppStore.getState().loadRuntimeOverview(true).catch(() => setOverviewError(true))
+                  }}
+                  className={buttonCls}
+                >
+                  <RefreshCw size={11} />
+                  {t('settings.runtimeRetry')}
+                </button>
+              </Note>
+            </Section>
+          ) : (
+            <Section title="Oh My Pi">
+              <Note>{t('settings.runtimeLoading')}</Note>
+            </Section>
+          )}
 
           <Section title={t('settings.permissions')}>
             <Row label={t('settings.permissionMode')}>

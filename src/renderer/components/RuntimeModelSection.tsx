@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Check } from 'lucide-react'
-import { DefaultThinkingLevel } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { defaultThinkingOptionsFor } from '../lib/thinking'
+import { currentValueState } from '../lib/runtimeSelect'
 
 /**
  * Settings → Models (current profile): the new-session default model and
@@ -11,8 +11,10 @@ import { defaultThinkingOptionsFor } from '../lib/thinking'
  * (omp config modelRoles.default / defaultThinkingLevel), read-after-write
  * verified. The composer pickers handle the per-session selection.
  *
- * The default model is `modelRoles.default`, NEVER `enabledModels` — the
- * latter is a separate allow-list the GUI does not touch here.
+ * Runtime truth: the current value the runtime reports is ALWAYS shown,
+ * even when it is absent from the catalog (synthetic "unavailable" option)
+ * or from the model's supported thinking set (synthetic "unsupported"
+ * option). The UI never coerces it to '' / automatic.
  */
 export default function RuntimeModelSection() {
   const overview = useAppStore((s) => s.runtimeOverview)
@@ -24,7 +26,6 @@ export default function RuntimeModelSection() {
   const t = useT()
 
   const defaultModel = overview?.modelState.defaultModel ?? ''
-  const defaultModelExplicit = overview?.modelState.defaultModelExplicit ?? false
   const defaultThinking = overview?.modelState.defaultThinkingLevel ?? ''
   const catalog = runtimeModels
 
@@ -57,33 +58,14 @@ export default function RuntimeModelSection() {
     return acc
   }, new Map())
 
-  // Default-thinking options follow the default model's capability when the
-  // catalog knows it; `auto` stays offered (it is a runtime classifier).
+  // --- Default Model: current value always visible -------------------
+  const catalogSelectors = catalog.map((m) => m.selector)
+  const modelState = currentValueState(defaultModel, catalogSelectors)
+
+  // --- Default Thinking: current value always visible -----------------
   const defaultEntry = catalog.find((m) => m.selector === defaultModel)
   const thinkingOptions = defaultThinkingOptionsFor(defaultEntry)
-
-  // A current default level outside the model's declared set is shown, not
-  // dropped — the user must re-select. Unknown-looking levels render raw.
-  const currentThinkingSupported =
-    defaultThinking === '' || thinkingOptions.includes(defaultThinking as DefaultThinkingLevel)
-
-  // '' = automatic resolution (no explicit modelRoles.default).
-  const modelOptions = catalog.length > 0 ? (
-    <select value={defaultModelExplicit ? defaultModel : ''} onChange={(e) => changeModel(e.target.value)} className={selectCls}>
-      <option value="">{t('settings.modelAuto')}</option>
-      {Array.from(groups.entries()).map(([pid, list]) => (
-        <optgroup key={pid} label={pid}>
-          {list.map((m) => (
-            <option key={m.selector} value={m.selector}>
-              {m.name}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
-  ) : (
-    <span className="text-xs text-cream-faint">{t('settings.modelCatalogEmpty')}</span>
-  )
+  const thinkingState = currentValueState(defaultThinking, thinkingOptions)
 
   return (
     <section className="overflow-hidden rounded-[16px] border border-line bg-ink-850 shadow-card">
@@ -93,22 +75,73 @@ export default function RuntimeModelSection() {
       <div className="divide-y divide-line/60 px-4">
         <div className="flex items-center justify-between gap-3 py-3">
           <span className="text-[13px] text-cream">{t('settings.defaultModel')}</span>
-          <span className="flex items-center gap-2">{modelOptions}</span>
+          <span className="flex items-center gap-2">
+            {catalog.length > 0 ? (
+              <select value={modelState.value} onChange={(e) => changeModel(e.target.value)} className={selectCls}>
+                {/* '' = no explicit default → runtime/provider automatic */}
+                <option value="">{t('settings.modelAuto')}</option>
+                {/* Synthetic: current explicit value missing from catalog must
+                    still be shown, marked unavailable — never coerced to 'auto'. */}
+                {modelState.unavailable && (
+                  <option value={modelState.value}>
+                    {modelState.value} · {t('settings.modelUnavailable')}
+                  </option>
+                )}
+                {Array.from(groups.entries()).map(([pid, list]) => (
+                  <optgroup key={pid} label={pid}>
+                    {list
+                      .filter((m) => m.selector !== modelState.value)
+                      .map((m) => (
+                        <option key={m.selector} value={m.selector}>
+                          {m.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                ))}
+              </select>
+            ) : (
+              // Catalog empty but an explicit default exists: still show it.
+              <select value={modelState.value} onChange={(e) => changeModel(e.target.value)} className={selectCls}>
+                <option value="">{t('settings.modelAuto')}</option>
+                {modelState.value && (
+                  <option value={modelState.value}>
+                    {modelState.value} · {t('settings.modelUnavailable')}
+                  </option>
+                )}
+              </select>
+            )}
+          </span>
         </div>
+        {modelState.unavailable && (
+          <p className="px-4 pb-2 text-[11px] leading-relaxed text-cream-faint">
+            {t('settings.modelUnavailableNote')}
+          </p>
+        )}
+
         <div className="flex items-center justify-between gap-3 py-3">
           <span className="text-[13px] text-cream">{t('settings.thinkingCurrent')}</span>
           <span className="flex items-center gap-2">
             <select
-              value={defaultThinking}
+              value={thinkingState.value}
               onChange={(e) => changeThinking(e.target.value)}
               className={selectCls}
             >
-              <option value="">{t('settings.thinkingDefault')}</option>
-              {thinkingOptions.map((level) => (
-                <option key={level} value={level}>
-                  {level}
+              {/* '' = reset to the runtime-chosen default (distinct from `auto`). */}
+              <option value="">{t('settings.thinkingReset')}</option>
+              {/* Synthetic: current value unsupported by the default model must
+                  still be selected & visible, marked unsupported. */}
+              {thinkingState.unavailable && (
+                <option value={thinkingState.value}>
+                  {thinkingState.value} · {t('settings.thinkingUnsupported')}
                 </option>
-              ))}
+              )}
+              {thinkingOptions
+                .filter((level) => level !== thinkingState.value)
+                .map((level) => (
+                  <option key={level} value={level}>
+                    {level === 'auto' ? `${t('settings.thinkingAuto')} (auto)` : level}
+                  </option>
+                ))}
             </select>
             {saved && (
               <span className="flex items-center gap-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">
@@ -117,12 +150,12 @@ export default function RuntimeModelSection() {
             )}
           </span>
         </div>
+        {thinkingState.unavailable && (
+          <p className="px-4 pb-2 text-[11px] leading-relaxed text-amber-500">
+            {thinkingState.value} · {t('settings.thinkingUnsupported')}
+          </p>
+        )}
       </div>
-      {!currentThinkingSupported && defaultThinking !== '' && (
-        <p className="px-4 pb-2 text-xs text-amber-500">
-          Current: {defaultThinking} — not supported by the selected default model.
-        </p>
-      )}
       {error && (
         <p className="px-4 pb-2 text-xs text-red-500">{t('settings.saveFailed', { error })}</p>
       )}

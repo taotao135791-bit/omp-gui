@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
+import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 
 export interface MessageLike {
   id: string
@@ -17,6 +18,14 @@ export interface MessageLike {
   /** Images the user attached to this message (in-memory only, dataURL-grade). */
   images?: { data: string; mimeType: string }[]
   toolCall?: ToolCallRecord
+  /**
+   * Per-turn runtime snapshot: the actual `provider/id` model selector the
+   * session was using when this user turn was dispatched. Historical turns
+   * are self-describing — never re-derived from the session's current state.
+   */
+  runtimeModel?: string
+  /** Per-turn runtime snapshot: session thinking level at dispatch. */
+  runtimeThinking?: string
 }
 
 /** Verb buckets the turn-progress row aggregates tool calls into. */
@@ -790,22 +799,29 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (event.status === 'idle' && wasBusy) {
         const next = get().shiftQueuedMessage(event.sessionId)
         if (next) {
-          get().addMessage(event.sessionId, {
-            id: crypto.randomUUID(),
-            role: 'user',
-            content: next.text,
-            images: next.images?.map(({ data, mimeType }) => ({ data, mimeType }))
-          })
-          set((state) => ({ busy: { ...state.busy, [event.sessionId]: true } }))
-          void window.electronAPI
-            .sendMessage(event.sessionId, next.text, next.images)
-            .then((sent) => {
-              if (sent) {
-                const list = get().messages[event.sessionId] || []
-                void get().createCheckpointForMessage(event.sessionId, list.length - 1, next.text)
-                void get().maybeNameSession(event.sessionId, next.text)
-              }
+          // Snapshot the ACTUAL dispatch-time session state, so a queued turn
+          // is tagged with the model/thinking it really runs under — even if
+          // the user hot-switched the session model while it was queued.
+          void captureSessionSnapshot(event.sessionId).then((snap) => {
+            get().addMessage(event.sessionId, {
+              id: crypto.randomUUID(),
+              role: 'user',
+              content: next.text,
+              images: next.images?.map(({ data, mimeType }) => ({ data, mimeType })),
+              runtimeModel: snap.modelSelector,
+              runtimeThinking: snap.thinkingLevel
             })
+            set((state) => ({ busy: { ...state.busy, [event.sessionId]: true } }))
+            void window.electronAPI
+              .sendMessage(event.sessionId, next.text, next.images)
+              .then((sent) => {
+                if (sent) {
+                  const list = get().messages[event.sessionId] || []
+                  void get().createCheckpointForMessage(event.sessionId, list.length - 1, next.text)
+                  void get().maybeNameSession(event.sessionId, next.text)
+                }
+              })
+          })
         } else if (event.sessionId !== get().currentSessionId) {
           // Turn finished in a background session — flag it unread
           get().markSessionUnread(event.sessionId)

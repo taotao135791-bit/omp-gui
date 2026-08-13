@@ -95,17 +95,15 @@ export default function CurrentOmpSettings() {
       <Section title={t('settings.skills')}>
         <Row label={t('settings.machineSkills')}>
           {unsupported ? (
-            <span className="text-xs text-cream-faint">
-              Not supported by this Oh My Pi version
-            </span>
+            <span className="text-xs text-cream-faint">{t('settings.machineSkillsUnsupported')}</span>
           ) : unknownState ? (
             <span className="flex items-center gap-2 text-xs text-cream-faint">
-              Unable to determine ·{' '}
+              {t('settings.machineSkillsUnknown')} ·{' '}
               <button
                 onClick={() => useAppStore.getState().loadRuntimeOverview(true)}
                 className="focus-ring rounded border border-line px-1.5 py-0.5 text-cream-dim hover:text-cream"
               >
-                Refresh
+                {t('settings.machineSkillsRefresh')}
               </button>
             </span>
           ) : (
@@ -137,7 +135,7 @@ export default function CurrentOmpSettings() {
         )}
         <Note>
           {unsupported
-            ? 'This Oh My Pi version does not expose Machine Skills configuration.'
+            ? t('settings.machineSkillsUnsupportedDescription')
             : machineSkillCount > 0
               ? t('settings.machineSkillsNoteCount', { count: machineSkillCount })
               : t('settings.machineSkillsNote')}

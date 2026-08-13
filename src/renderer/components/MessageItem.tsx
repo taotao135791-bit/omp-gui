@@ -36,14 +36,18 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
   const checkpointAvailable = useAppStore((s) =>
     sessionId ? s.checkpointUnavailable[sessionId] !== true : false
   )
-  // Current model selection, shown as a label under user bubbles (best effort —
-  // the per-turn model isn't tracked, so nothing renders until it's loaded).
-  const modelName = useAppStore((s) => {
-    const cfg = s.modelConfig
-    if (!cfg || !cfg.defaultModel) return null
-    const found = s.models.find((m) => m.provider === cfg.defaultProvider && m.id === cfg.defaultModel)
-    return found?.name ?? cfg.defaultModel
-  })
+  // Per-turn runtime snapshot, captured at dispatch time. Historical turns are
+  // self-describing: this renders ONLY what the message itself recorded, never
+  // the session's current model or the global default.
+  const runtimeModel = message.runtimeModel
+  const runtimeThinking = message.runtimeThinking
+  // Legacy builds (no snapshot metadata) show nothing — we never fabricate
+  // current/global model as a stand-in for a historical turn.
+  const tagLabel = runtimeModel
+    ? runtimeThinking
+      ? `${runtimeModel} · ${runtimeThinking}`
+      : runtimeModel
+    : undefined
 
   // Thinking elapsed time: ticks once a second while the run streams.
   const thinkingStreaming = Boolean(message.thinking) && message.thinkingEndTs === undefined
@@ -144,14 +148,14 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
             )}
             {message.content}
           </div>
-          {/* hover action bar: model label, copy, edit-and-resend */}
+          {/* hover action bar: per-turn model/thinking tag, copy, edit-and-resend */}
           <div className="mt-1 flex items-center justify-end gap-1 opacity-0 transition-all group-hover:opacity-100">
-            {modelName && (
+            {tagLabel && (
               <span
                 title={t('composer.model')}
                 className="rounded-full border border-line px-2 py-px text-[10.5px] text-cream-faint"
               >
-                {modelName}
+                {tagLabel}
               </span>
             )}
             <button

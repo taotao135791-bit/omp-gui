@@ -4,6 +4,7 @@ import { PromptImage, SlashCommand } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
+import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import MessageList from './MessageList'
 import Composer from './Composer'
 import ExtensionUiDialog from './ExtensionUiDialog'
@@ -97,11 +98,17 @@ export default function ChatPanel() {
     if (!text.trim() || cliAvailable === false) return
     const sessionId = currentSessionId ?? (await createSessionForCurrentProject())
     if (!sessionId) return
+    // Snapshot the session's REAL state at dispatch time — the historical
+    // turn keeps the model/thinking it actually ran under, never the
+    // session's later current state.
+    const snap = await captureSessionSnapshot(sessionId)
     useAppStore.getState().addMessage(sessionId, {
       id: crypto.randomUUID(),
       role: 'user',
       content: text.trim(),
-      images: images?.map(({ data, mimeType }) => ({ data, mimeType }))
+      images: images?.map(({ data, mimeType }) => ({ data, mimeType })),
+      runtimeModel: snap.modelSelector,
+      runtimeThinking: snap.thinkingLevel
     })
     // Optimistic: show the working state until agent_end / error lands
     useAppStore.getState().setBusy(sessionId, true)

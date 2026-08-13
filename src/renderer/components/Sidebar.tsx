@@ -73,14 +73,22 @@ export default function Sidebar() {
   const [restoreFailedPath, setRestoreFailedPath] = useState<string | null>(null)
   const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null)
   const [confirmDeleteSessionId, setConfirmDeleteSessionId] = useState<string | null>(null)
+  const [deleteFailedPath, setDeleteFailedPath] = useState<string | null>(null)
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // One-time bootstrap of the most-recent project: only before the initial
+  // hydration completes. A user explicitly clearing the current project must
+  // NOT be yanked back to projects[0].
+  const hydratedRecent = useRef(false)
 
   useEffect(() => {
     window.electronAPI.getStore('recentProjects').then((projects) => {
       setRecentProjects(projects)
-      if (projects.length > 0 && !currentProject) {
-        setCurrentProject(projects[0])
-        window.electronAPI.setFsRoot(projects[0])
+      if (!hydratedRecent.current) {
+        hydratedRecent.current = true
+        if (projects.length > 0 && !currentProject) {
+          setCurrentProject(projects[0])
+          window.electronAPI.setFsRoot(projects[0])
+        }
       }
     })
   }, [currentProject, setCurrentProject, setRecentProjects])
@@ -151,6 +159,7 @@ export default function Sidebar() {
   const handleDeleteHistory = async (info: HistorySessionInfo) => {
     if (confirmDeletePath !== info.filePath) {
       setConfirmDeletePath(info.filePath)
+      setDeleteFailedPath(null)
       if (confirmTimer.current) clearTimeout(confirmTimer.current)
       confirmTimer.current = setTimeout(() => setConfirmDeletePath(null), 3000)
       return
@@ -158,9 +167,15 @@ export default function Sidebar() {
     setConfirmDeletePath(null)
     if (confirmTimer.current) clearTimeout(confirmTimer.current)
     const ok = await window.electronAPI.deleteSessionFile(info.filePath)
-    // Only the history entry goes away — a live session resumed from this
-    // file keeps running untouched.
-    if (ok) removeHistorySession(info.filePath)
+    // Only the history entry goes away on success — a failed delete keeps the
+    // item and surfaces a user-visible error (never silent success).
+    if (ok) {
+      setDeleteFailedPath(null)
+      removeHistorySession(info.filePath)
+    } else {
+      setDeleteFailedPath(info.filePath)
+      setTimeout(() => setDeleteFailedPath((p) => (p === info.filePath ? null : p)), 3000)
+    }
   }
 
   const pinnedSet = useMemo(() => new Set(pinnedSessionIds), [pinnedSessionIds])
@@ -348,10 +363,16 @@ export default function Sidebar() {
           </div>
           <div
             className={`truncate text-[11px] leading-4 ${
-              failed ? 'text-red-500' : 'text-cream-faint/70'
+              failed || deleteFailedPath === info.filePath
+                ? 'text-red-500'
+                : 'text-cream-faint/70'
             }`}
           >
-            {failed ? t('history.restoreFailed') : formatRelativeTime(info.timestamp, language)}
+            {failed
+              ? t('history.restoreFailed')
+              : deleteFailedPath === info.filePath
+                ? t('history.deleteFailed')
+                : formatRelativeTime(info.timestamp, language)}
           </div>
         </div>
         {resuming ? (
@@ -591,7 +612,7 @@ export default function Sidebar() {
                   : 'border-transparent text-cream-dim hover:text-cream'
               }`}
             >
-              {lang === 'zh' ? '中' : 'EN'}
+              {lang === 'zh' ? t('settings.languageZh') : t('settings.languageEn')}
             </button>
           ))}
         </div>
