@@ -24,16 +24,21 @@ location is not a public API.
 
 ## Authentication flow (current)
 
-`login {providerId}` over RPC (verified live):
+All providers authenticate by **API key** — there is no OAuth/browser login
+step. `login {providerId}` over RPC (verified live):
 
 ```
 login
-  → extension_ui_request open_url   (OAuth page or key dashboard → browser)
+  → extension_ui_request open_url   (the provider's "API keys" dashboard URL)
   → extension_ui_request input      ("Paste your X API key", 10 min timeout)
-  → extension_ui_request select/confirm  (OAuth choices)
   → extension_ui_request notify     ("Validating API key…")
   → response {success} | {success:false, error}   (provider-validated)
 ```
+
+`open_url` is NOT a login step — it merely points at where to obtain a key.
+The GUI does not auto-open a browser; it renders the paste-key input as the
+primary action and offers the dashboard URL as an optional "Get API key" link.
+Key entry is exactly the same direct paste-key form Oh My Pi itself uses.
 
 - A successful login **persists** (verified: restart without env vars keeps
   the provider authenticated) and takes effect for new sessions.
