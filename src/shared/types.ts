@@ -298,7 +298,14 @@ export interface RuntimeOverview {
 export type LoginState =
   | { status: 'idle' }
   | { status: 'starting'; providerId: string }
-  | { status: 'waiting_for_browser'; providerId: string; instructions?: string }
+  | {
+      status: 'waiting_for_browser'
+      providerId: string
+      instructions?: string
+      /** The URL the runtime asked to open (never auto-opened — user-initiated). */
+      url?: string
+      launchUrl?: string
+    }
   | {
       status: 'waiting_for_input'
       providerId: string

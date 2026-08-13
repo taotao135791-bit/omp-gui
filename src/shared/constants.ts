@@ -72,6 +72,7 @@ export const IPC_CHANNELS = {
   AUTH_ANSWER_LOGIN: 'auth:answer-login',
   AUTH_CANCEL_LOGIN: 'auth:cancel-login',
   AUTH_LOGOUT: 'auth:logout',
+  AUTH_OPEN_LOGIN_URL: 'auth:open-login-url',
   AUTH_LOGIN_STATE: 'auth:login-state'
 } as const
 

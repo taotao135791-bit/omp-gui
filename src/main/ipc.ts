@@ -572,13 +572,11 @@ export function registerIpc() {
     const flow = new OmpLoginFlow({
       cli,
       onState: broadcastLoginState,
-      onOpenUrl: (url) => {
-        // Login URLs come from the runtime's own login flow; https only
-        // (loopback launch URLs included — they 302 to the https target).
-        if (/^https:\/\//i.test(url) || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) {
-          void shell.openExternal(url)
-        }
-      }
+      // No auto-open: key-based providers (DeepSeek, OpenRouter, xAI, …)
+      // emit open_url just to point at the API-key dashboard before showing
+      // the paste-key input. The URL is stashed in loginState and opened only
+      // on explicit user action via AUTH_OPEN_LOGIN_URL.
+      onOpenUrl: () => {}
     })
     loginFlow = flow
     // Fire-and-forget: progress rides the AUTH_LOGIN_STATE channel.
@@ -606,6 +604,17 @@ export function registerIpc() {
 
   ipcMain.handle(IPC_CHANNELS.AUTH_CANCEL_LOGIN, async () => {
     loginFlow?.cancel()
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.AUTH_OPEN_LOGIN_URL, async (_event, url: unknown) => {
+    if (typeof url !== 'string') return { ok: false, error: 'invalid url' }
+    // Login URLs come from the runtime's own login flow; https only
+    // (loopback launch URLs included — they 302 to the https target).
+    if (!/^https:\/\//i.test(url) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) {
+      return { ok: false, error: 'invalid url' }
+    }
+    await shell.openExternal(url)
     return { ok: true }
   })
 

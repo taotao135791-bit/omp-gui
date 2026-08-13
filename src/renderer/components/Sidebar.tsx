@@ -68,7 +68,6 @@ export default function Sidebar() {
   const [query, setQuery] = useState('')
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [projectsExpanded, setProjectsExpanded] = useState(false)
-  const [sessionsExpanded, setSessionsExpanded] = useState(false)
   const [resumingPath, setResumingPath] = useState<string | null>(null)
   const [restoreFailedPath, setRestoreFailedPath] = useState<string | null>(null)
   const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null)
@@ -129,11 +128,20 @@ export default function Sidebar() {
   }
 
   const handleResumeHistory = async (info: HistorySessionInfo) => {
-    if (!currentProject || resumingPath) return
+    if (resumingPath) return
+    // A history session belongs to a project. When none is selected, derive it
+    // from the session itself so clicking always opens the chat (never a
+    // no-op that just stays on the home page).
+    const project = currentProject ?? info.cwd
+    if (!project) return
     setResumingPath(info.filePath)
     setRestoreFailedPath(null)
     try {
-      const result = await window.electronAPI.resumeSession(currentProject, info.filePath)
+      if (!currentProject) {
+        setCurrentProject(project)
+        window.electronAPI.setFsRoot(project)
+      }
+      const result = await window.electronAPI.resumeSession(project, info.filePath)
       if (!result) {
         setRestoreFailedPath(info.filePath)
         console.error('Failed to resume session:', info.filePath)
@@ -142,7 +150,7 @@ export default function Sidebar() {
       const { session, messages: restored } = result
       // The main process titles a resumed session after the project dir;
       // prefer the richer title from the history entry when there is one.
-      const projectName = currentProject.split('/').filter(Boolean).pop()
+      const projectName = project.split('/').filter(Boolean).pop()
       const title =
         (!session.title || session.title === projectName) && info.title !== 'Untitled'
           ? info.title
@@ -206,15 +214,49 @@ export default function Sidebar() {
     [filteredSessions, archivedSet]
   )
 
-  // Long lists fold past a limit; pinned rows always show and search
-  // results never fold.
-  const SESSION_FOLD_LIMIT = 8
+  // ---- group live sessions by their project (session.cwd) --------------
+  // Known projects are the ones in recentProjects plus the current project;
+  // anything else lands in a bottom "untied to a project" group.
+  const projectOrder = useMemo(() => {
+    const order: string[] = []
+    if (currentProject) order.push(currentProject)
+    for (const p of recentProjects) if (!order.includes(p)) order.push(p)
+    return order
+  }, [currentProject, recentProjects])
+
+  const sessionCwdSet = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of sessions) if (s.cwd) set.add(s.cwd)
+    return set
+  }, [sessions])
+
+  const groupedProjectCwds = useMemo(
+    () => projectOrder.filter((p) => sessionCwdSet.has(p)),
+    [projectOrder, sessionCwdSet]
+  )
+
+  const untiedSessions = useMemo(
+    () => sessions.filter((s) => !projectOrder.includes(s.cwd) && !archivedSet.has(s.id)),
+    [sessions, projectOrder, archivedSet]
+  )
+
+  const renderProjectGroup = (cwd: string) => {
+    const group = sessions.filter((s) => s.cwd === cwd && !archivedSet.has(s.id))
+    const pinned = group.filter((s) => pinnedSet.has(s.id))
+    const normal = group.filter((s) => !pinnedSet.has(s.id))
+    const name = cwd.split('/').filter(Boolean).pop() ?? cwd
+    return (
+      <div key={cwd} className="mt-2">
+        <div className="truncate px-2 pb-1 text-[10.5px] font-semibold uppercase tracking-[0.05em] text-cream-faint/80">
+          {name}
+        </div>
+        <div className="space-y-0.5">{[...pinned, ...normal].map(renderSessionRow)}</div>
+      </div>
+    )
+  }
+
+  // Search results never fold; the default grouped view shows every session.
   const searching = query.trim().length > 0
-  const sessionsOverLimit = !searching && normalSessions.length > SESSION_FOLD_LIMIT
-  const visibleNormalSessions =
-    sessionsOverLimit && !sessionsExpanded
-      ? normalSessions.slice(0, SESSION_FOLD_LIMIT)
-      : normalSessions
 
   const PROJECT_FOLD_LIMIT = 5
   const visibleProjects = projectsExpanded
@@ -447,10 +489,24 @@ export default function Sidebar() {
         <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
           {t('sidebar.project')}
         </div>
-        <button onClick={handleSelectProject} className={`${navRow(false)} font-mono text-xs`}>
-          <FolderOpen size={13} className="shrink-0 text-cream-faint" />
-          <span className="truncate">{currentProject || t('sidebar.selectProject')}</span>
-        </button>
+        {currentProject ? (
+          <div className={`${navRow(true)} cursor-default font-mono text-xs`}>
+            <FolderOpen size={13} className="shrink-0 text-cream-faint" />
+            <span className="min-w-0 flex-1 truncate">{currentProject}</span>
+            <button
+              onClick={handleSelectProject}
+              title={t('sidebar.selectProject')}
+              className="shrink-0 rounded-md p-1 text-cream-faint transition-colors hover:bg-overlay hover:text-cream"
+            >
+              <FolderOpen size={12} />
+            </button>
+          </div>
+        ) : (
+          <button onClick={handleSelectProject} className={`${navRow(false)} font-mono text-xs`}>
+            <FolderOpen size={13} className="shrink-0 text-cream-faint" />
+            <span className="truncate">{t('sidebar.selectProject')}</span>
+          </button>
+        )}
         {recentProjects.length > 0 && (
           <div className="mt-1 space-y-0.5">
             {visibleProjects.map((path) => {
@@ -535,31 +591,29 @@ export default function Sidebar() {
             </div>
           </div>
         )}
-        {pinnedSessions.length === 0 && normalSessions.length === 0 ? (
-          sessions.length === 0 || query.trim() ? (
-            <div className="px-2 py-1.5 text-xs leading-5 text-cream-faint">
-              {sessions.length === 0 ? t('sidebar.noSessions') : t('sidebar.noMatch')}
-            </div>
-          ) : null
+        {searching ? (
+          // Search: flat filtered list (grouping is only for the default view).
+          filteredSessions.length === 0 ? (
+            <div className="px-2 py-1.5 text-xs leading-5 text-cream-faint">{t('sidebar.noMatch')}</div>
+          ) : (
+            <div className="space-y-0.5">{[...pinnedSessions, ...normalSessions].map(renderSessionRow)}</div>
+          )
+        ) : sessions.length === 0 ? (
+          <div className="px-2 py-1.5 text-xs leading-5 text-cream-faint">{t('sidebar.noSessions')}</div>
         ) : (
-          <div className="space-y-0.5">
-            {[...pinnedSessions, ...visibleNormalSessions].map(renderSessionRow)}
-          </div>
-        )}
-        {sessionsOverLimit && (
-          <button
-            onClick={() => setSessionsExpanded(!sessionsExpanded)}
-            className="flex w-full items-center gap-1 px-2 pb-1 pt-1.5 text-[11px] text-cream-faint transition-colors hover:text-cream-dim"
-          >
-            {sessionsExpanded ? (
-              <ChevronDown size={11} strokeWidth={1.5} />
-            ) : (
-              <ChevronRight size={11} strokeWidth={1.5} />
+          <>
+            {groupedProjectCwds.map(renderProjectGroup)}
+            {untiedSessions.length > 0 && (
+              <div className="mt-2">
+                <div className="truncate px-2 pb-1 text-[10.5px] font-semibold uppercase tracking-[0.05em] text-cream-faint/80">
+                  {t('chat.noProject')}
+                </div>
+                <div className="space-y-0.5">
+                  {[...untiedSessions.filter((s) => pinnedSet.has(s.id)), ...untiedSessions.filter((s) => !pinnedSet.has(s.id))].map(renderSessionRow)}
+                </div>
+              </div>
             )}
-            {sessionsExpanded
-              ? t('sidebar.showLess')
-              : t('sidebar.showMore', { count: normalSessions.length - SESSION_FOLD_LIMIT })}
-          </button>
+          </>
         )}
 
         {archivedSessions.length > 0 && (

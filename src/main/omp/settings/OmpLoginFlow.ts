@@ -55,9 +55,19 @@ export class OmpLoginFlow {
       { args: ['--no-extensions'] },
       {
         onEvent: (event) => this.handleEvent(event),
+        // Do NOT auto-open a browser here: key-based providers (DeepSeek,
+        // OpenRouter, xAI, …) emit `open_url` just to point at the API-key
+        // dashboard before showing the paste-key input. Opening a browser
+        // unprompted turns every such provider into a browser-login and
+        // confuses key entry. The URL is stashed in state and opened only
+        // when the user explicitly clicks.
         onOpenUrl: (url, launchUrl) => {
-          this.setState({ status: 'waiting_for_browser', providerId })
-          this.opts.onOpenUrl(launchUrl ?? url)
+          this.setState({
+            status: 'waiting_for_browser',
+            providerId,
+            url,
+            launchUrl
+          })
         },
         onExit: () => {
           if (!this.finished) {

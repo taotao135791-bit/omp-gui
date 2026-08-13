@@ -224,10 +224,24 @@ function LoginFlowCard({
         <p className="mt-1.5 text-xs text-cream-faint">{t('settings.authLoginStarting')}</p>
       )}
       {state.status === 'waiting_for_browser' && (
-        <p className="mt-1.5 text-xs text-cream-faint">
-          {t('settings.authLoginBrowser')}
-          {state.instructions ? ` ${state.instructions}` : ''}
-        </p>
+        <div className="mt-1.5">
+          {(state.url || state.launchUrl) && (
+            <button
+              onClick={() => {
+                const target = (state.launchUrl || state.url) as string
+                if (target) void useAppStore.getState().openLoginUrl(target)
+              }}
+              className="rounded-full border border-line px-3 py-1 text-[12px] text-cream-dim transition-colors hover:border-ink-600 hover:text-cream"
+            >
+              {t('settings.authOpenBrowser')}
+            </button>
+          )}
+          <p className="mt-1.5 text-xs text-cream-faint">
+            {t('settings.authLoginBrowser')}
+            {state.instructions ? ` ${state.instructions}` : ''}
+          </p>
+          <p className="mt-1.5 text-xs text-cream-faint">{t('settings.authPasteKeyHint')}</p>
+        </div>
       )}
       {state.status === 'verifying' && (
         <p className="mt-1.5 text-xs text-cream-faint">

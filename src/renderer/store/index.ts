@@ -294,6 +294,8 @@ interface AppState {
   answerLogin: (answer: LoginAnswer) => Promise<void>
   /** Cancel the running login flow. */
   cancelLogin: () => Promise<void>
+  /** Open a login URL the runtime asked for (explicit user action). */
+  openLoginUrl: (url: string) => Promise<void>
   /** Remove a provider credential via the runtime. */
   logoutProvider: (providerId: string) => Promise<{ ok: boolean; error?: string }>
   applySessionEvent: (event: SessionEvent) => void
@@ -650,6 +652,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   cancelLogin: async () => {
     await window.electronAPI.authCancelLogin()
+  },
+
+  openLoginUrl: async (url) => {
+    await window.electronAPI.authOpenLoginUrl(url)
   },
 
   logoutProvider: async (providerId) => {

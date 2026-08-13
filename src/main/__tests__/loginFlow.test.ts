@@ -87,6 +87,11 @@ describe('OmpLoginFlow', () => {
     client.emit({ type: 'ui_request', id: 'i1', method: 'input', title: 'Paste your DeepSeek API key', placeholder: 'sk-...' })
     await tick()
     expect(states.map((s) => s.status)).toEqual(['starting', 'waiting_for_browser', 'waiting_for_input'])
+    // The URL is stashed in state now (explicit open), NOT auto-opened.
+    const browserState = states.find((s) => s.status === 'waiting_for_browser') as
+      | (LoginState & { status: 'waiting_for_browser' })
+      | undefined
+    expect(browserState?.url).toBe('https://platform.deepseek.com/api_keys')
     const answered = flow.answer({ value: 'sk-fake' })
     expect(answered).toBe(true)
     expect(client.respond).toHaveBeenCalledWith('i1', { value: 'sk-fake' })
@@ -100,7 +105,7 @@ describe('OmpLoginFlow', () => {
     // runtime (verifying) before declaring Connected.
     expect(states.map((x) => x.status)).toContain('verifying')
     expect(client.query).toHaveBeenCalledWith({ type: 'get_login_providers' }, 10_000)
-    expect(urls).toEqual(['https://platform.deepseek.com/api_keys'])
+    expect(urls).toEqual([]) // no longer auto-opened — URL is stashed in state
     expect(client.kill).toHaveBeenCalled()
   })
 

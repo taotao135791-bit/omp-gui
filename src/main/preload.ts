@@ -161,6 +161,8 @@ export interface ElectronAPI {
   authAnswerLogin: (answer: LoginAnswer) => Promise<{ ok: boolean; error?: string }>
   /** Cancel the running login flow (kills the runtime operation). */
   authCancelLogin: () => Promise<{ ok: boolean; error?: string }>
+  /** Open a login URL the runtime asked for (explicit user action). */
+  authOpenLoginUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
   /** Remove a provider credential via the runtime; read-after-write verified. */
   authLogout: (providerId: string) => Promise<{ ok: boolean; error?: string }>
   /** Login flow state stream. */
@@ -303,6 +305,7 @@ const api: ElectronAPI = {
   authAnswerLogin: (answer: LoginAnswer) =>
     ipcRenderer.invoke(IPC_CHANNELS.AUTH_ANSWER_LOGIN, answer),
   authCancelLogin: () => ipcRenderer.invoke(IPC_CHANNELS.AUTH_CANCEL_LOGIN),
+  authOpenLoginUrl: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTH_OPEN_LOGIN_URL, url),
   authLogout: (providerId: string) => ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGOUT, providerId),
   onLoginState: (callback: (state: LoginState) => void) => {
     const handler = (_event: IpcRendererEvent, state: LoginState) => callback(state)

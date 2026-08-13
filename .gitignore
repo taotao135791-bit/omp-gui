@@ -26,3 +26,6 @@ coverage
 # Local env files
 .env
 .env.local
+
+# Experimental/exploration artifacts
+.exp/
