@@ -21,7 +21,7 @@ import {
   PromptImage,
   SessionState,
   StreamingBehavior,
-  ThinkingLevel,
+  SessionThinkingLevel,
   PermissionMode,
   SelectImageResult,
   UpdaterStatus,
@@ -41,7 +41,7 @@ export interface ElectronAPI {
   /** Create a session; overrides are one-shot spawn args for this session only. */
   createSession: (
     cwd: string,
-    overrides?: { modelSelector?: string; thinkingLevel?: ThinkingLevel }
+    overrides?: { modelSelector?: string; thinkingLevel?: SessionThinkingLevel }
   ) => Promise<Session>
   sendMessage: (
     sessionId: string,
@@ -86,7 +86,7 @@ export interface ElectronAPI {
   /** Queue a message delivered after the current turn finishes. */
   followUp: (sessionId: string, message: string, images?: PromptImage[]) => Promise<boolean>
   /** Change the thinking level of a live session. */
-  setThinkingLevel: (sessionId: string, level: ThinkingLevel) => Promise<boolean>
+  setThinkingLevel: (sessionId: string, level: SessionThinkingLevel) => Promise<boolean>
   /** Rewrite a live session's approval-extension config (permission mode hot-swap). */
   updateApprovalConfig: (sessionId: string, mode: PermissionMode) => Promise<boolean>
   /** Export the session transcript as HTML; resolves the saved path (null on failure). */
@@ -171,7 +171,7 @@ const api: ElectronAPI = {
   detectCli: (force?: boolean) => ipcRenderer.invoke(IPC_CHANNELS.OMP_DETECT, force),
   getCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_CAPABILITIES),
   listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_SESSIONS),
-  createSession: (cwd: string, overrides?: { modelSelector?: string; thinkingLevel?: ThinkingLevel }) =>
+  createSession: (cwd: string, overrides?: { modelSelector?: string; thinkingLevel?: SessionThinkingLevel }) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_CREATE_SESSION, cwd, overrides),
   sendMessage: (
     sessionId: string,
@@ -232,7 +232,7 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.OMP_STEER, sessionId, message, images),
   followUp: (sessionId: string, message: string, images?: PromptImage[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_FOLLOW_UP, sessionId, message, images),
-  setThinkingLevel: (sessionId: string, level: ThinkingLevel) =>
+  setThinkingLevel: (sessionId: string, level: SessionThinkingLevel) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SET_THINKING, sessionId, level),
   updateApprovalConfig: (sessionId: string, mode: PermissionMode) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_UPDATE_APPROVAL_CONFIG, sessionId, mode),

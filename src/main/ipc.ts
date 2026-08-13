@@ -12,7 +12,10 @@ import {
   PermissionMode,
   PromptImage,
   StreamingBehavior,
-  ThinkingLevel,
+  SessionThinkingLevel,
+  DefaultThinkingLevel,
+  SESSION_THINKING_LEVELS,
+  DEFAULT_THINKING_LEVELS,
   SelectImageResult,
   LoginAnswer,
   LoginState
@@ -74,7 +77,12 @@ import {
   updaterQuitAndInstall,
   updaterOpenReleasePage
 } from './updater'
-import { RuntimeSettings, PROVIDER_ID_PATTERN, isValidModelSelector, splitModelSelector } from './omp/settings/RuntimeSettings'
+import {
+  RuntimeSettings,
+  isValidModelSelector,
+  splitModelSelector
+} from './omp/settings/RuntimeSettings'
+import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
 
 const fsGuard = new FsGuard()
@@ -146,7 +154,8 @@ function sanitizeDialogFilters(value: unknown): { name: string; extensions: stri
   return out.length ? out : fallback
 }
 
-const THINKING_LEVELS: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const SESSION_LEVELS: readonly SessionThinkingLevel[] = SESSION_THINKING_LEVELS
+const DEFAULT_LEVELS: readonly DefaultThinkingLevel[] = DEFAULT_THINKING_LEVELS
 
 const PERMISSION_MODES: PermissionMode[] = ['full', 'no-bash', 'readonly', 'ask']
 
@@ -190,8 +199,8 @@ export function registerIpc() {
         splitModelSelector(overrides.modelSelector)
           ? overrides.modelSelector
           : undefined
-      const thinkingLevel = THINKING_LEVELS.includes(overrides?.thinkingLevel as ThinkingLevel)
-        ? (overrides?.thinkingLevel as ThinkingLevel)
+      const thinkingLevel = SESSION_LEVELS.includes(overrides?.thinkingLevel as SessionThinkingLevel)
+        ? (overrides?.thinkingLevel as SessionThinkingLevel)
         : undefined
       return createSession(resolved, broadcastSessionEvent, {
         ...(modelSelector ? { modelSelector } : {}),
@@ -250,9 +259,9 @@ export function registerIpc() {
   ipcMain.handle(
     IPC_CHANNELS.OMP_SET_MODEL,
     async (_event: IpcMainInvokeEvent, sessionId: string, provider: string, modelId: string) => {
-      if (typeof provider !== 'string' || !provider || typeof modelId !== 'string' || !modelId) {
-        return false
-      }
+      if (typeof provider !== 'string' || typeof modelId !== 'string') return false
+      const selector = `${provider}/${modelId}`
+      if (!splitModelSelector(selector)) return false
       return setSessionModel(sessionId, provider, modelId)
     }
   )
@@ -310,9 +319,9 @@ export function registerIpc() {
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_SET_THINKING,
-    async (_event: IpcMainInvokeEvent, sessionId: string, level: ThinkingLevel) => {
+    async (_event: IpcMainInvokeEvent, sessionId: string, level: SessionThinkingLevel) => {
       if (typeof sessionId !== 'string' || !sessionId) return false
-      if (!THINKING_LEVELS.includes(level)) return false
+      if (!SESSION_LEVELS.includes(level)) return false
       return setThinkingLevel(sessionId, level)
     }
   )
@@ -526,10 +535,8 @@ export function registerIpc() {
   ipcMain.handle(
     IPC_CHANNELS.RUNTIME_SET_DEFAULT_MODEL,
     async (_event, selector: unknown) => {
-      if (
-        typeof selector !== 'string' ||
-        (selector !== '' && !/^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9._-]*$/i.test(selector))
-      ) {
+      // Single validator, same as set-session-model and next-session override.
+      if (typeof selector !== 'string' || (selector !== '' && !isValidModelSelector(selector))) {
         return { ok: false, error: 'invalid model selector' }
       }
       return runtimeSettings.setDefaultModel(selector)
@@ -539,10 +546,11 @@ export function registerIpc() {
   ipcMain.handle(
     IPC_CHANNELS.RUNTIME_SET_DEFAULT_THINKING,
     async (_event, level: unknown) => {
-      if (typeof level !== 'string' || (level !== '' && !THINKING_LEVELS.includes(level as ThinkingLevel))) {
+      // Config enum (auto is legal, off is not) — verified against omp 17.2.12.
+      if (typeof level !== 'string' || (level !== '' && !DEFAULT_LEVELS.includes(level as DefaultThinkingLevel))) {
         return { ok: false, error: 'invalid thinking level' }
       }
-      return runtimeSettings.setDefaultThinking(level)
+      return runtimeSettings.setDefaultThinking(level as DefaultThinkingLevel | '')
     }
   )
 

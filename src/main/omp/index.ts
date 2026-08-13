@@ -12,7 +12,7 @@ import {
   SessionStats,
   SlashCommand,
   StreamingBehavior,
-  ThinkingLevel
+  SessionThinkingLevel
 } from '../../shared/types'
 import { getStore, setStore } from '../store'
 import { AgentMessage, mapAgentMessages } from '../messageMapping'
@@ -70,7 +70,7 @@ export function getLastAssistantText(sessionId: string): string {
 export function createSession(
   cwd: string,
   onEvent: (event: SessionEvent) => void,
-  opts?: { resumeSessionPath?: string; modelSelector?: string; thinkingLevel?: ThinkingLevel }
+  opts?: { resumeSessionPath?: string; modelSelector?: string; thinkingLevel?: SessionThinkingLevel }
 ): Session {
   const id = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const cli = detectCli()
@@ -270,7 +270,7 @@ export async function followUp(
 }
 
 /** Change the thinking level of a live session. */
-export async function setThinkingLevel(sessionId: string, level: ThinkingLevel): Promise<boolean> {
+export async function setThinkingLevel(sessionId: string, level: SessionThinkingLevel): Promise<boolean> {
   const res = await querySession(sessionId, { type: 'set_thinking_level', level })
   return Boolean(res && res.success === true)
 }

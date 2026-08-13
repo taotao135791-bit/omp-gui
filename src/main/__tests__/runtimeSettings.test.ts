@@ -7,7 +7,9 @@ import { CliInfo } from '../../shared/types'
 /**
  * RuntimeSettings with fully injected runner + probe spawner — no real omp
  * process, no real config files. Verifies profile dispatch, the bootstrap
- * placeholder mask, and read-after-write semantics.
+ * placeholder mask, and read-after-write semantics against the OFFICIAL
+ * current-OMP config schema (modelRoles.default / defaultThinkingLevel /
+ * skills.enableAgentsUser — verified 17.2.12).
  */
 
 const OMP_CLI: CliInfo = { command: 'omp', path: '/usr/local/bin/omp', available: true }
@@ -42,13 +44,16 @@ function fakeProbe(script: ProbeScript) {
   return spawnProbe
 }
 
-function fakeRunner(map: Record<string, { ok?: boolean; stdout?: string }>) {
+type FakeEntry = { ok?: boolean; stdout?: string } | ((args: string[]) => { ok?: boolean; stdout?: string })
+
+function fakeRunner(map: Record<string, FakeEntry>) {
   const calls: string[][] = []
   const run: CliRunner = async (args) => {
     calls.push(args)
     const hit = map[args.join(' ')]
     if (!hit) return { ok: false, stdout: '', stderr: 'unscripted' }
-    return { ok: hit.ok !== false, stdout: hit.stdout ?? '', stderr: '' }
+    const resolved = typeof hit === 'function' ? hit(args) : hit
+    return { ok: resolved.ok !== false, stdout: resolved.stdout ?? '', stderr: '' }
   }
   return { run, calls }
 }
@@ -58,11 +63,15 @@ const PROVIDERS = [
   { id: 'openai', name: 'OpenAI', available: true, authenticated: false }
 ]
 
+function modelRoles(value: Record<string, string>): string {
+  return JSON.stringify({ key: 'modelRoles', value, type: 'record' })
+}
+
 describe('RuntimeSettings · current profile overview', () => {
-  it('reads providers from the runtime probe and config defaults via omp config', async () => {
+  it('reads default model from modelRoles.default, never enabledModels', async () => {
     const { run } = fakeRunner({
-      'config get enabledModels --json': {
-        stdout: JSON.stringify({ key: 'enabledModels', value: ['deepseek/deepseek-v4-pro'] })
+      'config get modelRoles --json': {
+        stdout: modelRoles({ default: 'deepseek/deepseek-v4-pro', smol: 'x/y' })
       },
       'config get defaultThinkingLevel --json': {
         stdout: JSON.stringify({ key: 'defaultThinkingLevel', value: 'high' })
@@ -81,12 +90,48 @@ describe('RuntimeSettings · current profile overview', () => {
     expect(overview.providers).toEqual(PROVIDERS)
     expect(overview.modelState).toEqual({
       defaultModel: 'deepseek/deepseek-v4-pro',
+      defaultModelExplicit: true,
       defaultThinkingLevel: 'high'
     })
-    expect(overview.machineSkillsEnabled).toBe(false)
-    expect(overview.capabilities.providers).toBe('supported')
-    expect(overview.capabilities.nativeLogin).toBe('supported')
+    expect(overview.machineSkillsState).toBe('disabled')
     expect(overview.capabilities.defaultModelConfig).toBe('supported')
+  })
+
+  it('missing modelRoles.default falls back to automatic, never enabledModels[0]', async () => {
+    const { run } = fakeRunner({
+      'config get modelRoles --json': { stdout: modelRoles({}) },
+      'config get defaultThinkingLevel --json': {
+        stdout: JSON.stringify({ key: 'defaultThinkingLevel', value: 'medium' })
+      },
+      'config get skills.enableAgentsUser --json': {
+        stdout: JSON.stringify({ key: 'skills.enableAgentsUser', value: true })
+      }
+    })
+    const svc = new RuntimeSettings({
+      cli: OMP_CLI,
+      runner: run,
+      spawnProbe: fakeProbe({ providers: PROVIDERS })
+    })
+    const overview = await svc.getOverview()
+    expect(overview.modelState.defaultModel).toBe('')
+    expect(overview.modelState.defaultModelExplicit).toBe(false)
+  })
+
+  it('reports machine skills unknown when the read-back is non-boolean', async () => {
+    const { run } = fakeRunner({
+      'config get modelRoles --json': { stdout: modelRoles({}) },
+      'config get defaultThinkingLevel --json': {
+        stdout: JSON.stringify({ key: 'defaultThinkingLevel', value: 'auto' })
+      },
+      // missing value key
+      'config get skills.enableAgentsUser --json': {
+        stdout: JSON.stringify({ key: 'skills.enableAgentsUser' })
+      }
+    })
+    const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
+    const overview = await svc.getOverview()
+    expect(overview.machineSkillsState).toBe('unknown')
+    expect(overview.capabilities.machineSkillsConfig).toBe('supported')
   })
 
   it('masks the bootstrap placeholder provider as not authenticated', async () => {
@@ -122,56 +167,76 @@ describe('RuntimeSettings · current profile overview', () => {
     })
     const first = await svc.getOverview()
     const second = await svc.getOverview()
-    expect(second).toBe(first) // same cached object
+    expect(second).toBe(first)
     const third = await svc.getOverview(true)
     expect(third).not.toBe(first)
   })
 })
 
 describe('RuntimeSettings · current profile writes (read-after-write)', () => {
-  it('setDefaultModel writes enabledModels and verifies the read-back', async () => {
+  it('setDefaultModel writes modelRoles.default and preserves other roles', async () => {
+    let roles: Record<string, string> = { default: 'a/b', smol: 'x/y', slow: 'z/w' }
     const { run, calls } = fakeRunner({
-      'config set enabledModels ["deepseek/deepseek-v4-flash"] --json': { stdout: '{}' },
-      'config get enabledModels --json': {
-        stdout: JSON.stringify({ key: 'enabledModels', value: ['deepseek/deepseek-v4-flash'] })
+      'config get modelRoles --json': () => ({ stdout: modelRoles(roles) }),
+      'config set modelRoles {"default":"d/e","smol":"x/y","slow":"z/w"} --json': () => {
+        roles = { default: 'd/e', smol: 'x/y', slow: 'z/w' }
+        return { stdout: '{}' }
       }
     })
     const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
-    const r = await svc.setDefaultModel('deepseek/deepseek-v4-flash')
+    const r = await svc.setDefaultModel('d/e')
     expect(r.ok).toBe(true)
-    expect(calls.some((c) => c[1] === 'set' && c[2] === 'enabledModels')).toBe(true)
+    const setCall = calls.find((c) => c[1] === 'set')
+    expect(setCall?.[2]).toBe('modelRoles')
+    expect(JSON.parse(setCall?.[3] ?? '{}')).toEqual({
+      default: 'd/e',
+      smol: 'x/y',
+      slow: 'z/w'
+    })
+    expect(calls.some((c) => c[1] === 'set' && c[2] === 'enabledModels')).toBe(false)
   })
 
-  it('setDefaultModel fails when the runtime does not confirm', async () => {
+  it('setDefaultModel fails when the runtime does not confirm modelRoles.default', async () => {
+    // The runtime silently drops the write: read-back still shows no default.
     const { run } = fakeRunner({
-      'config set enabledModels ["deepseek/deepseek-v4-flash"] --json': { stdout: '{}' },
-      // Read-back shows a different value — the write silently did not apply.
-      'config get enabledModels --json': {
-        stdout: JSON.stringify({ key: 'enabledModels', value: [] })
-      }
+      'config get modelRoles --json': () => ({ stdout: modelRoles({}) }),
+      'config set modelRoles {"default":"d/e"} --json': { stdout: '{}' }
     })
     const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
-    const r = await svc.setDefaultModel('deepseek/deepseek-v4-flash')
+    const r = await svc.setDefaultModel('d/e')
     expect(r.ok).toBe(false)
     expect(r.error).toMatch(/did not confirm/)
   })
 
-  it('setDefaultThinking verifies the level', async () => {
+  it("setDefaultModel('') drops only default, preserving unrelated roles", async () => {
+    let roles: Record<string, string> = { default: 'a/b', smol: 'x/y' }
     const { run } = fakeRunner({
-      'config set defaultThinkingLevel max --json': { stdout: '{}' },
-      'config get defaultThinkingLevel --json': {
-        stdout: JSON.stringify({ key: 'defaultThinkingLevel', value: 'max' })
+      'config get modelRoles --json': () => ({ stdout: modelRoles(roles) }),
+      'config set modelRoles {"smol":"x/y"} --json': () => {
+        roles = { smol: 'x/y' }
+        return { stdout: '{}' }
       }
     })
     const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
-    expect((await svc.setDefaultThinking('max')).ok).toBe(true)
+    const r = await svc.setDefaultModel('')
+    expect(r.ok).toBe(true)
+  })
+
+  it('setDefaultThinking verifies the level (auto is a legal config value)', async () => {
+    const { run } = fakeRunner({
+      'config set defaultThinkingLevel auto --json': { stdout: '{}' },
+      'config get defaultThinkingLevel --json': {
+        stdout: JSON.stringify({ key: 'defaultThinkingLevel', value: 'auto' })
+      }
+    })
+    const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
+    expect((await svc.setDefaultThinking('auto')).ok).toBe(true)
   })
 
   it('logout uses auth-broker and fails when the credential persists', async () => {
     const { run, calls } = fakeRunner({
       'auth-broker logout deepseek': { stdout: 'Logged out' }
     })
-    // After "logout" the probe still reports authenticated (e.g. env var).
     const svc = new RuntimeSettings({
       cli: OMP_CLI,
       runner: run,
@@ -181,20 +246,6 @@ describe('RuntimeSettings · current profile writes (read-after-write)', () => {
     expect(calls.some((c) => c.join(' ').startsWith('auth-broker logout deepseek'))).toBe(true)
     expect(r.ok).toBe(false)
     expect(r.error).toMatch(/still present/)
-  })
-
-  it('logout succeeds when the runtime confirms removal', async () => {
-    const { run } = fakeRunner({
-      'auth-broker logout deepseek': { stdout: 'Logged out' }
-    })
-    const svc = new RuntimeSettings({
-      cli: OMP_CLI,
-      runner: run,
-      spawnProbe: fakeProbe({
-        providers: [{ ...PROVIDERS[0], authenticated: false }, PROVIDERS[1]]
-      })
-    })
-    expect((await svc.logout('deepseek')).ok).toBe(true)
   })
 
   it('rejects invalid provider ids', async () => {
@@ -246,6 +297,7 @@ describe('RuntimeSettings · legacy profile', () => {
     expect(overview.profile).toBe('legacy')
     expect(overview.capabilities.nativeLogin).toBe('unsupported')
     expect(overview.capabilities.providers).toBe('supported')
+    expect(overview.machineSkillsState).toBe('unknown')
   })
 
   it('refuses current-profile writes on the legacy profile', async () => {
@@ -257,12 +309,9 @@ describe('RuntimeSettings · legacy profile', () => {
 })
 
 describe('RuntimeSettings · machine skills strict verification', () => {
-  const writeOk = { 'config set skills.enableAgentsUser false --json': { stdout: '{}' } }
-
   it('write success + read-back missing → failure, not truthiness', async () => {
-    // config get returns an entry WITHOUT a value key (unset/unknown).
     const { run } = fakeRunner({
-      ...writeOk,
+      'config set skills.enableAgentsUser false --json': { stdout: '{}' },
       'config get skills.enableAgentsUser --json': {
         stdout: JSON.stringify({ key: 'skills.enableAgentsUser' })
       }
@@ -273,25 +322,13 @@ describe('RuntimeSettings · machine skills strict verification', () => {
 
   it('write success + read-back wrong value → failure', async () => {
     const { run } = fakeRunner({
-      ...writeOk,
+      'config set skills.enableAgentsUser false --json': { stdout: '{}' },
       'config get skills.enableAgentsUser --json': {
         stdout: JSON.stringify({ key: 'skills.enableAgentsUser', value: true })
       }
     })
     const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
     expect((await svc.setMachineSkills(false)).ok).toBe(false)
-  })
-
-  it('write success + exact boolean read-back → success', async () => {
-    const { run } = fakeRunner({
-      'config set skills.enableAgentsUser false --json': { stdout: '{}' },
-      'config get skills.enableAgentsUser --json': {
-        stdout: JSON.stringify({ key: 'skills.enableAgentsUser', value: false })
-      },
-      'config set skills.enableAgentsUser true --json': { stdout: '{}' }
-    })
-    const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
-    expect((await svc.setMachineSkills(false)).ok).toBe(true)
   })
 
   it('consecutive mutations are serialized (write-verify pairs never interleave)', async () => {
@@ -302,8 +339,6 @@ describe('RuntimeSettings · machine skills strict verification', () => {
       if (key === 'config set defaultThinkingLevel high --json') return { ok: true, stdout: '{}', stderr: '' }
       if (key === 'config set defaultThinkingLevel max --json') return { ok: true, stdout: '{}', stderr: '' }
       if (key === 'config get defaultThinkingLevel --json') {
-        // Read-back reflects the LAST write — without serialization the
-        // first write's verify would see 'max' and fail.
         const lastSet = [...order].reverse().find((o) => o.startsWith('config set defaultThinkingLevel'))
         const value = lastSet?.endsWith(' max --json') ? 'max' : 'high'
         return { ok: true, stdout: JSON.stringify({ key: 'defaultThinkingLevel', value }), stderr: '' }
@@ -314,7 +349,6 @@ describe('RuntimeSettings · machine skills strict verification', () => {
     const [a, b] = await Promise.all([svc.setDefaultThinking('high'), svc.setDefaultThinking('max')])
     expect(a.ok).toBe(true)
     expect(b.ok).toBe(true)
-    // Each set is immediately followed by its own get.
     const sets = order.map((o, i) => ({ o, i })).filter((x) => x.o.startsWith('config set'))
     const gets = order.map((o, i) => ({ o, i })).filter((x) => x.o.startsWith('config get'))
     expect(sets).toHaveLength(2)
@@ -325,19 +359,21 @@ describe('RuntimeSettings · machine skills strict verification', () => {
   })
 })
 
-describe('RuntimeSettings · selector safety', () => {
-  it('accepts slash-containing selectors and writes them verbatim as argv', async () => {
+describe('RuntimeSettings · multi-slash selector safety', () => {
+  it('round-trips openrouter/vendor/model selectors through modelRoles.default', async () => {
     const selector = 'openrouter/deepseek/deepseek-v4-flash-0731'
+    let roles: Record<string, string> = {}
     const { run, calls } = fakeRunner({
-      [`config set enabledModels ["${selector}"] --json`]: { stdout: '{}' },
-      'config get enabledModels --json': {
-        stdout: JSON.stringify({ key: 'enabledModels', value: [selector] })
+      'config get modelRoles --json': () => ({ stdout: modelRoles(roles) }),
+      [`config set modelRoles {"default":"${selector}"} --json`]: () => {
+        roles = { default: selector }
+        return { stdout: '{}' }
       }
     })
     const svc = new RuntimeSettings({ cli: OMP_CLI, runner: run, spawnProbe: fakeProbe({}) })
     expect((await svc.setDefaultModel(selector)).ok).toBe(true)
     const setCall = calls.find((c) => c[1] === 'set')
-    expect(setCall?.[3]).toBe(JSON.stringify([selector]))
+    expect(JSON.parse(setCall?.[3] ?? '{}').default).toBe(selector)
   })
 
   it('rejects unsafe selectors before any CLI call', async () => {

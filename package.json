@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:omp": "vitest run --config vitest.omp.config.ts",
+    "test:omp:live": "OMP_GUI_RUN_LIVE_TESTS=1 vitest run --config vitest.omp.live.config.ts",
     "postinstall": "electron-builder install-app-deps"
   },
   "devDependencies": {

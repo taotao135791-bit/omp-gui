@@ -181,12 +181,35 @@ export const PI_PROVIDERS: { id: string; label: string }[] = [
   { id: 'cloudflare-workers-ai', label: 'Cloudflare Workers AI' }
 ]
 
-/** Thinking levels accepted by the RPC set_thinking_level command. */
-export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+/**
+ * Session RPC thinking levels — the enum of `set_thinking_level` /
+ * `--thinking`. A live session may be set to `off`. This is a *session
+ * runtime state*, never the global default.
+ */
+export type SessionThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
-/** Ordered thinking levels (least to most intensive), mirroring the runtime. */
-export const THINKING_LEVEL_ORDER: readonly ThinkingLevel[] = [
+/** Ordered session levels (least to most intensive). */
+export const SESSION_THINKING_LEVELS: readonly SessionThinkingLevel[] = [
   'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max'
+]
+
+/**
+ * Config `defaultThinkingLevel` enum, verified against current Oh My Pi
+ * 17.2.12 (`omp config set defaultThinkingLevel`): `auto` is valid and `off`
+ * is NOT — the default is a reasoning-depth setting, not an on/off switch.
+ * Exact accepted set: minimal, low, medium, high, xhigh, max, auto.
+ */
+export type DefaultThinkingLevel = 'auto' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+/** Ordered config default levels (auto first, then least to most intensive). */
+export const DEFAULT_THINKING_LEVELS: readonly DefaultThinkingLevel[] = [
+  'auto',
   'minimal',
   'low',
   'medium',
@@ -228,8 +251,13 @@ export interface RuntimeModelInfo {
 
 /** Runtime-resolved default model/thinking state (new sessions). */
 export interface RuntimeModelState {
-  /** Default model selector; '' = runtime catalog default. */
+  /**
+   * Default model selector, read from `modelRoles.default` (never
+   * `enabledModels[0]`). '' = runtime automatic resolution.
+   */
   defaultModel: string
+  /** True when `modelRoles.default` is explicitly set; false = automatic. */
+  defaultModelExplicit: boolean
   defaultThinkingLevel: string
 }
 
@@ -243,13 +271,24 @@ export interface RuntimeCapabilities {
   machineSkillsConfig: CapabilityState
 }
 
+/**
+ * Runtime-reported machine-skills toggle state. `unknown` covers a missing /
+ * non-boolean read-back; it must never render as an explicit ON toggle.
+ */
+export type MachineSkillsState = 'enabled' | 'disabled' | 'unknown'
+
 /** Settings-page overview: everything is runtime-reported, nothing assumed. */
 export interface RuntimeOverview {
   profile: RuntimeProfile
   capabilities: RuntimeCapabilities
   providers: RuntimeProvider[]
   modelState: RuntimeModelState
-  machineSkillsEnabled: boolean
+  /**
+   * `skills.enableAgentsUser` read-back as a truth value. Capability
+   * (whether this OMP version exposes the key at all) lives separately in
+   * `capabilities.machineSkillsConfig`.
+   */
+  machineSkillsState: MachineSkillsState
 }
 
 /**

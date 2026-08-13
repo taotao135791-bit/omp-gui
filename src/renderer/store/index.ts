@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, ThinkingLevel } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 
 export interface MessageLike {
@@ -258,17 +258,17 @@ interface AppState {
    */
   setCurrentSessionModel: (provider: string, modelId: string) => Promise<boolean>
   /** Hot-switch the CURRENT session's thinking level — session scope only. */
-  setCurrentSessionThinking: (level: ThinkingLevel) => Promise<boolean>
+  setCurrentSessionThinking: (level: SessionThinkingLevel) => Promise<boolean>
   /** Model selector for the NEXT session's spawn args (''/null = runtime default). */
   pendingModel: string | null
   /** Thinking level for the NEXT session's spawn args (null = runtime default). */
-  pendingThinking: ThinkingLevel | null
+  pendingThinking: SessionThinkingLevel | null
   /** Set the next-session model override (composer pickers without a session). */
   setPendingModel: (selector: string | null) => void
   /** Set the next-session thinking override. */
-  setPendingThinking: (level: ThinkingLevel | null) => void
+  setPendingThinking: (level: SessionThinkingLevel | null) => void
   /** Read and clear the next-session overrides (session creation funnel). */
-  consumeSessionOverrides: () => { modelSelector?: string; thinkingLevel?: ThinkingLevel }
+  consumeSessionOverrides: () => { modelSelector?: string; thinkingLevel?: SessionThinkingLevel }
   /** Refresh the runtime settings overview (profile/capabilities/providers). */
   loadRuntimeOverview: (force?: boolean) => Promise<void>
   /** Refresh the runtime model catalog (current profile). */

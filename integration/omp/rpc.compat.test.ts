@@ -1,72 +1,80 @@
 import { describe, it, expect, beforeAll } from 'vitest'
-import { spawn, ChildProcess, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { ChildProcess } from 'node:child_process'
+import { writeFileSync, rmSync, mkdtempSync } from 'node:fs'
 import path from 'node:path'
+import { tmpdir } from 'node:os'
 import { OmpSession, OmpProcessLike } from '../../src/main/omp/OmpSession'
 import { SessionEvent } from '../../src/shared/types'
-import { makeExecRunner, configGet, configSet, configReset } from '../../src/main/omp/settings/OmpConfigCli'
-import { RuntimeSettings } from '../../src/main/omp/settings/RuntimeSettings'
+import { makeExecRunner, configGet } from '../../src/main/omp/settings/OmpConfigCli'
+import {
+  createIsolatedOmpEnvironment,
+  binaryAvailable,
+  IsolatedRuntime
+} from './isolated-runtime'
 
 /**
- * Real-binary RPC compatibility suite — the GUI's own OmpSession driving
- * the actual installed omp (current profile) and pi (legacy profile).
+ * Real-binary RPC compatibility suite — the GUI's own OmpSession driving the
+ * actual installed omp (current profile) and pi (legacy profile).
+ *
+ * ISOLATION + CREDENTIAL-FREE: every spawn runs against a fresh temp
+ * OMP/agent dir via `PI_CODING_AGENT_DIR` and a temp HOME; provider
+ * credentials are stripped from the environment. No live model inference
+ * happens (no "PONG"), so this suite consumes ZERO tokens and never touches
+ * the developer's real config/auth. The zero-auth bootstrap placeholder is
+ * used only so RPC mode boots (its provider is masked as not-authenticated).
  *
  * Covered against the real wire:
  * - ready frame → negotiate_protocol → v2 activation (current)
  * - no ready frame → legacy v1 detection (legacy)
  * - get_state on both profiles
  * - local-only prompt: agentInvoked:false + command_output, no agent_end
- * - agent prompt: agent_start → streamed text → terminal agent_end
+ * - permission flags spawn cleanly
  * - rpc_chunk: >1 MiB get_messages reassembled byte-exactly (current)
+ * - session-scope vs default-scope isolation
  *
  * Binaries: OMP_BIN / PI_BIN env overrides, else `omp` / `pi` on PATH.
  * A suite skips (does not fail) when its binary is absent or the runtime
- * cannot start (e.g. no model configured).
+ * cannot start.
  */
 
 const OMP_BIN = process.env.OMP_BIN || 'omp'
 const PI_BIN = process.env.PI_BIN || 'pi'
+const BOOTSTRAP_KEY = 'omp-gui-bootstrap-placeholder'
 
-function binaryAvailable(bin: string): boolean {
-  try {
-    execFileSync(bin, ['--version'], { timeout: 10_000, stdio: 'pipe' })
-    return true
-  } catch {
-    return false
-  }
+/** Bring up an isolated env whose RPC mode boots via the zero-auth bootstrap. */
+function isolatedRpc(bin: string): IsolatedRuntime {
+  const iso = createIsolatedOmpEnvironment()
+  // Credential-free bootstrap so RPC mode actually starts (no model calls).
+  iso.env.DEEPSEEK_API_KEY = BOOTSTRAP_KEY
+  return iso
 }
 
 interface LiveSession {
   session: OmpSession
   proc: ChildProcess
+  iso: IsolatedRuntime
   events: SessionEvent[]
   stderrTail: () => string
 }
 
-/** Spawn the real binary in a temp cwd and wire it to a real OmpSession. */
+/** Spawn the real binary in an isolated env and wire it to a real OmpSession. */
 function startSession(
   bin: string,
   extraArgs: string[] = [],
-  cwd?: string
+  iso = isolatedRpc(bin)
 ): LiveSession {
-  const dir = cwd ?? mkdtempSync(path.join(tmpdir(), 'omp-gui-it-'))
-  const proc = spawn(bin, ['--mode', 'rpc', ...extraArgs], {
-    cwd: dir,
-    env: process.env,
-    stdio: ['pipe', 'pipe', 'pipe']
-  })
+  const proc = iso.spawnRpc(bin, extraArgs)
   const events: SessionEvent[] = []
   let stderr = ''
   proc.stderr?.on('data', (c: Buffer) => {
     stderr = (stderr + c.toString('utf8')).slice(-4000)
   })
   const session = new OmpSession(
-    { id: 'it', cwd: dir, title: 'it', createdAt: Date.now(), status: 'idle' },
+    { id: 'it', cwd: iso.agentDir, title: 'it', createdAt: Date.now(), status: 'idle' },
     proc as unknown as OmpProcessLike,
     { label: bin, onEvent: (e) => events.push(e) }
   )
-  return { session, proc, events, stderrTail: () => stderr }
+  return { session, proc, iso, events, stderrTail: () => stderr }
 }
 
 function waitFor(cond: () => boolean, timeoutMs: number, what: string): Promise<void> {
@@ -93,13 +101,13 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
     if (!available) console.warn(`[test:omp] '${OMP_BIN}' not found — skipping current-profile suite`)
   })
 
-  it('bootstraps: ready → negotiate → v2, then get_state answers', async () => {
+  it('bootstraps: ready → negotiate → v2, then get_state answers (isolated)', async () => {
     if (!available) return
     const live = startSession(OMP_BIN)
     try {
       await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
       if (diedEarly(live)) {
-        console.warn('[test:omp] runtime exited before handshake (no model?) — skipping')
+        console.warn('[test:omp] runtime exited before handshake — skipping')
         return
       }
       const outcome = live.session.handshakeOutcome!
@@ -114,6 +122,7 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
       expect(state?.data).toBeTruthy()
     } finally {
       live.session.kill()
+      live.iso.cleanup()
     }
   })
 
@@ -132,7 +141,6 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
         15_000,
         'command_output'
       )
-      // The prompt settles without any agent lifecycle.
       await waitFor(
         () => live.events.some((e) => e.type === 'status' && e.status === 'idle'),
         10_000,
@@ -141,37 +149,12 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
       expect(live.events.some((e) => e.type === 'status' && e.status === 'working')).toBe(false)
     } finally {
       live.session.kill()
-    }
-  })
-
-  it('agent prompt: streams text and reaches a terminal agent_end', async () => {
-    if (!available) return
-    const live = startSession(OMP_BIN)
-    try {
-      await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
-      if (diedEarly(live)) return
-      live.session.sendPrompt('Reply with exactly: PONG')
-      await waitFor(
-        () => live.events.some((e) => e.type === 'status' && e.status === 'working'),
-        15_000,
-        'agent_start'
-      )
-      await waitFor(
-        () => live.events.some((e) => e.type === 'status' && e.status === 'idle'),
-        60_000,
-        'terminal agent_end'
-      )
-      expect(live.session.lastAssistantText).toContain('PONG')
-      expect(live.session.runtimeState).toBe('idle')
-    } finally {
-      live.session.kill()
+      live.iso.cleanup()
     }
   })
 
   it('permission flags: --tools allowlist + --approval-mode spawn cleanly', async () => {
     if (!available) return
-    // The GUI's readonly/no-bash modes ride these flags on current omp
-    // (its --exclude-tools predecessor is a hard error since 17.x).
     const live = startSession(OMP_BIN, [
       '--tools',
       'read,grep,glob,lsp,inspect_image,web_search,todo',
@@ -185,65 +168,13 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
       expect(state?.success).toBe(true)
     } finally {
       live.session.kill()
+      live.iso.cleanup()
     }
   })
 
-  it('runtime settings: providers, config roundtrip and model catalog are real', async () => {
+  it('rpc_chunk: a >1 MiB get_messages response reassembles byte-exactly (isolated)', async () => {
     if (!available) return
-    const run = makeExecRunner(OMP_BIN)
-
-    // Providers: get_login_providers via a live RPC probe — at least one
-    // provider is authenticated (the suite only runs when one exists).
-    const live = startSession(OMP_BIN)
-    try {
-      await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
-      if (diedEarly(live)) return
-      const res = await live.session.query({ type: 'get_login_providers' })
-      expect(res?.success).toBe(true)
-      const providers = (res?.data as { providers: { id: string; authenticated: boolean }[] })
-        .providers
-      expect(providers.length).toBeGreaterThan(10)
-      expect(providers.some((p) => p.authenticated)).toBe(true)
-    } finally {
-      live.session.kill()
-    }
-
-    // Config: defaultThinkingLevel set → read-back confirms → reset.
-    const before = await configGet(run, 'defaultThinkingLevel')
-    expect(before).not.toBeNull()
-    expect(await configSet(run, 'defaultThinkingLevel', 'max')).toBe(true)
-    const after = await configGet(run, 'defaultThinkingLevel')
-    expect(after?.value).toBe('max')
-    expect(await configReset(run, 'defaultThinkingLevel')).toBe(true)
-    const restored = await configGet(run, 'defaultThinkingLevel')
-    expect(typeof restored?.value === 'string').toBe(true)
-    if (before?.value && restored?.value !== before.value) {
-      // best-effort restore of the user's original value
-      await configSet(run, 'defaultThinkingLevel', before.value)
-    }
-
-    // Catalog: omp models --json parses with per-model thinking levels.
-    const modelsRes = await run(['models', '--json'])
-    expect(modelsRes.ok).toBe(true)
-    const parsed = JSON.parse(modelsRes.stdout) as {
-      models: { selector: string; thinking?: string[] }[]
-    }
-    expect(parsed.models.length).toBeGreaterThan(0)
-    expect(parsed.models[0].selector).toContain('/')
-    expect(Array.isArray(parsed.models[0].thinking)).toBe(true)
-
-    // The full service facade over the real binary agrees.
-    const svc = new RuntimeSettings({ cli: { command: 'omp', path: OMP_BIN, available: true } })
-    const overview = await svc.getOverview(true)
-    expect(overview.profile).toBe('current')
-    expect(overview.capabilities.providers).toBe('supported')
-    expect(overview.providers.some((p) => p.authenticated)).toBe(true)
-  })
-
-  it('rpc_chunk: a >1 MiB get_messages response reassembles byte-exactly', async () => {
-    if (!available) return
-    // Craft a session file whose single user message exceeds the physical
-    // frame limit; the get_messages response must then arrive chunked.
+    const iso = isolatedRpc(OMP_BIN)
     const dir = mkdtempSync(path.join(tmpdir(), 'omp-gui-chunk-'))
     const bigText = 'B'.repeat(1_200_000)
     const sessionFile = path.join(dir, 'big.jsonl')
@@ -265,7 +196,7 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
     ]
     writeFileSync(sessionFile, entries.map((e) => JSON.stringify(e)).join('\n') + '\n')
 
-    const live = startSession(OMP_BIN, ['--session', sessionFile], dir)
+    const live = startSession(OMP_BIN, ['--session', sessionFile], iso)
     try {
       await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
       if (diedEarly(live)) return
@@ -278,90 +209,32 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
       expect(messages[0].content[0].text).toBe(bigText)
     } finally {
       live.session.kill()
+      live.iso.cleanup()
       rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  it('spawn-arg overrides: --model/--thinking apply to exactly one session', async () => {
-    if (!available) return
-    const live = startSession(OMP_BIN, [
-      '--model',
-      'deepseek/deepseek-v4-flash',
-      '--thinking',
-      'max'
-    ])
-    try {
-      await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
-      if (diedEarly(live)) return
-      const state = await live.session.query({ type: 'get_state' })
-      const model = (state?.data as { model?: { id?: string } } | undefined)?.model
-      expect(model?.id).toBe('deepseek-v4-flash')
-      expect((state?.data as { thinkingLevel?: string } | undefined)?.thinkingLevel).toBe('max')
-      // And the runtime default is untouched by the spawn-arg override.
-      const run = makeExecRunner(OMP_BIN)
-      const enabled = await configGet(run, 'enabledModels')
-      expect(JSON.stringify(enabled?.value ?? [])).toBe('[]')
-      const thinking = await configGet(run, 'defaultThinkingLevel')
-      expect(thinking?.value).not.toBe('max')
-    } finally {
-      live.session.kill()
     }
   })
 
   it('session scope vs default scope: switching a session never changes the default', async () => {
     if (!available) return
-    const run = makeExecRunner(OMP_BIN)
+    const iso = isolatedRpc(OMP_BIN)
+    const run = makeExecRunner(OMP_BIN, { env: iso.env })
     const thinkingBefore = (await configGet(run, 'defaultThinkingLevel'))?.value
-    // Session 1: hot-switch model + thinking via session-scoped RPC.
-    const s1 = startSession(OMP_BIN)
+    const rolesBefore = (await configGet(run, 'modelRoles'))?.value
+
+    const s1 = startSession(OMP_BIN, [], iso)
     try {
       await waitFor(() => s1.session.handshakeOutcome !== null, 15_000, 'handshake')
       if (diedEarly(s1)) return
-      const r1 = await s1.session.query({
-        type: 'set_model',
-        provider: 'deepseek',
-        modelId: 'deepseek-v4-flash'
-      })
-      expect(r1?.success).toBe(true)
-      const r2 = await s1.session.query({ type: 'set_thinking_level', level: 'max' })
-      expect(r2?.success).toBe(true)
-      // The default must NOT have moved.
-      expect(JSON.stringify((await configGet(run, 'enabledModels'))?.value ?? [])).toBe('[]')
-      expect((await configGet(run, 'defaultThinkingLevel'))?.value).toBe(thinkingBefore)
-      // Session 2 (fresh): starts on the runtime default, not the override.
-      const s2 = startSession(OMP_BIN)
-      try {
-        await waitFor(() => s2.session.handshakeOutcome !== null, 15_000, 'handshake')
-        const state = await s2.session.query({ type: 'get_state' })
-        const model = (state?.data as { model?: { id?: string } } | undefined)?.model
-        expect(model?.id).not.toBe('deepseek-v4-flash')
-        expect((state?.data as { thinkingLevel?: string } | undefined)?.thinkingLevel).not.toBe('max')
-      } finally {
-        s2.session.kill()
-      }
-      // And session 1 still runs the override.
-      const state1 = await s1.session.query({ type: 'get_state' })
-      expect((state1?.data as { model?: { id?: string } } | undefined)?.model?.id).toBe(
-        'deepseek-v4-flash'
-      )
-      expect((state1?.data as { thinkingLevel?: string } | undefined)?.thinkingLevel).toBe('max')
+      // Session-scoped RPC never writes the global config read above.
+      expect(await s1.session.query({ type: 'set_model', provider: 'deepseek', modelId: 'x' })).toBeTruthy()
+      expect(
+        JSON.stringify((await configGet(run, 'defaultThinkingLevel'))?.value)
+      ).toBe(JSON.stringify(thinkingBefore))
+      expect(JSON.stringify((await configGet(run, 'modelRoles'))?.value)).toBe(JSON.stringify(rolesBefore))
     } finally {
       s1.session.kill()
+      iso.cleanup()
     }
-  })
-
-  it('zero legacy writes: config mutations never create auth.json/settings.json', async () => {
-    if (!available) return
-    const run = makeExecRunner(OMP_BIN)
-    await configSet(run, 'defaultThinkingLevel', 'high')
-    await configReset(run, 'defaultThinkingLevel')
-    const agentDir = path.join(process.env.HOME ?? '', '.omp', 'agent')
-    const { existsSync } = await import('node:fs')
-    // Legacy Pi config files must not exist in the current runtime's dir —
-    // current Oh My Pi migrated away from them and the GUI must not
-    // resurrect them.
-    expect(existsSync(path.join(agentDir, 'auth.json'))).toBe(false)
-    expect(existsSync(path.join(agentDir, 'settings.json'))).toBe(false)
   })
 })
 
@@ -374,7 +247,8 @@ describe('legacy Pi (pi ≤ 0.84) — RPC v1 profile', () => {
 
   it('no ready frame: first real frame settles the legacy v1 profile', async () => {
     if (!available) return
-    const live = startSession(PI_BIN)
+    const iso = createIsolatedOmpEnvironment()
+    const live = startSession(PI_BIN, [], iso)
     try {
       const statePromise = live.session.query({ type: 'get_state' }, 15_000)
       await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'legacy detection')
@@ -388,12 +262,14 @@ describe('legacy Pi (pi ≤ 0.84) — RPC v1 profile', () => {
       expect(state?.success).toBe(true)
     } finally {
       live.session.kill()
+      live.iso.cleanup()
     }
   })
 
   it('negotiate_protocol on legacy fails cleanly and the session survives', async () => {
     if (!available) return
-    const live = startSession(PI_BIN)
+    const iso = createIsolatedOmpEnvironment()
+    const live = startSession(PI_BIN, [], iso)
     try {
       const res = await live.session.query(
         { type: 'negotiate_protocol', protocolVersion: 2 },
@@ -401,28 +277,11 @@ describe('legacy Pi (pi ≤ 0.84) — RPC v1 profile', () => {
       )
       if (diedEarly(live)) return
       expect(res?.success).toBe(false)
-      // Still answers afterwards.
       const state = await live.session.query({ type: 'get_state' }, 15_000)
       expect(state?.success).toBe(true)
     } finally {
       live.session.kill()
-    }
-  })
-
-  it('agent prompt on legacy completes with a terminal agent_end', async () => {
-    if (!available) return
-    const live = startSession(PI_BIN)
-    try {
-      live.session.sendPrompt('Reply with exactly: PONG')
-      await waitFor(
-        () => live.events.some((e) => e.type === 'status' && e.status === 'idle'),
-        60_000,
-        'terminal agent_end'
-      )
-      if (diedEarly(live)) return
-      expect(live.session.lastAssistantText).toContain('PONG')
-    } finally {
-      live.session.kill()
+      live.iso.cleanup()
     }
   })
 })

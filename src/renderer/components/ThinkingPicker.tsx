@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Brain, Check, ChevronUp } from 'lucide-react'
-import { SessionState, ThinkingLevel } from '@shared/types'
+import { SessionState, SessionThinkingLevel } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
-import { thinkingOptionsFor } from '../lib/thinking'
+import { sessionThinkingOptionsFor } from '../lib/thinking'
 import MenuPortal from './MenuPortal'
 
-/** All levels this GUI knows, least to most intensive. */
-const LEVEL_LABEL: Record<ThinkingLevel, I18nKey> = {
+/** All session levels this GUI knows, least to most intensive. */
+const LEVEL_LABEL: Record<SessionThinkingLevel, I18nKey> = {
   off: 'composer.thinkingOff',
   minimal: 'composer.thinkingMinimal',
   low: 'composer.thinkingLow',
@@ -24,7 +24,7 @@ const LEVEL_LABEL: Record<ThinkingLevel, I18nKey> = {
  */
 function levelLabel(raw: string | undefined, t: ReturnType<typeof useT>): string {
   if (!raw) return t('composer.thinkingAuto')
-  if (raw in LEVEL_LABEL) return t(LEVEL_LABEL[raw as ThinkingLevel])
+  if (raw in LEVEL_LABEL) return t(LEVEL_LABEL[raw as SessionThinkingLevel])
   return raw.charAt(0).toUpperCase() + raw.slice(1)
 }
 
@@ -44,15 +44,13 @@ interface ThinkingPickerProps {
 
 /**
  * Thinking-level dropdown next to the model picker. Scope mirrors the model
- * picker exactly: WITH a session it switches exactly that session; WITHOUT
- * one it sets a one-shot next-session override. Neither path touches the
- * runtime default (Settings owns that).
+ * picker exactly: WITH a session it switches exactly that session
+ * (`set_thinking_level`); WITHOUT one it sets a one-shot next-session
+ * override. Neither path touches the runtime default (Settings owns that).
  *
- * Options follow the model's own capability list when the catalog knows it
- * (per-model `thinking` sets); 'off' is universal. The displayed current
- * level is the runtime-resolved one — a model that clamps the choice shows
- * the clamped truth, and a current level outside the offered set still
- * displays (it just can't be re-selected).
+ * Options are the SESSION enum (off..max) filtered by the current model's
+ * capability list. This is intentionally a different enum from the config
+ * `defaultThinkingLevel` (`auto`, no `off`) — never the two shall mix.
  */
 export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
   const [level, setLevel] = useState<string | undefined>(undefined)
@@ -126,9 +124,9 @@ export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
 
   // Offered levels: the model's own capability set when known.
   const catalogEntry = runtimeModels.find((m) => m.selector === sessionSelector)
-  const options = thinkingOptionsFor(isCurrent ? 'current' : 'legacy', catalogEntry)
+  const options = sessionThinkingOptionsFor(isCurrent ? 'current' : 'legacy', catalogEntry)
 
-  const pick = async (next: ThinkingLevel) => {
+  const pick = async (next: SessionThinkingLevel) => {
     setOpen(false)
     if (sessionId) {
       // Session scope only; display follows the runtime-resolved event.

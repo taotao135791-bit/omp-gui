@@ -25,7 +25,7 @@ export interface RpcClientOptions {
   /** Extra CLI args (e.g. --no-extensions to keep probes quiet). */
   args?: string[]
   /** Extra environment overrides. */
-  env?: Record<string, string>
+  env?: NodeJS.ProcessEnv
   /** Where the process runs (config/session state is HOME-scoped anyway). */
   cwd?: string
 }

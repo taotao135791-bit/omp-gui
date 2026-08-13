@@ -1,6 +1,8 @@
 import {
   CapabilityState,
   CliInfo,
+  DefaultThinkingLevel,
+  MachineSkillsState,
   RuntimeCapabilities,
   RuntimeModelInfo,
   RuntimeModelState,
@@ -18,6 +20,7 @@ import {
   OmpConfigEntry
 } from './OmpConfigCli'
 import { BOOTSTRAP_PROVIDER_ID, RuntimeRpcClient } from './RuntimeRpcClient'
+import { isValidModelSelector, PROVIDER_ID_PATTERN, splitModelSelector } from './modelSelector'
 
 /**
  * Unified runtime-settings facade for the IPC layer: one API, two adapters.
@@ -33,10 +36,22 @@ import { BOOTSTRAP_PROVIDER_ID, RuntimeRpcClient } from './RuntimeRpcClient'
  * reported through the same shape so the UI can label them honestly.
  */
 
+// Official config keys, verified against current Oh My Pi 17.2.12
+// (docs/settings-auth.md). `modelRoles` is a `record` type; nested fields
+// are NOT addressable by key (omp config set modelRoles.default → "Unknown
+// setting"), so a write must set the whole record while preserving the
+// unrelated roles. `enabledModels` is a separate allow-list, never written
+// by the GUI's default-model path.
+const CONFIG_MODEL_ROLES = 'modelRoles'
+const CONFIG_DEFAULT_THINKING = 'defaultThinkingLevel'
+const CONFIG_MACHINE_SKILLS = 'skills.enableAgentsUser'
+
 export interface RuntimeSettingsDeps {
   cli?: CliInfo
   runner?: CliRunner
   spawnProbe?: typeof RuntimeRpcClient.spawnWithBootstrap
+  /** Environment overrides for the runner + probe (test isolation). */
+  env?: NodeJS.ProcessEnv
 }
 
 const OVERVIEW_TTL_MS = 15_000
@@ -54,6 +69,29 @@ function currentCapabilities(patch: Partial<RuntimeCapabilities> = {}): RuntimeC
   }
 }
 
+/** Truth value of `skills.enableAgentsUser` — never truthiness of `unknown`. */
+function machineSkillsStateOf(entry: OmpConfigEntry | null): MachineSkillsState {
+  if (!entry) return 'unknown'
+  if (entry.value === true) return 'enabled'
+  if (entry.value === false) return 'disabled'
+  return 'unknown'
+}
+
+/**
+ * Read `modelRoles.default`. Returns { selector, explicit } where explicit
+ * is true only when the runtime has an actual non-empty string under the
+ * `default` role — absence/empty falls back to the runtime's automatic
+ * resolution, which must NOT be faked from the catalog or `enabledModels`.
+ */
+function defaultModelOf(entry: OmpConfigEntry | null): { selector: string; explicit: boolean } {
+  const value = entry?.value
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const def = (value as Record<string, unknown>).default
+    if (typeof def === 'string' && def.length > 0) return { selector: def, explicit: true }
+  }
+  return { selector: '', explicit: false }
+}
+
 export class RuntimeSettings {
   private overviewCache: { at: number; overview: RuntimeOverview } | null = null
   private modelsCache: { at: number; models: RuntimeModelInfo[] } | null = null
@@ -63,8 +101,14 @@ export class RuntimeSettings {
 
   constructor(deps: RuntimeSettingsDeps = {}) {
     this.cli = deps.cli ?? detectCli()
-    this.run = deps.runner ?? makeExecRunner(this.cli.path ?? this.cli.command)
+    this.run = deps.runner ?? makeExecRunner(this.cli.path ?? this.cli.command, { env: deps.env })
     this.spawnProbe = deps.spawnProbe ?? RuntimeRpcClient.spawnWithBootstrap
+    if (deps.env && !deps.spawnProbe) {
+      // Isolate the login-provider probe too (never the developer's env),
+      // while still honoring a fully injected probe in unit tests.
+      this.spawnProbe = (cli, opts, events) =>
+        RuntimeRpcClient.spawnWithBootstrap(cli, { ...opts, env: { ...(opts?.env ?? {}), ...deps.env } }, events)
+    }
   }
 
   get profile(): RuntimeProfile {
@@ -130,19 +174,20 @@ export class RuntimeSettings {
       capabilities.providers = 'unsupported'
       capabilities.nativeLogin = 'unsupported'
     }
-    capabilities.logout = 'supported' // auth-broker CLI, official
 
-    const [enabledModels, defaultThinking, machineSkills] = await Promise.all([
-      configGet(this.run, 'enabledModels'),
-      configGet(this.run, 'defaultThinkingLevel'),
-      configGet(this.run, 'skills.enableAgentsUser')
+    const [modelRoles, defaultThinking, machineSkills] = await Promise.all([
+      configGet(this.run, CONFIG_MODEL_ROLES),
+      configGet(this.run, CONFIG_DEFAULT_THINKING),
+      configGet(this.run, CONFIG_MACHINE_SKILLS)
     ])
+    const { selector: defaultModel, explicit: defaultModelExplicit } = defaultModelOf(modelRoles)
     const modelState: RuntimeModelState = {
-      defaultModel: firstSelector(enabledModels),
+      defaultModel,
+      defaultModelExplicit,
       defaultThinkingLevel:
         typeof defaultThinking?.value === 'string' ? defaultThinking.value : ''
     }
-    capabilities.defaultModelConfig = enabledModels ? 'supported' : 'unsupported'
+    capabilities.defaultModelConfig = modelRoles ? 'supported' : 'unsupported'
     capabilities.defaultThinkingConfig = defaultThinking ? 'supported' : 'unsupported'
     capabilities.machineSkillsConfig = machineSkills ? 'supported' : 'unsupported'
     capabilities.modelCatalog = 'supported' // omp models / get_available_models
@@ -152,7 +197,7 @@ export class RuntimeSettings {
       capabilities,
       providers,
       modelState,
-      machineSkillsEnabled: machineSkills?.value !== false
+      machineSkillsState: machineSkillsStateOf(machineSkills)
     }
   }
 
@@ -172,8 +217,10 @@ export class RuntimeSettings {
         machineSkillsConfig: 'supported'
       },
       providers: [],
-      modelState: { defaultModel: '', defaultThinkingLevel: '' },
-      machineSkillsEnabled: true
+      modelState: { defaultModel: '', defaultModelExplicit: false, defaultThinkingLevel: '' },
+      // Legacy has no runtime-reported machine-skills state; present it as
+      // unknown so the current-profile toggle logic cannot fake an ON state.
+      machineSkillsState: 'unknown'
     }
   }
 
@@ -247,49 +294,74 @@ export class RuntimeSettings {
     return next
   }
 
+  /**
+   * Set the new-session default model via `modelRoles.default` — never
+   * `enabledModels`. A target-field mutation preserves the other roles
+   * (smol/slow/…) and the `enabledModels` allow-list untouched.
+   */
   async setDefaultModel(selector: string): Promise<{ ok: boolean; error?: string }> {
     if (this.profile !== 'current') return { ok: false, error: 'legacy-profile' }
     if (selector && !isValidModelSelector(selector)) {
       return { ok: false, error: 'invalid model selector' }
     }
     return this.enqueue(async () => {
-      const value = selector ? [selector] : []
-      if (!(await configSet(this.run, 'enabledModels', value))) {
-        return { ok: false, error: 'omp config set failed' }
+      if (selector) {
+        const before = await configGet(this.run, CONFIG_MODEL_ROLES)
+        const merged = { ...this.modelRolesRecord(before), default: selector }
+        if (!(await configSet(this.run, CONFIG_MODEL_ROLES, merged))) {
+          return { ok: false, error: 'omp config set failed' }
+        }
+        const verify = await configGet(this.run, CONFIG_MODEL_ROLES)
+        this.invalidate()
+        const actual = this.modelRolesRecord(verify).default
+        if (actual !== selector) {
+          return {
+            ok: false,
+            error: `runtime did not confirm the change (got "${actual || 'unset'}")`
+          }
+        }
+        return { ok: true }
       }
-      const verify = await configGet(this.run, 'enabledModels')
-      const actual = firstSelector(verify)
+      // '' = reset to automatic resolution: drop only the `default` role.
+      const before = await configGet(this.run, CONFIG_MODEL_ROLES)
+      const { default: _drop, ...rest } = this.modelRolesRecord(before)
+      if (!(await configSet(this.run, CONFIG_MODEL_ROLES, rest))) {
+        return { ok: false, error: 'omp config reset failed' }
+      }
+      const verify = await configGet(this.run, CONFIG_MODEL_ROLES)
       this.invalidate()
-      // Exact match only — a missing/unknown read-back is a failure.
-      if (!verify || actual !== selector) {
-        return { ok: false, error: `runtime did not confirm the change (got "${actual || 'default'}")` }
+      if (this.modelRolesRecord(verify).default !== undefined) {
+        return { ok: false, error: 'runtime did not confirm the reset' }
       }
       return { ok: true }
     })
   }
 
-  async setDefaultThinking(level: string): Promise<{ ok: boolean; error?: string }> {
+  async setDefaultThinking(level: DefaultThinkingLevel | ''): Promise<{ ok: boolean; error?: string }> {
     if (this.profile !== 'current') return { ok: false, error: 'legacy-profile' }
     return this.enqueue(async () => {
       if (level) {
-        if (!(await configSet(this.run, 'defaultThinkingLevel', level))) {
+        if (!(await configSet(this.run, CONFIG_DEFAULT_THINKING, level))) {
           return { ok: false, error: 'omp config set failed' }
         }
-        const verify = await configGet(this.run, 'defaultThinkingLevel')
+        const verify = await configGet(this.run, CONFIG_DEFAULT_THINKING)
         const actual = verify?.value
         this.invalidate()
         // Exact match only.
         if (actual !== level) {
-          return { ok: false, error: `runtime did not confirm the change (got "${typeof actual === 'string' ? actual : 'unset'}")` }
+          return {
+            ok: false,
+            error: `runtime did not confirm the change (got "${typeof actual === 'string' ? actual : 'unset'}")`
+          }
         }
         return { ok: true }
       }
       // '' = reset to the runtime default. Verification: the key must exist
       // afterwards with its (runtime-chosen) default value.
-      if (!(await configReset(this.run, 'defaultThinkingLevel'))) {
+      if (!(await configReset(this.run, CONFIG_DEFAULT_THINKING))) {
         return { ok: false, error: 'omp config reset failed' }
       }
-      const verify = await configGet(this.run, 'defaultThinkingLevel')
+      const verify = await configGet(this.run, CONFIG_DEFAULT_THINKING)
       this.invalidate()
       if (typeof verify?.value !== 'string') {
         return { ok: false, error: 'runtime did not confirm the reset' }
@@ -301,10 +373,10 @@ export class RuntimeSettings {
   async setMachineSkills(enabled: boolean): Promise<{ ok: boolean; error?: string }> {
     if (this.profile !== 'current') return { ok: false, error: 'legacy-profile' }
     return this.enqueue(async () => {
-      if (!(await configSet(this.run, 'skills.enableAgentsUser', enabled))) {
+      if (!(await configSet(this.run, CONFIG_MACHINE_SKILLS, enabled))) {
         return { ok: false, error: 'omp config set failed' }
       }
-      const verify = await configGet(this.run, 'skills.enableAgentsUser')
+      const verify = await configGet(this.run, CONFIG_MACHINE_SKILLS)
       this.invalidate()
       // Exact boolean match only — missing/null/undefined is a failure,
       // never truthiness.
@@ -334,48 +406,18 @@ export class RuntimeSettings {
       return { ok: true }
     })
   }
-}
 
-/** First selector of the enabledModels array ('' when the runtime default applies). */
-function firstSelector(entry: OmpConfigEntry | null): string {
-  const value = entry?.value
-  if (!Array.isArray(value) || value.length === 0) return ''
-  const first = value[0]
-  return typeof first === 'string' ? first : ''
+  /** Coerce a modelRoles entry to a plain record (never throw on bad shape). */
+  private modelRolesRecord(entry: OmpConfigEntry | null): Record<string, string> {
+    const value = entry?.value
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof v === 'string') out[k] = v
+    }
+    return out
+  }
 }
-
-/**
- * Model selector validation. The GUI deliberately does NOT replicate the
- * runtime's naming rules — existence is the runtime's call. We only guarantee
- * argv/IPC safety: non-empty, bounded, no control characters, and not
- * flag-like (leading '-'). Slashes are fine everywhere: real selectors look
- * like `openrouter/deepseek/deepseek-v4-flash-0731`.
- */
-export function isValidModelSelector(selector: string): boolean {
-  if (typeof selector !== 'string') return false
-  if (selector.length === 0 || selector.length > 300) return false
-  if (selector.startsWith('-')) return false
-  // eslint-disable-next-line no-control-regex
-  if (/[\x00-\x1f\x7f]/.test(selector)) return false
-  return true
-}
-
-/**
- * Split a selector into provider + modelId: provider is the first segment,
- * modelId is everything after it (may itself contain slashes).
- */
-export function splitModelSelector(selector: string): { provider: string; modelId: string } | null {
-  if (!isValidModelSelector(selector)) return null
-  const slash = selector.indexOf('/')
-  if (slash === -1) return null
-  const provider = selector.slice(0, slash)
-  const modelId = selector.slice(slash + 1)
-  if (!provider || !modelId) return null
-  return { provider, modelId }
-}
-
-/** Provider-id shape shared with the login/logout IPC validators. */
-export const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/
 
 /** Capabilities helper for tests. */
 export function capabilitiesForTest(patch: Partial<RuntimeCapabilities>): RuntimeCapabilities {
@@ -383,3 +425,8 @@ export function capabilitiesForTest(patch: Partial<RuntimeCapabilities>): Runtim
 }
 
 export type { CapabilityState }
+
+// Re-export the single model-selector validator + provider-id shape so
+// existing consumers keep a stable import surface (`./RuntimeSettings`)
+// while the implementations live in a dedicated, shared module.
+export { isValidModelSelector, splitModelSelector, PROVIDER_ID_PATTERN }

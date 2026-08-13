@@ -34,19 +34,27 @@ function Note({ children }: { children: React.ReactNode }) {
  * reads and writes the runtime's own state (omp config / RPC) with
  * read-after-write verification — this component must never touch legacy
  * auth.json/settings.json APIs.
+ *
+ * Machine skills have two independent dimensions:
+ * - capability (capabilities.machineSkillsConfig): whether this OMP version
+ *   exposes the config key at all;
+ * - state (machineSkillsState): enabled / disabled / unknown. `unknown`
+ *   ('missing'/'non-boolean' read-back) must never render as an explicit ON.
  */
 export default function CurrentOmpSettings() {
   const overview = useAppStore((s) => s.runtimeOverview)
   const t = useT()
-  const [machineSkills, setMachineSkillsState] = useState<boolean | null>(null)
+  const [machineSkills, setMachineSkillsState] = useState<'enabled' | 'disabled' | 'unknown'>('unknown')
   const [machineSkillCount, setMachineSkillCount] = useState(0)
   const [machinePending, setMachinePending] = useState(false)
   const [machineError, setMachineError] = useState<string | null>(null)
 
+  const machineSkillsCapability = overview?.capabilities.machineSkillsConfig ?? 'unknown'
+
   // The toggle state is runtime truth (skills.enableAgentsUser), not a GUI flag.
   useEffect(() => {
     if (overview?.profile === 'current') {
-      setMachineSkillsState(overview.machineSkillsEnabled)
+      setMachineSkillsState(overview.machineSkillsState)
     }
   }, [overview])
   useEffect(() => {
@@ -60,10 +68,11 @@ export default function CurrentOmpSettings() {
     const result = await useAppStore.getState().setRuntimeMachineSkills(enabled)
     setMachinePending(false)
     if (result.ok) {
-      setMachineSkillsState(enabled)
+      setMachineSkillsState(enabled ? 'enabled' : 'disabled')
     } else {
       // Rollback: the toggle shows the last runtime-confirmed state.
-      setMachineSkillsState(useAppStore.getState().runtimeOverview?.machineSkillsEnabled ?? null)
+      const last = useAppStore.getState().runtimeOverview?.machineSkillsState ?? 'unknown'
+      setMachineSkillsState(last)
       setMachineError(result.error ?? 'failed')
     }
   }
@@ -75,6 +84,9 @@ export default function CurrentOmpSettings() {
         : 'border-transparent text-cream-dim hover:text-cream'
     }`
 
+  const unsupported = machineSkillsCapability === 'unsupported'
+  const unknownState = machineSkills === 'unknown'
+
   return (
     <>
       <AuthSection />
@@ -82,35 +94,53 @@ export default function CurrentOmpSettings() {
 
       <Section title={t('settings.skills')}>
         <Row label={t('settings.machineSkills')}>
-          <div className="flex items-center gap-2">
-            <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
+          {unsupported ? (
+            <span className="text-xs text-cream-faint">
+              Not supported by this Oh My Pi version
+            </span>
+          ) : unknownState ? (
+            <span className="flex items-center gap-2 text-xs text-cream-faint">
+              Unable to determine ·{' '}
               <button
-                onClick={() => changeMachineSkills(true)}
-                disabled={machinePending}
-                className={seg(machineSkills === true)}
+                onClick={() => useAppStore.getState().loadRuntimeOverview(true)}
+                className="focus-ring rounded border border-line px-1.5 py-0.5 text-cream-dim hover:text-cream"
               >
-                {t('settings.on')}
+                Refresh
               </button>
-              <button
-                onClick={() => changeMachineSkills(false)}
-                disabled={machinePending}
-                className={seg(machineSkills === false)}
-              >
-                {t('settings.off')}
-              </button>
+            </span>
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
+                <button
+                  onClick={() => changeMachineSkills(true)}
+                  disabled={machinePending}
+                  className={seg(machineSkills === 'enabled')}
+                >
+                  {t('settings.on')}
+                </button>
+                <button
+                  onClick={() => changeMachineSkills(false)}
+                  disabled={machinePending}
+                  className={seg(machineSkills === 'disabled')}
+                >
+                  {t('settings.off')}
+                </button>
+              </div>
+              {machinePending && <span className="text-xs text-cream-faint">…</span>}
             </div>
-            {machinePending && <span className="text-xs text-cream-faint">…</span>}
-          </div>
+          )}
         </Row>
-        {machineError && (
+        {machineError && !unsupported && (
           <Note>
             <span className="text-red-500">{t('settings.saveFailed', { error: machineError })}</span>
           </Note>
         )}
         <Note>
-          {machineSkillCount > 0
-            ? t('settings.machineSkillsNoteCount', { count: machineSkillCount })
-            : t('settings.machineSkillsNote')}
+          {unsupported
+            ? 'This Oh My Pi version does not expose Machine Skills configuration.'
+            : machineSkillCount > 0
+              ? t('settings.machineSkillsNoteCount', { count: machineSkillCount })
+              : t('settings.machineSkillsNote')}
         </Note>
       </Section>
     </>

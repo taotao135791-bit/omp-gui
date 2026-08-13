@@ -22,14 +22,29 @@ export type CliRunner = (
 
 const DEFAULT_TIMEOUT_MS = 10_000
 
-/** Default runner: execFile with argv (never a shell string). */
-export function makeExecRunner(executable: string, timeoutMs = DEFAULT_TIMEOUT_MS): CliRunner {
+export interface CliRunnerOptions {
+  /** Extra environment overrides (e.g. PI_CODING_AGENT_DIR / HOME for isolation). */
+  env?: NodeJS.ProcessEnv
+  timeoutMs?: number
+}
+
+/**
+ * Default runner: execFile with argv (never a shell string). `env` is merged
+ * over `process.env` so an isolated test root can be injected without
+ * touching the real environment.
+ */
+export function makeExecRunner(
+  executable: string,
+  options: CliRunnerOptions | number = {}
+): CliRunner {
+  const { env, timeoutMs = DEFAULT_TIMEOUT_MS } =
+    typeof options === 'number' ? { timeoutMs: options } : options
   return (args) =>
     new Promise((resolve) => {
       execFile(
         executable,
         args,
-        { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
+        { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, ...(env ?? {}) } },
         (err, stdout, stderr) => {
           resolve({
             ok: !err,

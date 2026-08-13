@@ -1,14 +1,18 @@
 import { useState } from 'react'
 import { Check } from 'lucide-react'
-import { THINKING_LEVEL_ORDER } from '@shared/types'
+import { DefaultThinkingLevel } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
+import { defaultThinkingOptionsFor } from '../lib/thinking'
 
 /**
  * Settings → Models (current profile): the new-session default model and
  * default thinking level, read from and written to the runtime's own config
- * (omp config enabledModels / defaultThinkingLevel), read-after-write
+ * (omp config modelRoles.default / defaultThinkingLevel), read-after-write
  * verified. The composer pickers handle the per-session selection.
+ *
+ * The default model is `modelRoles.default`, NEVER `enabledModels` — the
+ * latter is a separate allow-list the GUI does not touch here.
  */
 export default function RuntimeModelSection() {
   const overview = useAppStore((s) => s.runtimeOverview)
@@ -20,6 +24,7 @@ export default function RuntimeModelSection() {
   const t = useT()
 
   const defaultModel = overview?.modelState.defaultModel ?? ''
+  const defaultModelExplicit = overview?.modelState.defaultModelExplicit ?? false
   const defaultThinking = overview?.modelState.defaultThinkingLevel ?? ''
   const catalog = runtimeModels
 
@@ -52,6 +57,34 @@ export default function RuntimeModelSection() {
     return acc
   }, new Map())
 
+  // Default-thinking options follow the default model's capability when the
+  // catalog knows it; `auto` stays offered (it is a runtime classifier).
+  const defaultEntry = catalog.find((m) => m.selector === defaultModel)
+  const thinkingOptions = defaultThinkingOptionsFor(defaultEntry)
+
+  // A current default level outside the model's declared set is shown, not
+  // dropped — the user must re-select. Unknown-looking levels render raw.
+  const currentThinkingSupported =
+    defaultThinking === '' || thinkingOptions.includes(defaultThinking as DefaultThinkingLevel)
+
+  // '' = automatic resolution (no explicit modelRoles.default).
+  const modelOptions = catalog.length > 0 ? (
+    <select value={defaultModelExplicit ? defaultModel : ''} onChange={(e) => changeModel(e.target.value)} className={selectCls}>
+      <option value="">{t('settings.modelAuto')}</option>
+      {Array.from(groups.entries()).map(([pid, list]) => (
+        <optgroup key={pid} label={pid}>
+          {list.map((m) => (
+            <option key={m.selector} value={m.selector}>
+              {m.name}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  ) : (
+    <span className="text-xs text-cream-faint">{t('settings.modelCatalogEmpty')}</span>
+  )
+
   return (
     <section className="overflow-hidden rounded-[16px] border border-line bg-ink-850 shadow-card">
       <div className="border-b border-line px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
@@ -60,24 +93,7 @@ export default function RuntimeModelSection() {
       <div className="divide-y divide-line/60 px-4">
         <div className="flex items-center justify-between gap-3 py-3">
           <span className="text-[13px] text-cream">{t('settings.defaultModel')}</span>
-          <span className="flex items-center gap-2">
-            {catalog.length > 0 ? (
-              <select value={defaultModel} onChange={(e) => changeModel(e.target.value)} className={selectCls}>
-                <option value="">{t('settings.modelAuto')}</option>
-                {Array.from(groups.entries()).map(([pid, list]) => (
-                  <optgroup key={pid} label={pid}>
-                    {list.map((m) => (
-                      <option key={m.selector} value={m.selector}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            ) : (
-              <span className="text-xs text-cream-faint">{t('settings.modelCatalogEmpty')}</span>
-            )}
-          </span>
+          <span className="flex items-center gap-2">{modelOptions}</span>
         </div>
         <div className="flex items-center justify-between gap-3 py-3">
           <span className="text-[13px] text-cream">{t('settings.thinkingCurrent')}</span>
@@ -88,7 +104,7 @@ export default function RuntimeModelSection() {
               className={selectCls}
             >
               <option value="">{t('settings.thinkingDefault')}</option>
-              {THINKING_LEVEL_ORDER.map((level) => (
+              {thinkingOptions.map((level) => (
                 <option key={level} value={level}>
                   {level}
                 </option>
@@ -102,6 +118,11 @@ export default function RuntimeModelSection() {
           </span>
         </div>
       </div>
+      {!currentThinkingSupported && defaultThinking !== '' && (
+        <p className="px-4 pb-2 text-xs text-amber-500">
+          Current: {defaultThinking} — not supported by the selected default model.
+        </p>
+      )}
       {error && (
         <p className="px-4 pb-2 text-xs text-red-500">{t('settings.saveFailed', { error })}</p>
       )}

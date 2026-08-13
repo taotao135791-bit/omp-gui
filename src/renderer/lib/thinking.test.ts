@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { thinkingOptionsFor } from './thinking'
+import { defaultThinkingOptionsFor, sessionThinkingOptionsFor } from './thinking'
 
-describe('thinkingOptionsFor', () => {
+describe('sessionThinkingOptionsFor', () => {
   it('offers only the model-supported levels (plus off) on current profile', () => {
-    expect(thinkingOptionsFor('current', { thinking: ['medium', 'high'] })).toEqual([
+    expect(sessionThinkingOptionsFor('current', { thinking: ['medium', 'high'] })).toEqual([
       'off',
       'medium',
       'high'
     ])
-    expect(thinkingOptionsFor('current', { thinking: ['low', 'high', 'max'] })).toEqual([
+    expect(sessionThinkingOptionsFor('current', { thinking: ['low', 'high', 'max'] })).toEqual([
       'off',
       'low',
       'high',
@@ -17,11 +17,15 @@ describe('thinkingOptionsFor', () => {
   })
 
   it('orders by the canonical intensity order, not the catalog order', () => {
-    expect(thinkingOptionsFor('current', { thinking: ['max', 'low'] })).toEqual(['off', 'low', 'max'])
+    expect(sessionThinkingOptionsFor('current', { thinking: ['max', 'low'] })).toEqual([
+      'off',
+      'low',
+      'max'
+    ])
   })
 
-  it('falls back to the full set when the model is unknown to the catalog', () => {
-    expect(thinkingOptionsFor('current', undefined)).toEqual([
+  it('falls back to the full session set when the model is unknown to the catalog', () => {
+    expect(sessionThinkingOptionsFor('current', undefined)).toEqual([
       'off',
       'minimal',
       'low',
@@ -30,11 +34,11 @@ describe('thinkingOptionsFor', () => {
       'xhigh',
       'max'
     ])
-    expect(thinkingOptionsFor('current', { thinking: [] })).toHaveLength(7)
+    expect(sessionThinkingOptionsFor('current', { thinking: [] })).toHaveLength(7)
   })
 
   it('legacy profile never offers max', () => {
-    expect(thinkingOptionsFor('legacy', undefined)).toEqual([
+    expect(sessionThinkingOptionsFor('legacy', undefined)).toEqual([
       'off',
       'minimal',
       'low',
@@ -42,6 +46,32 @@ describe('thinkingOptionsFor', () => {
       'high',
       'xhigh'
     ])
-    expect(thinkingOptionsFor('legacy', { thinking: ['max'] })).not.toContain('max')
+    expect(sessionThinkingOptionsFor('legacy', { thinking: ['max'] })).not.toContain('max')
+  })
+})
+
+describe('defaultThinkingOptionsFor', () => {
+  it('offers the config enum (auto..max, no off) for an unknown model', () => {
+    expect(defaultThinkingOptionsFor(undefined)).toEqual([
+      'auto',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
+  })
+
+  it('filters to the model-supported levels but always keeps auto', () => {
+    expect(defaultThinkingOptionsFor({ thinking: ['medium', 'high'] })).toEqual([
+      'auto',
+      'medium',
+      'high'
+    ])
+  })
+
+  it('never includes off (not a legal config default)', () => {
+    expect(defaultThinkingOptionsFor({ thinking: ['off', 'max'] })).toEqual(['auto', 'max'])
   })
 })

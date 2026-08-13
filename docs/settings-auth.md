@@ -12,9 +12,10 @@ RPC wire protocol lives in `docs/protocol-facts.md`.
 | Credentials | runtime-owned store; managed via RPC `login` / `omp auth-broker` | `~/.pi/agent/auth.json` |
 | Provider list | RPC `get_login_providers` (66 providers, `available`/`authenticated`) | static GUI list + auth.json keys |
 | Model catalog | `omp models --json` / RPC `get_available_models` (credential-filtered) | registry file + `get_available_models` |
-| Default model | `omp config enabledModels` (first entry; empty = catalog default) | `settings.json` `defaultModel` |
-| Default thinking | `omp config defaultThinkingLevel` | `settings.json` `defaultThinkingLevel` |
-| Machine skills | `omp config skills.enableAgentsUser` | `settings.json` `skills` override list |
+| Default model | `omp config modelRoles.default` (empty/absent = automatic) | `settings.json` `defaultModel` |
+| Enabled models | `omp config enabledModels` (separate allow-list, not modified by OMP GUI) | — |
+| Default thinking | `omp config defaultThinkingLevel` (enum: auto/minimal/low/medium/high/xhigh/max) | `settings.json` `defaultThinkingLevel` |
+| Machine skills | `omp config skills.enableAgentsUser` (boolean; unknown ≠ enabled) | `settings.json` `skills` override list |
 | GUI settings | electron-store (theme, language, notifications, …) — GUI-owned | same |
 
 The GUI never writes `auth.json`/`settings.json` for the current runtime,
@@ -55,22 +56,31 @@ login
     (`set_model`, session scope).
   - Composer picker WITHOUT one → a one-shot override consumed by the next
     session's spawn args (`--model` / `--thinking`).
-  - Settings default model → `enabledModels` via `omp config`, applies to
-    new sessions only.
+  - Settings default model → `modelRoles.default` via `omp config`, applies
+    to new sessions only. `enabledModels` is a separate allow-list and is
+    NEVER written by the GUI's default-model path.
   Changing one never moves the other — verified by real-binary regression
   tests (a session hot-switch never moves `enabledModels`; a fresh session
   starts on the runtime default).
 - `model_changed` / `thinking_level_changed` events keep pickers in sync
   with the runtime-resolved state.
 
-## Thinking levels
+## Thinking levels — two DIFFERENT domains
 
-Current runtime levels: `off`, `minimal`, `low`, `medium`, `high`,
-`xhigh`, `max` (verified via `Effort`/`THINKING_EFFORTS` and live probes).
-Per-model subsets exist (`omp models --json` → `thinking: [...]`) and the
-composer picker only offers what the current model supports (plus `off`,
-which is universal); when the catalog doesn't know the model, the full set
-is offered and capability reads as unknown.
+**Session thinking** (`set_thinking_level` / `--thinking`) uses the session
+enum: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `off` is
+legal here — it is a session runtime state, never the global default.
+
+**Default thinking** (`omp config defaultThinkingLevel`) uses the config
+enum: `auto`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (verified
+against 17.2.12). `auto` is legal; `off` is NOT. The GUI keeps these as
+separate TypeScript types (`SessionThinkingLevel` vs `DefaultThinkingLevel`)
+so a session enum value can never be written to global config.
+
+Per-model subsets exist (`omp models --json` → `thinking: [...]`) and both
+pickers filter by the current model's capability list. The Settings default
+picker additionally keeps `auto` offered regardless of model metadata, since
+`auto` is a runtime-side classifier, not a model capability.
 
 `set_thinking_level` never errors — unsupported levels are **clamped**
 (e.g. xhigh → high) or resolve to "auto" (unknown values). The GUI
@@ -78,6 +88,15 @@ therefore displays the runtime-resolved level (`thinking_level_changed` /
 `get_state.thinkingLevel`), not the requested one. Scope mirrors models:
 session picks are session-only; the Settings default applies to future
 sessions only.
+
+## Machine skills
+
+`skills.enableAgentsUser` reports a boolean. The GUI reads it as a separate
+three-state (`enabled` | `disabled` | `unknown`) — a missing/non-boolean
+read-back is `unknown`, which is NEVER rendered as an explicit ON toggle.
+Capability (whether this OMP version exposes the key at all) is likewise
+reported separately in the capabilities overview; an unsupported version
+shows "Not supported by this Oh My Pi version" and disables the toggle.
 
 ## Secrets
 

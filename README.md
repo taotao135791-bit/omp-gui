@@ -32,7 +32,7 @@ The app auto-detects an installed `omp`/`pi` CLI, or offers to install Oh My Pi 
 - **Auto-update** — checks GitHub Releases on launch and from Settings → About; downloads in the background and installs on restart.
 - **Session export** — one click exports the transcript to a styled HTML file in ~/Downloads.
 - **Model & provider sign-in** — Settings → Authentication lists every provider the runtime reports (66+), with its real connection state. Connect runs Oh My Pi's **native login flow** (browser OAuth or paste-key prompt, validated by the provider itself); Sign out removes the credential through the official channel with read-after-write verification. The GUI never stores keys itself, and never pretends a write succeeded when the runtime didn't confirm it. Legacy Pi installs keep their file-based auth.json compatibility path.
-- **Runtime-faithful models & thinking** — the composer model picker lists only models the runtime can actually run (credential-filtered by Oh My Pi itself) and switches **exactly the current session**; without a session it sets a one-shot override for the next session's spawn args. The Settings default (for future sessions) is a separate control persisted through the runtime's own config — changing one never moves the other, and every write is verified by re-reading the runtime. The thinking picker covers the full level set (off → **max**) filtered by the current model's own capability list, and displays the runtime-resolved level — if a model clamps your choice, you see the clamped truth, not your click.
+- **Runtime-faithful models & thinking** — the composer model picker lists only models the runtime can actually run (credential-filtered by Oh My Pi itself) and switches **exactly the current session**; without a session it sets a one-shot override for the next session's spawn args. The Settings default (for future sessions) is a separate control persisted to `modelRoles.default` (never `enabledModels`) — changing one never moves the other, and every write is verified by re-reading the runtime. The session thinking picker covers the full session enum (off → **max**) filtered by the current model's own capability list; the Settings default-thinking picker uses the separate config enum (`auto` … `max`, no `off`), and both display the runtime-resolved level.
 - **Zero legacy writes on current OMP** — with a current Oh My Pi runtime, no Settings/auth/models/skills flow ever touches legacy `auth.json`/`settings.json` (guarded by static-boundary tests and a real-filesystem integration check). Legacy Pi installs keep their file-based compatibility path, clearly labeled legacy in the UI.
 - **Permissions** — tool access modes (full access / no Bash / read-only) applied to new sessions, plus project-trust control for project-local plugins.
 - **Assemble your Pi** — the plugin page works like a mecha bay: drag parts onto the core to mount them, drag back to the rack to detach, drop to the red zone to uninstall. Install npm/git/local packages or drop a folder straight from Finder. Only mounted parts load into new chats, keeping pi lean.
@@ -74,9 +74,10 @@ authenticated; GUI says Model X = the runtime is actually using Model X.**
 - **Current Oh My Pi** — providers and their auth state come from
   `get_login_providers`; sign-in rides the runtime's native login flow
   (browser/key prompt, provider-validated); defaults live in the runtime's
-  own config (`enabledModels`, `defaultThinkingLevel`,
+  own config (`modelRoles.default`, `defaultThinkingLevel`,
   `skills.enableAgentsUser`), written via `omp config` and verified by
-  re-reading the runtime.
+  re-reading the runtime. `enabledModels` is a separate model allow-list the
+  GUI never touches when you set the default model.
 - **Legacy Pi** — keeps the file-based compatibility path
   (`auth.json` / `settings.json`), clearly labeled as legacy in the UI.
 
@@ -106,11 +107,19 @@ pnpm dev
 ## Test & Build
 
 ```bash
-pnpm test        # vitest unit tests
-pnpm test:omp    # real-binary RPC compatibility suite (needs a configured omp/pi)
-pnpm build       # type-check + bundle
-pnpm package     # electron-builder → release/
+pnpm test         # vitest unit tests (hermetic, no real omp/pi)
+pnpm test:omp     # real-binary RPC + settings fidelity suite (isolated, credential-free, non-destructive)
+pnpm test:omp:live  # OPTIONAL live provider smoke test — may consume tokens; not run in CI
+pnpm build        # type-check + bundle
+pnpm package      # electron-builder → release/
 ```
+
+`pnpm test:omp` is **isolated and token-free**: it creates a fresh temp
+`PI_CODING_AGENT_DIR` + temp `HOME` per test, strips provider credentials,
+and never runs live model inference — so your real auth, config and token
+quota are untouched. `pnpm test:omp:live` is opt-in only (set
+`OMP_GUI_RUN_LIVE_TESTS=1`); it may use configured provider credentials and
+consume tokens, so it is never invoked automatically.
 
 When cutting a GitHub release, upload **all** updater assets, not just the dmgs — electron-updater needs the rest:
 

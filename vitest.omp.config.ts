@@ -15,7 +15,9 @@ export default defineConfig({
     }
   },
   test: {
+    // Live provider tests are opt-in only (test:omp:live) — never here.
     include: ['integration/**/*.test.ts'],
+    exclude: ['integration/**/*.live.test.ts', 'integration/**/*.provider.live.test.ts'],
     testTimeout: 90_000,
     hookTimeout: 30_000,
     // Real processes: run serially, never in parallel workers.
