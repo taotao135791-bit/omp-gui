@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { headTailLines, formatHiddenLines } from './retention'
+import { headTailLines, headTailChars, isLargeText, formatHiddenLines, formatHiddenChars } from './retention'
 
 describe('headTailLines', () => {
   it('returns the whole text when it fits the budget', () => {
@@ -31,3 +31,46 @@ describe('headTailLines', () => {
     expect(formatHiddenLines(42381)).toBe('… 42,381 lines hidden …')
   })
 })
+
+describe('headTailChars', () => {
+  it('returns the whole text when it fits the budget', () => {
+    const text = 'short single line'
+    const result = headTailChars(text, 100, 20)
+    expect(result.truncated).toBe(false)
+    expect(result.head).toBe(text)
+    expect(result.hidden).toBe(0)
+  })
+
+  it('retains head/tail of a single enormous line by char count', () => {
+    const text = 'x'.repeat(10_000)
+    const result = headTailChars(text, 100, 100)
+    expect(result.truncated).toBe(true)
+    expect(result.hiddenUnit).toBe('chars')
+    expect(result.head.length).toBe(100)
+    expect(result.tail.length).toBe(100)
+    expect(result.hidden).toBe(10_000 - 200)
+  })
+
+  it('never splits a surrogate pair (emoji)', () => {
+    // 100 emoji (each 2 UTF-16 code units), cut at an odd boundary.
+    const text = '😀'.repeat(100)
+    const result = headTailChars(text, 11, 10)
+    // The head must end on a complete codepoint (even number of code units).
+    expect(result.head.length % 2).toBe(0)
+    expect(result.tail.length % 2).toBe(0)
+  })
+
+  it('formats the hidden-char notice', () => {
+    expect(formatHiddenChars(42)).toBe('… 42 characters hidden …')
+  })
+})
+
+describe('isLargeText', () => {
+  it('is large by line count OR char count', () => {
+    expect(isLargeText(Array.from({ length: 201 }, () => 'x').join('\n'), 200, 100_000)).toBe(true)
+    expect(isLargeText('x'.repeat(100_001), 200, 100_000)).toBe(true)
+    expect(isLargeText('small', 200, 100_000)).toBe(false)
+    expect(isLargeText('', 200, 100_000)).toBe(false)
+  })
+})
+

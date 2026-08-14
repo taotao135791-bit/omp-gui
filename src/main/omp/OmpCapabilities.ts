@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { CliCapabilities, CliInfo, SessionState } from '../../shared/types'
+import { CliCapabilities, CliInfo, SessionState, CapabilityState, RpcOutcome } from '../../shared/types'
 import { HandshakeOutcome } from './OmpHandshake'
 
 /**
@@ -180,17 +180,31 @@ function noteSubagentCapability(patch: Partial<CliCapabilities>): void {
   }
 }
 
-/** `set_subagent_subscription` answered — progress subscription is supported iff success. */
-export function noteSubagentSubscription(ok: boolean): void {
-  noteSubagentCapability({ subagentProgress: ok ? 'supported' : 'unsupported' })
+/** Map a normalized RPC outcome to a capability state. */
+function outcomeState(outcome: RpcOutcome<unknown>): CapabilityState {
+  switch (outcome.kind) {
+    case 'success':
+    case 'command-error':
+      // The runtime ANSWERED the command (even if this invocation failed) →
+      // the command exists.
+      return 'supported'
+    case 'unsupported':
+      return 'unsupported'
+    case 'unknown':
+      return 'unknown'
+  }
 }
 
-/** `get_subagents` answered — roster hydration is supported iff success. */
-export function noteSubagentRoster(ok: boolean): void {
-  noteSubagentCapability({ subagents: ok ? 'supported' : 'unsupported' })
-}
-
-/** `get_subagent_messages` answered — child transcript access is supported iff success. */
-export function noteSubagentMessages(ok: boolean): void {
-  noteSubagentCapability({ subagentMessages: ok ? 'supported' : 'unsupported' })
+/**
+ * Record a subagent capability from a normalized RPC outcome. An `unknown`
+ * outcome (timeout / transport / death) never overwrites a previously-known
+ * state, so a transient timeout can't downgrade `supported` to `unknown`.
+ */
+export function noteSubagentCapabilityOutcome(
+  field: 'subagents' | 'subagentProgress' | 'subagentMessages',
+  outcome: RpcOutcome<unknown>
+): void {
+  const state = outcomeState(outcome)
+  if (state === 'unknown') return
+  noteSubagentCapability({ [field]: state })
 }

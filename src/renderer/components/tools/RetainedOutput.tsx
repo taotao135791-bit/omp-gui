@@ -1,12 +1,22 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
-import { headTailLines, formatHiddenLines } from '../../lib/retention'
+import {
+  headTailLines,
+  headTailChars,
+  isLargeText,
+  formatHiddenLines,
+  formatHiddenChars
+} from '../../lib/retention'
 import { useT } from '../../i18n'
 
 const HEAD_LINES = 100
 const TAIL_LINES = 30
-/** Above this many lines, the output is retained (head/tail) instead of full-DOM. */
+const HEAD_CHARS = 20_000
+const TAIL_CHARS = 10_000
+/** Above this many lines, output is retained by line. */
 const LINE_THRESHOLD = 200
+/** Above this many characters, output is retained by size (single huge line). */
+const CHAR_THRESHOLD = 100_000
 
 interface RetainedOutputProps {
   text: string
@@ -17,20 +27,26 @@ interface RetainedOutputProps {
 /**
  * Large-output presentation: small outputs render in full; large ones render
  * head + hidden-count + tail by default, with a keyboard-reachable expand/collapse
- * to the full text. This bounds the DOM — a 4 MB tool output never materializes
- * as tens of thousands of nodes unless the user explicitly opens it.
+ * to the full text. "Large" is line-count OR character-count, so a 4 MB minified
+ * JSON on a single line is retained too — not just multi-line outputs.
  */
 export default function RetainedOutput({ text, className = '' }: RetainedOutputProps) {
   const [expanded, setExpanded] = useState(false)
   const t = useT()
   const lineCount = text ? text.replace(/\n$/, '').split('\n').length : 0
-  const isLarge = lineCount > LINE_THRESHOLD
+  const large = isLargeText(text, LINE_THRESHOLD, CHAR_THRESHOLD)
 
-  if (!isLarge) {
+  if (!large) {
     return <pre className={className}>{text}</pre>
   }
 
-  const retained = headTailLines(text, HEAD_LINES, TAIL_LINES)
+  // Line-based when many lines; char-based when one enormous line.
+  const retained = lineCount > LINE_THRESHOLD
+    ? headTailLines(text, HEAD_LINES, TAIL_LINES)
+    : headTailChars(text, HEAD_CHARS, TAIL_CHARS)
+  const notice = retained.hiddenUnit === 'lines'
+    ? formatHiddenLines(retained.hidden)
+    : formatHiddenChars(retained.hidden)
 
   return (
     <div>
@@ -40,7 +56,7 @@ export default function RetainedOutput({ text, className = '' }: RetainedOutputP
         <pre className={className}>
           {retained.head}
           {'\n'}
-          <span className="select-none text-cream-faint">{formatHiddenLines(retained.hidden)}</span>
+          <span className="select-none text-cream-faint">{notice}</span>
           {'\n'}
           {retained.tail}
         </pre>
@@ -63,3 +79,4 @@ export default function RetainedOutput({ text, className = '' }: RetainedOutputP
     </div>
   )
 }
+

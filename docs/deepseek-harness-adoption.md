@@ -163,6 +163,37 @@ panel, child navigation, trajectory timeline/summary, interrupt/revive controls
 (upstream doesn't expose them anyway), and search index. The projection + bridge
 data layer for all of it is in place and tested.
 
+## Stage 4 — Final runtime truth cleanup (this round)
+
+1. **Capability semantics** — a normalized `RpcOutcome<T>` distinguishes
+   `success` / `command-error` / `unsupported` / `unknown`. A runtime
+   `success:false` that is NOT `Unknown command:` PROVES the command exists
+   (`supported`) — an invalid child / permission / state error never downgrades
+   the capability. Timeout / transport / death / malformed → `unknown`, never
+   `unsupported`. Verified live: `get_subagent_messages(does-not-exist)` → 
+   `command-error`, `subagentMessages` stays `supported`.
+2. **Tool/Turn stats single source** — removed the authoritative `turnActivity`
+   / `turnSummaries` store state and their writers. The chat turn row now derives
+   live progress and the frozen summary via `turnActivityFor` / `turnSummaryFor`
+   selectors from `ExecutionProjection` (the single classifier `classifyToolCall`
+   feeds both). No second counter store remains.
+3. **Historical metadata resume** — model/thinking are RECONSTRUCTED from OMP's
+   durable session JSONL (`model_change` / `thinking_level_change` entries,
+   replayed per user prompt) via `reconstructSessionMetadata`; steer is
+   reconstructed from the `steering` flag on `get_messages`. **No GUI sidecar is
+   needed** — OMP's durable log is sufficient. Unknown stays unknown (never the
+   current/default model).
+4. **Retention line + size** — `isLargeText` uses line-count OR character-count,
+   and `headTailChars` retains a single enormous line surrogate-safe (emoji/CJK
+   never split). `RetainedOutput` now also covers the generic tool INPUT.
+5. **Agent ownership** — `endTurn` no longer mutates `agents`; the root agent is
+   a synthetic graph root (derived status), not a roster entry. A turn may end
+   while its subagent keeps running — only subagent lifecycle/progress/snapshot
+   events change agent status.
+6. **Bootstrap dedup** — the handshake bootstrap now only sets the subscription;
+   the renderer hydrates the roster once via `getSubagents()`, no discarded
+   duplicate request.
+
 ## License compliance
 
 See `THIRD_PARTY_NOTICES.md`. Every reused source file carries its own MIT

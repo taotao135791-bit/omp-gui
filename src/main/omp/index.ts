@@ -16,10 +16,12 @@ import {
   SubagentMessagesResult,
   SubagentSnapshot,
   SubagentSubscriptionLevel,
-  SubagentTranscriptSelector
+  SubagentTranscriptSelector,
+  RpcOutcome
 } from '../../shared/types'
 import { getStore, setStore } from '../store'
 import { AgentMessage, mapAgentMessages } from '../messageMapping'
+import { reconstructSessionMetadata } from '../sessionMetadata'
 import { isSessionFilePath } from '../sessionHistory'
 import { planSpawn, removeApprovalConfig, resolvePermissionMode, spawnProcess, writeApprovalConfig } from './OmpProcess'
 import { OmpSession } from './OmpSession'
@@ -27,9 +29,7 @@ import {
   detectCli,
   noteHandshake,
   noteSessionState,
-  noteSubagentSubscription,
-  noteSubagentRoster,
-  noteSubagentMessages
+  noteSubagentCapabilityOutcome
 } from './OmpCapabilities'
 
 /**
@@ -213,53 +213,58 @@ export function setSessionModel(sessionId: string, provider: string, modelId: st
 
 /**
  * Enable/disable the subagent event subscription on a live session. Returns
- * false when the session is missing, dead, or the runtime rejected it.
+ * false when the session is missing, dead, or the runtime rejected it (the
+ * capability is still recorded from the real outcome).
  */
 export async function setSubagentSubscription(
   sessionId: string,
   level: SubagentSubscriptionLevel
 ): Promise<boolean> {
-  const ok = await (sessions.get(sessionId)?.setSubagentSubscription(level) ?? Promise.resolve(false))
-  noteSubagentSubscription(ok)
-  return ok
+  const outcome = await (sessions.get(sessionId)?.setSubagentSubscription(level) ??
+    Promise.resolve<RpcOutcome<{ level: SubagentSubscriptionLevel }>>({ kind: 'unknown' }))
+  noteSubagentCapabilityOutcome('subagentProgress', outcome)
+  return outcome.kind === 'success'
 }
 
 /**
  * Fetch the live subagent roster (`get_subagents`) and record the capability.
- * Null when the session is missing or the runtime has no roster command.
+ * Null when the session is missing or the roster command is unsupported; a
+ * supported-but-failed call still records `subagents` as supported.
  */
 export async function getSubagents(sessionId: string): Promise<SubagentSnapshot[] | null> {
-  const roster = await (sessions.get(sessionId)?.getSubagents() ?? Promise.resolve(null))
-  noteSubagentRoster(roster !== null)
-  return roster
+  const outcome = await (sessions.get(sessionId)?.getSubagents() ??
+    Promise.resolve<RpcOutcome<SubagentSnapshot[]>>({ kind: 'unknown' }))
+  noteSubagentCapabilityOutcome('subagents', outcome)
+  return outcome.kind === 'success' ? outcome.data : null
 }
 
 /**
  * Incrementally read a child agent transcript (`get_subagent_messages`). The
  * transcript is NOT merged into the root transcript — it is a separate
- * conversation surfaced only when the user opens the child. Null on failure.
+ * conversation surfaced only when the user opens the child. Null on failure;
+ * a "not found" error records `subagentMessages` as supported (the command
+ * exists), only `Unknown command:` records it unsupported.
  */
 export async function getSubagentMessages(
   sessionId: string,
   selector: SubagentTranscriptSelector
 ): Promise<SubagentMessagesResult | null> {
-  const result = await (sessions.get(sessionId)?.getSubagentMessages(selector) ?? Promise.resolve(null))
-  noteSubagentMessages(result !== null)
-  return result
+  const outcome = await (sessions.get(sessionId)?.getSubagentMessages(selector) ??
+    Promise.resolve<RpcOutcome<SubagentMessagesResult>>({ kind: 'unknown' }))
+  noteSubagentCapabilityOutcome('subagentMessages', outcome)
+  return outcome.kind === 'success' ? outcome.data : null
 }
 
 /**
  * Post-handshake bootstrap for a Current-Oh-My-Pi session: enable the
- * `progress` subscription and hydrate the roster, recording real capabilities.
- * Best-effort — a legacy runtime (or one without the event bus) simply never
- * reaches this path, and a rejected subscription leaves the session usable.
+ * `progress` subscription and record the real capability. The roster is NOT
+ * fetched here — the renderer hydrates it once via `getSubagents()` on session
+ * attach, so there is no duplicate bootstrap request. A rejected subscription
+ * leaves the session usable (subagent capability stays unknown/unsupported).
  */
 async function bootstrapSubagentBridge(session: OmpSession): Promise<void> {
-  const subscribed = await session.setSubagentSubscription('progress')
-  noteSubagentSubscription(subscribed)
-  if (!subscribed) return
-  const roster = await session.getSubagents()
-  noteSubagentRoster(roster !== null)
+  const outcome = await session.setSubagentSubscription('progress')
+  noteSubagentCapabilityOutcome('subagentProgress', outcome)
 }
 
 /**
@@ -413,5 +418,17 @@ export async function resumeSession(
   const session = createSession(cwd, onEvent, { resumeSessionPath: filePath })
   if (session.status === 'error') return null
   const messages = await getSessionMessages(session.id)
+  // Reconstruct per-turn model/thinking from the durable session JSONL and tag
+  // each user message. Steer kind is already set by mapAgentMessages from the
+  // `steering` flag. Unknown (unrecorded) metadata stays unknown — never guessed.
+  const metadata = await reconstructSessionMetadata(filePath)
+  let metaIndex = 0
+  for (const message of messages) {
+    if (message.role !== 'user') continue
+    const meta = metadata[metaIndex++]
+    if (!meta) break
+    if (meta.model !== undefined) message.runtimeModel = meta.model
+    if (meta.thinking !== undefined) message.runtimeThinking = meta.thinking
+  }
   return { session, messages }
 }

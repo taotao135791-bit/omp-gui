@@ -2,6 +2,7 @@ import { ReactNode } from 'react'
 import MessageItem from './MessageItem'
 import { ToolGroup } from './TurnRow'
 import { MessageLike, useAppStore } from '../store'
+import { turnActivityFor, turnSummaryFor } from '../lib/execution'
 
 interface MessageListProps {
   messages: MessageLike[]
@@ -21,8 +22,16 @@ function gapBefore(prev: MessageLike | undefined, nextIsUser: boolean): string {
 
 export default function MessageList({ messages, sessionId = null }: MessageListProps) {
   const streaming = useAppStore((s) => (sessionId ? Boolean(s.busy[sessionId]) : false))
-  const activity = useAppStore((s) => (sessionId ? s.turnActivity[sessionId] : undefined))
-  const summary = useAppStore((s) => (sessionId ? s.turnSummaries[sessionId] : undefined))
+  // Live progress / frozen summary derive from the single execution projection
+  // — never from a second per-turn counter store.
+  const activity = useAppStore((s) => {
+    const projection = sessionId ? s.executions[sessionId] : undefined
+    return projection ? turnActivityFor(projection) : undefined
+  })
+  const summary = useAppStore((s) => {
+    const projection = sessionId ? s.executions[sessionId] : undefined
+    return projection ? turnSummaryFor(projection) : undefined
+  })
 
   // Turn boundary marker: groups after the last user message belong to the
   // current (or just-finished) turn and get the live row / frozen summary.

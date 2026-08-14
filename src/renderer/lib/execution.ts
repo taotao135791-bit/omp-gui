@@ -125,6 +125,8 @@ export interface TurnProjection {
   status: TurnStatus
   tools: ToolStats
   trajectory: TrajectoryEntry[]
+  /** Latest tool call + its display target ("reading src/x.ts"). */
+  lastAction?: { tool: string; target: string }
 }
 
 export interface ExecutionProjection {
@@ -141,14 +143,7 @@ export const ROOT_AGENT_ID = 'main'
 
 export function emptyProjection(_sessionId?: string): ExecutionProjection {
   return {
-    agents: {
-      [ROOT_AGENT_ID]: {
-        id: ROOT_AGENT_ID,
-        agent: 'main',
-        agentSource: 'bundled',
-        status: 'pending'
-      }
-    },
+    agents: {},
     rootAgentId: ROOT_AGENT_ID,
     turns: {},
     turnOrder: [],
@@ -200,6 +195,7 @@ export function foldExecutionEvent(
           [turn.id]: {
             ...turn,
             tools: addTool(turn.tools, event.tool),
+            lastAction: { tool: event.tool, target: toolTarget(event.tool, event.input) },
             trajectory: appendEntry(turn.trajectory, { kind: 'tool', label: event.tool })
           }
         }
@@ -277,6 +273,20 @@ function appendEntry(list: TrajectoryEntry[], entry: Omit<TrajectoryEntry, 'seq'
   return [...list, { ...entry, seq: list.length }]
 }
 
+/** Display target of a tool call ("bash command", "read path", …). */
+function toolTarget(tool: string, input: unknown): string {
+  const name = tool.toLowerCase()
+  if (input && typeof input === 'object') {
+    const obj = input as Record<string, unknown>
+    if (name === 'bash' && typeof obj.command === 'string') {
+      return obj.command.split('\n', 1)[0].slice(0, 40)
+    }
+    const target = obj.path ?? obj.pattern ?? obj.query
+    if (typeof target === 'string' && target) return target
+  }
+  return tool
+}
+
 function startTurn(state: ExecutionProjection, now: number): ExecutionProjection {
   const turnId = `turn-${state.turnCounter + 1}`
   const turn: TurnProjection = {
@@ -291,18 +301,17 @@ function startTurn(state: ExecutionProjection, now: number): ExecutionProjection
     turnCounter: state.turnCounter + 1,
     currentTurnId: turnId,
     turns: { ...state.turns, [turnId]: turn },
-    turnOrder: [...state.turnOrder, turnId],
-    agents: {
-      ...state.agents,
-      [state.rootAgentId]: {
-        ...state.agents[state.rootAgentId],
-        status: 'running',
-        startedAt: state.agents[state.rootAgentId].startedAt ?? now
-      }
-    }
+    turnOrder: [...state.turnOrder, turnId]
   }
 }
 
+/**
+ * Close the current turn. This touches ONLY the TurnProjection (status/endedAt)
+ * and clears `currentTurnId`. It NEVER mutates `agents` — agent status is
+ * session-scoped truth, owned by subagent lifecycle/progress/snapshot events and
+ * runtime reconciliation, not by turn boundaries. A detached subagent may well
+ * still be running after its parent turn ends.
+ */
 function endTurn(
   state: ExecutionProjection,
   now: number,
@@ -311,17 +320,8 @@ function endTurn(
   const turnId = state.currentTurnId
   if (!turnId) return state
   const turn = state.turns[turnId]
-  const agents: Record<string, AgentNode> = {}
-  for (const [id, node] of Object.entries(state.agents)) {
-    agents[id] =
-      id !== state.rootAgentId && isBusyAgent(node.status)
-        ? { ...node, status: 'unknown', endedAt: node.endedAt ?? now }
-        : node
-  }
-  agents[state.rootAgentId] = { ...agents[state.rootAgentId], status: 'completed', endedAt: now }
   return {
     ...state,
-    agents,
     currentTurnId: undefined,
     turns: {
       ...state.turns,
@@ -404,13 +404,22 @@ function snapshotToAgentNode(s: SubagentSnapshot, now: number): AgentNode {
 
 // ------------------------------------------------------------------ selectors
 
+/** The synthetic root agent (the main session executor) with a DERIVED status. */
+export function rootAgent(projection: ExecutionProjection): AgentNode {
+  return {
+    id: projection.rootAgentId,
+    agent: 'main',
+    agentSource: 'bundled',
+    status: projection.currentTurnId ? 'running' : 'completed'
+  }
+}
+
 /** Agents ordered root-first then by spawn index (flat roster — no guessed tree). */
 export function orderedAgents(projection: ExecutionProjection): AgentNode[] {
-  const root = projection.agents[projection.rootAgentId]
-  const children = Object.values(projection.agents)
-    .filter((n) => n.id !== projection.rootAgentId)
-    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id.localeCompare(b.id))
-  return [root, ...children]
+  const children = Object.values(projection.agents).sort(
+    (a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id.localeCompare(b.id)
+  )
+  return [rootAgent(projection), ...children]
 }
 
 export interface AgentHubSummary {
@@ -421,6 +430,7 @@ export interface AgentHubSummary {
 }
 
 export function agentHubSummary(projection: ExecutionProjection): AgentHubSummary {
+  // Subagents only — the main agent is a graph root, not a roster entry.
   const nodes = Object.values(projection.agents)
   return {
     running: nodes.filter((n) => isBusyAgent(n.status)).length,
@@ -433,6 +443,15 @@ export function agentHubSummary(projection: ExecutionProjection): AgentHubSummar
 /** The current (in-flight) turn, or undefined. */
 export function currentTurn(projection: ExecutionProjection): TurnProjection | undefined {
   return projection.currentTurnId ? projection.turns[projection.currentTurnId] : undefined
+}
+
+/** The most recently COMPLETED turn, or undefined. */
+export function lastTurn(projection: ExecutionProjection): TurnProjection | undefined {
+  for (let i = projection.turnOrder.length - 1; i >= 0; i--) {
+    const turn = projection.turns[projection.turnOrder[i]]
+    if (turn && turn.status !== 'running') return turn
+  }
+  return undefined
 }
 
 /** Elapsed wall time of a turn (arrival-based; non-durable across resume). */
@@ -451,5 +470,85 @@ export function sessionToolTotals(projection: ExecutionProjection): ToolStats {
     }
   }
   return totals
+}
+
+// ------------------------------------------------------- presentation selectors
+// These map the authoritative ToolStats onto the legacy chat-row shapes. They
+// are SELECTORS ONLY — no separate persisted counters. TurnRow derives its live
+// progress and frozen summary through them.
+
+/** Legacy chat-row verb buckets. */
+export type TurnVerb = 'read' | 'search' | 'run' | 'edit' | 'call'
+
+export interface TurnCounts {
+  filesRead: number
+  searches: number
+  commands: number
+  edits: number
+  toolCalls: number
+}
+
+export interface TurnActivity {
+  startedAt: number
+  counts: TurnCounts
+  lastAction?: { verb: TurnVerb; target: string }
+}
+
+export interface TurnSummary {
+  elapsedMs: number
+  counts: TurnCounts
+}
+
+export function emptyTurnCounts(): TurnCounts {
+  return { filesRead: 0, searches: 0, commands: 0, edits: 0, toolCalls: 0 }
+}
+
+/** Map the single classifier onto the legacy chat-row verb. */
+export function classifyTool(tool: string): TurnVerb {
+  switch (classifyToolCall(tool)) {
+    case 'read':
+      return 'read'
+    case 'search':
+      return 'search'
+    case 'command':
+      return 'run'
+    case 'edit':
+      return 'edit'
+    case 'subagent':
+    case 'other':
+    default:
+      return 'call'
+  }
+}
+
+/** Map the authoritative ToolStats onto the legacy TurnCounts shape. */
+export function toTurnCounts(tools: ToolStats): TurnCounts {
+  return {
+    filesRead: tools.read,
+    searches: tools.search,
+    commands: tools.command,
+    edits: tools.edit,
+    toolCalls: tools.subagent + tools.other
+  }
+}
+
+/** Live progress for the in-flight turn, in the legacy TurnRow shape. */
+export function turnActivityFor(projection: ExecutionProjection): TurnActivity | undefined {
+  const turn = currentTurn(projection)
+  if (!turn || turn.startedAt === undefined) return undefined
+  return {
+    startedAt: turn.startedAt,
+    counts: toTurnCounts(turn.tools),
+    lastAction: turn.lastAction
+      ? { verb: classifyTool(turn.lastAction.tool), target: turn.lastAction.target }
+      : undefined
+  }
+}
+
+/** Frozen summary of the last completed turn, in the legacy TurnRow shape. */
+export function turnSummaryFor(projection: ExecutionProjection): TurnSummary | undefined {
+  const turn = lastTurn(projection)
+  if (!turn) return undefined
+  return { elapsedMs: turnElapsedMs(turn), counts: toTurnCounts(turn.tools) }
 }
 

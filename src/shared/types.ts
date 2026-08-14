@@ -97,6 +97,23 @@ export interface SubagentTranscriptSelector {
 }
 
 /**
+ * A normalized outcome of one RPC command round-trip, so capability probing can
+ * distinguish "the command exists but this invocation failed" from "the command
+ * does not exist":
+ *
+ * - `success` / `command-error`: the runtime ANSWERED the command → it exists
+ *   (supported), regardless of whether this invocation succeeded.
+ * - `unsupported`: the runtime answered `Unknown command: …` → not implemented.
+ * - `unknown`: no usable answer (timeout, transport failure, process death, or a
+ *   malformed response) → capability stays unknown, never "unsupported".
+ */
+export type RpcOutcome<T> =
+  | { kind: 'success'; data: T }
+  | { kind: 'command-error'; error: string; code?: string }
+  | { kind: 'unsupported'; error?: string; code?: string }
+  | { kind: 'unknown'; error?: string }
+
+/**
  * Runtime lifecycle of a session's agent process, driven by RPC events
  * (see src/main/omp/OmpSession.ts for the transition table).
  *
@@ -464,6 +481,12 @@ export interface ChatMessage {
   variant?: 'info'
   /** Thinking text of an assistant message (collapsible block in the UI). */
   thinking?: string
+  /** Per-turn runtime model selector (`provider/id`) this user turn dispatched under. */
+  runtimeModel?: string
+  /** Per-turn session thinking level at dispatch. */
+  runtimeThinking?: string
+  /** Interaction kind of a user message: a steered message, or a normal prompt. */
+  kind?: 'prompt' | 'steer'
   toolCall?: {
     tool: string
     input: unknown

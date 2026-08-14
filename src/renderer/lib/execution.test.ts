@@ -130,7 +130,7 @@ describe('agent graph (flat roster)', () => {
     expect(p.agents.x.status).toBe('completed')
   })
 
-  it('reports agent hub counts (running/done/failed)', () => {
+  it('reports agent hub counts (running/done/failed) — subagents only, turn end leaves them untouched', () => {
     let p = emptyProjection(S)
     p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
     p = foldExecutionEvent(p, subagent(S, { id: 'A', status: 'running' }), 1)
@@ -139,10 +139,22 @@ describe('agent graph (flat roster)', () => {
     p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 2)
 
     const hub = agentHubSummary(p)
-    expect(hub.total).toBe(4)
-    expect(hub.running).toBe(0)
-    expect(hub.done).toBe(2)
-    expect(hub.failed).toBe(1)
+    expect(hub.total).toBe(3) // subagents only — the main agent is a graph root, not a roster entry
+    expect(hub.running).toBe(1) // A is STILL running: turn end never mutates agent status
+    expect(hub.done).toBe(1) // B
+    expect(hub.failed).toBe(1) // C aborted
+  })
+
+  it('turn end leaves a running subagent running (detached subagent)', () => {
+    let p = emptyProjection(S)
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
+    p = foldExecutionEvent(p, subagent(S, { id: 'X', status: 'running' }), 1)
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 2)
+
+    expect(p.agents.X.status).toBe('running') // NOT unknown/completed
+    // Later the runtime reports it completed — only then does it flip.
+    p = foldExecutionEvent(p, subagent(S, { id: 'X', status: 'completed' }), 3)
+    expect(p.agents.X.status).toBe('completed')
   })
 })
 

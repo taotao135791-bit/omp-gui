@@ -8,7 +8,8 @@ import {
   SubagentMessagesResult,
   SubagentSnapshot,
   SubagentSubscriptionLevel,
-  SubagentTranscriptSelector
+  SubagentTranscriptSelector,
+  RpcOutcome
 } from '../../shared/types'
 import {
   LineReader,
@@ -171,18 +172,20 @@ export class OmpSession {
   }
 
   /** Enable/disable the subagent event subscription (current profile only). */
-  async setSubagentSubscription(level: SubagentSubscriptionLevel): Promise<boolean> {
+  async setSubagentSubscription(level: SubagentSubscriptionLevel): Promise<RpcOutcome<{ level: SubagentSubscriptionLevel }>> {
     const res = await this.query({ type: 'set_subagent_subscription', level })
-    return Boolean(res && res.success === true)
+    return classifyRpcResponse(res, 'set_subagent_subscription', (data) =>
+      data && typeof data === 'object' ? (data as { level: SubagentSubscriptionLevel }) : null
+    )
   }
 
-  /** Fetch the live subagent roster (`get_subagents`). Null on failure/unsupported. */
-  async getSubagents(): Promise<SubagentSnapshot[] | null> {
+  /** Fetch the live subagent roster (`get_subagents`). */
+  async getSubagents(): Promise<RpcOutcome<SubagentSnapshot[]>> {
     const res = await this.query({ type: 'get_subagents' })
-    if (!res || res.success !== true || !res.data) return null
-    const subagents = (res.data as { subagents?: unknown }).subagents
-    if (!Array.isArray(subagents)) return null
-    return subagents as SubagentSnapshot[]
+    return classifyRpcResponse(res, 'get_subagents', (data) => {
+      const subagents = (data as { subagents?: unknown } | null)?.subagents
+      return Array.isArray(subagents) ? (subagents as SubagentSnapshot[]) : null
+    })
   }
 
   /**
@@ -190,10 +193,11 @@ export class OmpSession {
    * `fromByte` supports cursor-based incremental reads; a missing session file
    * returns an empty result rather than throwing (upstream contract).
    */
-  async getSubagentMessages(selector: SubagentTranscriptSelector): Promise<SubagentMessagesResult | null> {
+  async getSubagentMessages(selector: SubagentTranscriptSelector): Promise<RpcOutcome<SubagentMessagesResult>> {
     const res = await this.query({ type: 'get_subagent_messages', ...selector })
-    if (!res || res.success !== true || !res.data) return null
-    return res.data as SubagentMessagesResult
+    return classifyRpcResponse(res, 'get_subagent_messages', (data) =>
+      data && typeof data === 'object' ? (data as SubagentMessagesResult) : null
+    )
   }
 
   /**
@@ -592,6 +596,34 @@ const NEGOTIATE_TIMEOUT_MS = 5_000
 interface PendingQuery {
   resolve: (payload: Record<string, unknown> | null) => void
   timer: ReturnType<typeof setTimeout>
+}
+
+/**
+ * Classify one RPC response frame into a normalized outcome. The key
+ * distinction: a `success:false` response that is NOT `Unknown command: …`
+ * still PROVES the command exists (supported) — only `Unknown command:` means
+ * unsupported. A null response (timeout / transport / process death) is
+ * `unknown`, never `unsupported`.
+ */
+export function classifyRpcResponse<T>(
+  res: Record<string, unknown> | null,
+  command: string,
+  parse: (data: unknown) => T | null
+): RpcOutcome<T> {
+  if (res === null) return { kind: 'unknown' }
+  if (res.success === true) {
+    const data = parse(res.data)
+    if (data !== null) return { kind: 'success', data }
+    // success:true but the data did not parse — a protocol mismatch, not a
+    // capability verdict.
+    return { kind: 'unknown', error: 'malformed response' }
+  }
+  const error = typeof res.error === 'string' ? res.error : `Unknown error (${command})`
+  const code = typeof res.code === 'string' ? res.code : undefined
+  if (error.startsWith('Unknown command:')) {
+    return { kind: 'unsupported', error, code }
+  }
+  return { kind: 'command-error', error, code }
 }
 
 /**

@@ -20,9 +20,11 @@ export interface HeadTail {
   head: string
   /** The retained tail lines (at most `tailLines`, only when truncation happened). */
   tail: string
-  /** Number of whole lines hidden between head and tail (0 = nothing hidden). */
+  /** Number of hidden units (lines or chars) between head and tail. */
   hidden: number
-  /** True when any line was omitted. */
+  /** The unit `hidden` counts in. */
+  hiddenUnit: 'lines' | 'chars'
+  /** True when any content was omitted. */
   truncated: boolean
 }
 
@@ -48,7 +50,7 @@ export function headTailLines(text: string, headLines: number, tailLines: number
   const keepTail = Math.max(0, tailLines)
 
   if (total <= keepHead + keepTail) {
-    return { head: text, tail: '', hidden: 0, truncated: false }
+    return { head: text, tail: '', hidden: 0, hiddenUnit: 'lines', truncated: false }
   }
 
   const head = lines.slice(0, keepHead).join('\n')
@@ -57,6 +59,7 @@ export function headTailLines(text: string, headLines: number, tailLines: number
     head,
     tail,
     hidden: total - keepHead - keepTail,
+    hiddenUnit: 'lines',
     truncated: true
   }
 }
@@ -64,4 +67,62 @@ export function headTailLines(text: string, headLines: number, tailLines: number
 /** Format the hidden-line notice shown between head and tail. */
 export function formatHiddenLines(hidden: number): string {
   return `… ${hidden.toLocaleString()} lines hidden …`
+}
+
+/** Format the hidden-char notice shown between head and tail. */
+export function formatHiddenChars(hidden: number): string {
+  return `… ${hidden.toLocaleString()} characters hidden …`
+}
+
+/** A UTF-16 high surrogate (first half of an emoji / astral codepoint). */
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
+}
+
+/** A UTF-16 low surrogate (second half of an emoji / astral codepoint). */
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff
+}
+
+/** Drop a trailing lone high surrogate so a char cut never splits an astral codepoint. */
+function trimTrailingHighSurrogate(s: string): string {
+  if (s.length && isHighSurrogate(s.charCodeAt(s.length - 1))) return s.slice(0, -1)
+  return s
+}
+
+/** Drop a leading lone low surrogate so a char cut never splits an astral codepoint. */
+function trimLeadingLowSurrogate(s: string): string {
+  if (s.length && isLowSurrogate(s.charCodeAt(0))) return s.slice(1)
+  return s
+}
+
+/**
+ * Char-based head/tail retention for content that is large by SIZE, not by line
+ * count (e.g. a single 4 MB minified JSON line). Cuts are surrogate-safe — an
+ * emoji spanning two UTF-16 code units is never split in half.
+ */
+export function headTailChars(text: string, headChars: number, tailChars: number): HeadTail {
+  const total = text.length
+  const keepHead = Math.max(0, headChars)
+  const keepTail = Math.max(0, tailChars)
+  if (total <= keepHead + keepTail) {
+    return { head: text, tail: '', hidden: 0, hiddenUnit: 'chars', truncated: false }
+  }
+  const head = trimTrailingHighSurrogate(text.slice(0, keepHead))
+  const tail = trimLeadingLowSurrogate(text.slice(total - keepTail))
+  return {
+    head,
+    tail,
+    hidden: total - head.length - tail.length,
+    hiddenUnit: 'chars',
+    truncated: true
+  }
+}
+
+/** True when content is large by line count OR by character count. */
+export function isLargeText(text: string, lineThreshold: number, charThreshold: number): boolean {
+  if (!text) return false
+  const lineCount = text.replace(/\n$/, '').split('\n').length
+  if (lineCount > lineThreshold) return true
+  return text.length > charThreshold
 }

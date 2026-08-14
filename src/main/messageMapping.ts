@@ -75,7 +75,13 @@ export function mapAgentMessages(messages: AgentMessage[]): ChatMessage[] {
     if (msg.role === 'user') {
       const text = joinText(msg.content, '\n').trim()
       if (!text) continue
-      out.push({ id: crypto.randomUUID(), role: 'user', content: text })
+      out.push({
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: text,
+        // OMP records steered messages with `steering: true` on the user message.
+        kind: msg.steering === true ? 'steer' : 'prompt'
+      })
       continue
     }
 

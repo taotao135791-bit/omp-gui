@@ -8,6 +8,10 @@ function user(text: string | string[]): AgentMessage {
   return { role: 'user', content }
 }
 
+function steeredUser(text: string): AgentMessage {
+  return { role: 'user', content: [{ type: 'text' as const, text }], steering: true }
+}
+
 function assistant(...blocks: AgentContentBlock[]): AgentMessage {
   return { role: 'assistant', content: blocks }
 }
@@ -166,5 +170,15 @@ describe('mapAgentMessages', () => {
   it('generates unique message ids', () => {
     const out = mapAgentMessages([user('a'), assistant(textBlock('b')), user('c')])
     expect(new Set(out.map((m) => m.id)).size).toBe(out.length)
+  })
+
+  it('tags a steered user message with kind "steer" (not a new prompt)', () => {
+    const out = mapAgentMessages([steeredUser('Focus on the runtime layer')])
+    expect(out[0].kind).toBe('steer')
+  })
+
+  it('tags a normal user message with kind "prompt"', () => {
+    const out = mapAgentMessages([user('hello')])
+    expect(out[0].kind).toBe('prompt')
   })
 })

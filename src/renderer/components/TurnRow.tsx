@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
+import { MessageLike } from '../store'
 import {
-  MessageLike,
   TurnActivity,
   TurnCounts,
   TurnSummary,
   TurnVerb,
   classifyTool,
   emptyTurnCounts
-} from '../store'
+} from '../lib/execution'
 import { I18nKey, useT } from '../i18n'
 import { formatSeconds } from '../lib/time'
 import ToolCallCard from './ToolCallCard'

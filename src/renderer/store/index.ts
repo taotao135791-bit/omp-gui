@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
-import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, classifyToolCall, foldUserSteer } from '../lib/execution'
+import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer } from '../lib/execution'
 
 export interface MessageLike {
   id: string
@@ -36,74 +36,8 @@ export interface MessageLike {
   runtimeThinking?: string
 }
 
-/** Verb buckets the turn-progress row aggregates tool calls into. */
-export type TurnVerb = 'read' | 'search' | 'run' | 'edit' | 'call'
+/** Verb buckets / turn-progress shapes now live in `../lib/execution` (single source). */
 
-export interface TurnCounts {
-  /** read/ls calls */
-  filesRead: number
-  /** grep/find calls */
-  searches: number
-  /** bash calls */
-  commands: number
-  /** edit/write calls */
-  edits: number
-  /** every other tool */
-  toolCalls: number
-}
-
-/** Live per-turn progress, reset on agent_start and frozen into a summary on agent_end. */
-export interface TurnActivity {
-  /** agent_start timestamp; the summary's elapsed time derives from it. */
-  startedAt: number
-  counts: TurnCounts
-  lastAction?: { verb: TurnVerb; target: string }
-}
-
-/** Frozen counters of the last finished turn of a session. */
-export interface TurnSummary {
-  elapsedMs: number
-  counts: TurnCounts
-}
-
-export function emptyTurnCounts(): TurnCounts {
-  return { filesRead: 0, searches: 0, commands: 0, edits: 0, toolCalls: 0 }
-}
-
-/** Bucket a tool name into its turn-progress verb (legacy chat-row verb mapping). */
-export function classifyTool(tool: string): TurnVerb {
-  // Single underlying classifier — the chat summary and the projection share it.
-  const cat = classifyToolCall(tool)
-  switch (cat) {
-    case 'read':
-      return 'read'
-    case 'search':
-      return 'search'
-    case 'command':
-      return 'run'
-    case 'edit':
-      return 'edit'
-    case 'subagent':
-    case 'other':
-    default:
-      return 'call'
-  }
-}
-
-function countField(verb: TurnVerb): keyof TurnCounts {
-  switch (verb) {
-    case 'read':
-      return 'filesRead'
-    case 'search':
-      return 'searches'
-    case 'run':
-      return 'commands'
-    case 'edit':
-      return 'edits'
-    default:
-      return 'toolCalls'
-  }
-}
 
 /**
  * Session status → busy mapping. 'waiting_for_user'/'aborting' keep the turn
@@ -116,24 +50,6 @@ const STATUS_BUSY: Partial<Record<SessionRuntimeState, boolean>> = {
   aborting: true,
   idle: false,
   failed: false
-}
-
-/**
- * Short label of what a tool call acts on, for the live turn row:
- * bash → first command line (40 chars), file/search tools → path/pattern,
- * everything else → the tool name.
- */
-function toolTarget(tool: string, input: unknown): string {
-  const name = tool.toLowerCase()
-  if (input && typeof input === 'object') {
-    const obj = input as Record<string, unknown>
-    if (name === 'bash' && typeof obj.command === 'string') {
-      return obj.command.split('\n', 1)[0].slice(0, 40)
-    }
-    const target = obj.path ?? obj.pattern ?? obj.query
-    if (typeof target === 'string' && target) return target
-  }
-  return tool
 }
 
 /** A message parked while the session is busy; drained FIFO on idle. */
@@ -186,10 +102,6 @@ interface AppState {
   compacting: Record<string, boolean>
   /** sessionId -> latest known token/context usage */
   stats: Record<string, SessionStats>
-  /** sessionId -> live turn-progress counters (present while a turn runs) */
-  turnActivity: Record<string, TurnActivity>
-  /** sessionId -> frozen counters of the last finished turn */
-  turnSummaries: Record<string, TurnSummary>
   /** Sidebar: pinned sessions, listed first (persisted in electron-store). */
   pinnedSessionIds: string[]
   /** Sidebar: archived sessions, folded into the archive group (persisted). */
@@ -362,8 +274,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   queuedMessages: {},
   compacting: {},
   stats: {},
-  turnActivity: {},
-  turnSummaries: {},
   pinnedSessionIds: [],
   archivedSessionIds: [],
   unreadSessionIds: {},
@@ -814,26 +724,6 @@ export const useAppStore = create<AppState>((set, get) => ({
           output: event.output
         }
       })
-      // Turn-progress aggregation: bucket the tool and remember the last action
-      const verb = classifyTool(event.tool)
-      const field = countField(verb)
-      const target = toolTarget(event.tool, event.input)
-      set((state) => {
-        const activity = state.turnActivity[event.sessionId] ?? {
-          startedAt: Date.now(),
-          counts: emptyTurnCounts()
-        }
-        return {
-          turnActivity: {
-            ...state.turnActivity,
-            [event.sessionId]: {
-              ...activity,
-              counts: { ...activity.counts, [field]: activity.counts[field] + 1 },
-              lastAction: { verb, target }
-            }
-          }
-        }
-      })
     } else if (event.type === 'tool_result') {
       // Merge the result into its tool-call card: by toolCallId when the event
       // carries one (parallel calls pair by id, order-independent); the legacy
@@ -848,43 +738,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       const wasBusy = Boolean(get().busy[event.sessionId])
       const nextBusy = STATUS_BUSY[event.status]
       if (event.status === 'working') {
-        // agent_start: fresh turn-progress counters
-        set((state) => ({
-          busy: { ...state.busy, [event.sessionId]: true },
-          turnActivity: {
-            ...state.turnActivity,
-            [event.sessionId]: { startedAt: Date.now(), counts: emptyTurnCounts() }
-          }
-        }))
+        set((state) => ({ busy: { ...state.busy, [event.sessionId]: true } }))
       } else if (nextBusy === true) {
         // waiting_for_user / aborting: the turn is still open — stay busy.
         set((state) => ({ busy: { ...state.busy, [event.sessionId]: true } }))
       } else if (nextBusy === false) {
-        // Turn ended: close any open thinking run and clear busy. idle
-        // (agent_end) also freezes the turn summary; a failed session stops
-        // there — its error event already put the message on screen and its
-        // queue stays parked instead of auto-firing into a dead session.
+        // Turn ended: close any open thinking run and clear busy. The turn's
+        // summary is derived from the execution projection — never a second copy.
         get().finalizeThinking(event.sessionId)
-        set((state) => {
-          const activity = state.turnActivity[event.sessionId]
-          const turnActivity = { ...state.turnActivity }
-          delete turnActivity[event.sessionId]
-          return {
-            busy: { ...state.busy, [event.sessionId]: false },
-            turnActivity,
-            ...(event.status === 'idle' && activity
-              ? {
-                  turnSummaries: {
-                    ...state.turnSummaries,
-                    [event.sessionId]: {
-                      elapsedMs: Date.now() - activity.startedAt,
-                      counts: activity.counts
-                    }
-                  }
-                }
-              : {})
-          }
-        })
+        set((state) => ({ busy: { ...state.busy, [event.sessionId]: false } }))
       }
       // Statuses outside STATUS_BUSY leave busy/turn state untouched.
       // working→idle with a non-empty queue: send the next queued message.
@@ -966,17 +828,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       // A dead session can't answer dialogs — drop them
       set((state) => ({ uiRequests: { ...state.uiRequests, [event.sessionId]: [] } }))
     } else if (event.type === 'closed') {
-      set((state) => {
-        const turnActivity = { ...state.turnActivity }
-        delete turnActivity[event.sessionId]
-        return {
-          busy: { ...state.busy, [event.sessionId]: false },
-          compacting: { ...state.compacting, [event.sessionId]: false },
-          uiRequests: { ...state.uiRequests, [event.sessionId]: [] },
-          queuedMessages: { ...state.queuedMessages, [event.sessionId]: [] },
-          turnActivity
-        }
-      })
+      set((state) => ({
+        busy: { ...state.busy, [event.sessionId]: false },
+        compacting: { ...state.compacting, [event.sessionId]: false },
+        uiRequests: { ...state.uiRequests, [event.sessionId]: [] },
+        queuedMessages: { ...state.queuedMessages, [event.sessionId]: [] }
+      }))
     }
   }
 }))

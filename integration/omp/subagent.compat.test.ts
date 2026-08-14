@@ -92,24 +92,27 @@ describe('current omp — subagent RPC bridge', () => {
     try {
       await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
       if (diedEarly(live)) return
-      expect(await live.session.setSubagentSubscription('progress')).toBe(true)
+      const sub = await live.session.setSubagentSubscription('progress')
+      expect(sub.kind).toBe('success')
       const roster = await live.session.getSubagents()
-      expect(Array.isArray(roster)).toBe(true)
-      expect(roster).toHaveLength(0)
+      expect(roster.kind).toBe('success')
+      if (roster.kind === 'success') expect(roster.data).toHaveLength(0)
     } finally {
       live.session.kill()
       live.iso.cleanup()
     }
   })
 
-  it('get_subagent_messages for an unknown id fails cleanly (does not crash)', async () => {
+  it('get_subagent_messages for an unknown id → command-error (SUPPORTED, not unsupported)', async () => {
     if (!available) return
     const live = startSession()
     try {
       await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
       if (diedEarly(live)) return
       const result = await live.session.getSubagentMessages({ subagentId: 'does-not-exist' })
-      expect(result).toBeNull()
+      // The runtime ANSWERED (success:false) → the command exists. This is the
+      // P0 regression: an operation failure must NOT read as "unsupported".
+      expect(result.kind).toBe('command-error')
     } finally {
       live.session.kill()
       live.iso.cleanup()
@@ -122,7 +125,7 @@ describe('current omp — subagent RPC bridge', () => {
     try {
       await waitFor(() => live.session.handshakeOutcome !== null, 15_000, 'handshake')
       if (diedEarly(live)) return
-      expect(await live.session.setSubagentSubscription('off')).toBe(true)
+      expect((await live.session.setSubagentSubscription('off')).kind).toBe('success')
       const res = await live.session.query({ type: 'set_subagent_subscription', level: 'events' }, 10_000)
       expect(res?.success).toBe(true)
       expect((res?.data as { level?: string }).level).toBe('events')
