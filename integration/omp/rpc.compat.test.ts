@@ -217,7 +217,7 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
   it('session scope vs default scope: switching a session never changes the default', async () => {
     if (!available) return
     const iso = isolatedRpc(OMP_BIN)
-    const run = makeExecRunner(OMP_BIN, { env: iso.env })
+    const run = makeExecRunner(OMP_BIN, { env: iso.env, envMode: 'replace' })
     const thinkingBefore = (await configGet(run, 'defaultThinkingLevel'))?.value
     const rolesBefore = (await configGet(run, 'modelRoles'))?.value
 

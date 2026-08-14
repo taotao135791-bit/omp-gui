@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { CliInfo, ExtensionUiAnswer, SessionEvent } from '../../../shared/types'
 import { executableSearchDirs } from '../OmpCapabilities'
+import { EnvMode, resolveSubprocessEnv } from '../env'
 import { OmpSession, OmpProcessLike } from '../OmpSession'
 
 /**
@@ -26,6 +27,8 @@ export interface RpcClientOptions {
   args?: string[]
   /** Extra environment overrides. */
   env?: NodeJS.ProcessEnv
+  /** `inherit` (default) or `replace` — see resolveSubprocessEnv. */
+  envMode?: EnvMode
   /** Where the process runs (config/session state is HOME-scoped anyway). */
   cwd?: string
 }
@@ -52,13 +55,12 @@ export class RuntimeRpcClient {
     if (!cli.available) return null
     const proc = spawn(cli.path ?? cli.command, ['--mode', 'rpc', ...(opts.args ?? [])], {
       cwd: opts.cwd ?? homedir(),
-      env: {
-        ...process.env,
+      env: resolveSubprocessEnv(opts.envMode ?? 'inherit', {
         PATH: executableSearchDirs().join(path.delimiter),
         HOME: homedir(),
         FORCE_COLOR: '0',
         ...(opts.env ?? {})
-      }
+      })
     })
     const stderr = { text: '' }
     proc.stderr?.on('data', (c: Buffer) => {

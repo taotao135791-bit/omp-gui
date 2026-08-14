@@ -98,6 +98,31 @@ export type SessionEvent =
   | { type: 'thinking_level_changed'; sessionId: string; level?: string }
   /** The session's model changed (set_model / fallback); refetch get_state. */
   | { type: 'model_changed'; sessionId: string }
+  /**
+   * A subagent (child agent) lifecycle/status event, normalized from upstream
+   * `subagent_lifecycle` / `subagent_event` frames. Fields are tolerated —
+   * every one is optional because the upstream payload shape varies by runtime
+   * version; the renderer projection treats absent fields as unknown, never
+   * fabricates them. Emitted only when the runtime's subagent subscription is
+   * enabled (see `set_subagent_subscription`).
+   */
+  | {
+      type: 'subagent'
+      sessionId: string
+      agentId?: string
+      parentAgentId?: string
+      name?: string
+      status?: string
+      phase?: string
+      provider?: string
+      model?: string
+      purpose?: string
+      startedAt?: number
+      endedAt?: number
+      resultSummary?: string
+    }
+  /** Streamed activity text of a subagent (normalized from `subagent_progress`). */
+  | { type: 'subagent_progress'; sessionId: string; agentId?: string; text?: string }
   | { type: 'closed'; sessionId: string }
 
 /** Token/context usage of a session, as returned by the RPC get_session_stats command. */

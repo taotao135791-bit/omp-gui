@@ -105,6 +105,7 @@ export default function ChatPanel() {
     useAppStore.getState().addMessage(sessionId, {
       id: crypto.randomUUID(),
       role: 'user',
+      kind: 'prompt',
       content: text.trim(),
       images: images?.map(({ data, mimeType }) => ({ data, mimeType })),
       runtimeModel: snap.modelSelector,

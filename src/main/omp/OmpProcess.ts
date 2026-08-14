@@ -7,6 +7,7 @@ import { CliInfo, Language, PermissionMode, SessionThinkingLevel } from '../../s
 import { getStore } from '../store'
 import { buildLanguageArgs } from '../languageArgs'
 import { executableSearchDirs } from './OmpCapabilities'
+import { EnvMode, resolveSubprocessEnv } from './env'
 
 // The stderr ring buffer lives in OmpTransport (pure, stream-level utility)
 // so OmpSession's module graph stays electron-free and unit-testable; it is
@@ -128,6 +129,8 @@ export interface SpawnOptions {
   modelSelector?: string
   /** One-shot session-scoped thinking override (--thinking spawn arg). */
   thinkingLevel?: SessionThinkingLevel
+  /** `inherit` (production default) or `replace` (test isolation). */
+  envMode?: EnvMode
 }
 
 export interface SpawnPlan {
@@ -187,13 +190,12 @@ export function planSpawn(sessionId: string, cli: CliInfo, opts: SpawnOptions): 
   return {
     command: cli.path ?? cli.command,
     args,
-    env: {
-      ...process.env,
+    env: resolveSubprocessEnv(opts.envMode ?? 'inherit', {
       PATH: executableSearchDirs().join(path.delimiter),
       HOME: homedir(),
       FORCE_COLOR: '0',
       OMP_APPROVAL_CONFIG: approvalConfigFile
-    },
+    }),
     approvalConfigFile
   }
 }

@@ -149,6 +149,8 @@ export interface ElectronAPI {
   runtimeOverview: (force?: boolean) => Promise<RuntimeOverview>
   /** Runtime model catalog (credential-filtered by the runtime). */
   runtimeListModels: () => Promise<RuntimeModelInfo[]>
+  /** Full static model catalog (credential-independent) for the Settings picker. */
+  runtimeListModelCatalog: () => Promise<RuntimeModelInfo[]>
   /** Set the new-session default model; '' resets to the runtime default. Read-after-write verified. */
   runtimeSetDefaultModel: (selector: string) => Promise<{ ok: boolean; error?: string }>
   /** Set the default thinking level for new sessions. Read-after-write verified. */
@@ -296,6 +298,7 @@ const api: ElectronAPI = {
   runtimeOverview: (force?: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_OVERVIEW, force),
   runtimeListModels: () => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_LIST_MODELS),
+  runtimeListModelCatalog: () => ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_LIST_MODEL_CATALOG),
   runtimeSetDefaultModel: (selector: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_SET_DEFAULT_MODEL, selector),
   runtimeSetDefaultThinking: (level: string) =>

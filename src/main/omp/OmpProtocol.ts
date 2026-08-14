@@ -346,15 +346,83 @@ export function normalizeRpcFrame(
       }
       return { kind: 'none' }
 
+    // ----------------------------------------------------------------- subagents
+    // Current Oh My Pi exposes a subagent graph via `subagent_lifecycle` /
+    // `subagent_event` / `subagent_progress` (gated by
+    // `set_subagent_subscription`, default off). The GUI projects these onto a
+    // normalized, TOLERANT `subagent` event: every field is optional because
+    // the upstream payload shape varies, and unknown fields are ignored rather
+    // than guessed. `subagent_progress` carries activity text only — it is
+    // never mistaken for a lifecycle transition.
+    case 'subagent_lifecycle':
+    case 'subagent_event': {
+      const agentId = firstString(payload, 'agentId', 'subagentId', 'id')
+      const parentAgentId = firstString(payload, 'parentAgentId', 'parentId')
+      const name = firstString(payload, 'name', 'title', 'label')
+      const status = firstString(payload, 'status', 'state')
+      const phase = firstString(payload, 'phase', 'lifecycle')
+      const provider = firstString(payload, 'provider')
+      const model = firstString(payload, 'model')
+      const purpose = firstString(payload, 'purpose', 'goal', 'task')
+      const startedAt = firstNumber(payload, 'startedAt', 'startTime', 'createdAt')
+      const endedAt = firstNumber(payload, 'endedAt', 'endTime')
+      const resultSummary = firstString(payload, 'resultSummary', 'summary', 'result')
+      return {
+        kind: 'event',
+        event: {
+          type: 'subagent',
+          sessionId,
+          agentId,
+          parentAgentId,
+          name,
+          status,
+          phase,
+          provider,
+          model,
+          purpose,
+          startedAt,
+          endedAt,
+          resultSummary
+        }
+      }
+    }
+
+    case 'subagent_progress': {
+      const agentId = firstString(payload, 'agentId', 'subagentId', 'id')
+      const text = firstString(payload, 'text', 'message', 'activity')
+      return {
+        kind: 'event',
+        event: { type: 'subagent_progress', sessionId, agentId, text }
+      }
+    }
+
     default:
       // Everything else is deliberately not surfaced: turn_*/message_start,
       // session_info_update, config_update, goal_updated, todo_*,
       // ttsr_triggered, irc_message, available_commands_update, host_tool_*,
-      // host_uri_*, subagent_* … Unknown future frames land here too —
+      // host_uri_* … Unknown future frames land here too —
       // forward compatibility by construction, and the session debug-logs
       // what we skip.
       return { kind: 'none' }
   }
+}
+
+/** First key of `keys` whose payload value is a string; undefined otherwise. */
+function firstString(payload: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    if (typeof payload[key] === 'string') return payload[key] as string
+  }
+  return undefined
+}
+
+/** First key of `keys` whose payload value is a finite number; undefined otherwise. */
+function firstNumber(payload: Record<string, unknown>, ...keys: string[]): number | undefined {
+  for (const key of keys) {
+    if (typeof payload[key] === 'number' && Number.isFinite(payload[key])) {
+      return payload[key] as number
+    }
+  }
+  return undefined
 }
 
 /** Line-oriented wrapper: parse the JSONL frame, then normalize it. */

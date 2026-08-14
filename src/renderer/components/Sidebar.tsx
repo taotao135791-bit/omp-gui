@@ -76,21 +76,24 @@ export default function Sidebar() {
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // One-time bootstrap of the most-recent project: only before the initial
   // hydration completes. A user explicitly clearing the current project must
-  // NOT be yanked back to projects[0].
+  // NOT be yanked back to projects[0]. This effect runs ONCE on mount (deps
+  // are the stable store setters) — re-reading the persistence store on every
+  // `currentProject` change was the MRU race: a stale read could clobber the
+  // on-disk list with a single-entry list mid-hydration.
   const hydratedRecent = useRef(false)
 
   useEffect(() => {
     window.electronAPI.getStore('recentProjects').then((projects) => {
       setRecentProjects(projects)
-      if (!hydratedRecent.current) {
-        hydratedRecent.current = true
-        if (projects.length > 0 && !currentProject) {
-          setCurrentProject(projects[0])
-          window.electronAPI.setFsRoot(projects[0])
-        }
+      if (hydratedRecent.current) return
+      hydratedRecent.current = true
+      if (projects.length > 0 && !useAppStore.getState().currentProject) {
+        setCurrentProject(projects[0])
+        window.electronAPI.setFsRoot(projects[0])
       }
     })
-  }, [currentProject, setCurrentProject, setRecentProjects])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setCurrentProject, setRecentProjects])
 
   // Load the persisted session history on startup and whenever the project changes
   useEffect(() => {

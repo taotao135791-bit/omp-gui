@@ -2,11 +2,19 @@ import { create } from 'zustand'
 import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
+import { emptyProjection, foldExecutionEvent, ExecutionProjection } from '../lib/execution'
 
 export interface MessageLike {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
+  /**
+   * Interaction kind of a user-originated message. `steer` marks a message
+   * steered into the CURRENT active turn (not a new prompt turn); `prompt`
+   * (or undefined) is a normal new user turn. Assistant/system messages leave
+   * this unset.
+   */
+  kind?: 'prompt' | 'steer'
   /** system messages only: 'info' renders neutral instead of the error style. */
   variant?: 'info'
   /** Assistant thinking text, streamed via thinking deltas (collapsible block). */
@@ -135,6 +143,12 @@ interface AppState {
   sessions: Session[]
   currentSessionId: string | null
   messages: Record<string, MessageLike[]>
+  /**
+   * sessionId -> the normalized execution projection (Agent Hub tree, tool
+   * counts, trajectory ledger). ONE fold of the session event stream, from
+   * which the Agent Hub and trajectory surfaces derive — never copied per UI.
+   */
+  executions: Record<string, ExecutionProjection>
   /** sessionId -> pending extension UI dialogs (FIFO) */
   uiRequests: Record<string, UiRequest[]>
   packages: PackageInfo[]
@@ -176,12 +190,16 @@ interface AppState {
   composerPrefill: string | null
   /** Sidebar: recent project folders, MRU first (persisted in electron-store). */
   recentProjects: string[]
+  /** True once the persisted recent-projects list has been hydrated. */
+  recentProjectsLoaded: boolean
   /** Persisted session files of the current project (pi history), newest first. */
   historySessions: HistorySessionInfo[]
   /** Runtime-reported settings overview (profile/capabilities/providers/defaults). */
   runtimeOverview: RuntimeOverview | null
   /** Runtime model catalog (current profile; legacy rides `models`). */
   runtimeModels: RuntimeModelInfo[]
+  /** Full static model catalog (credential-independent) for the Settings picker. */
+  runtimeModelCatalog: RuntimeModelInfo[]
   /** sessionId -> runtime-resolved thinking level (thinking_level_changed events). */
   sessionThinking: Record<string, string | undefined>
   /** sessionId -> bumped on model_changed; pickers refetch get_state. */
@@ -282,6 +300,8 @@ interface AppState {
   loadRuntimeOverview: (force?: boolean) => Promise<void>
   /** Refresh the runtime model catalog (current profile). */
   loadRuntimeModels: () => Promise<void>
+  /** Refresh the full static model catalog (Settings picker). */
+  loadRuntimeModelCatalog: () => Promise<void>
   /** Persist the runtime default model (current profile; '' = runtime default). */
   selectRuntimeDefaultModel: (selector: string) => Promise<{ ok: boolean; error?: string }>
   /** Persist the runtime default thinking level (current profile). */
@@ -310,6 +330,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessions: [],
   currentSessionId: null,
   messages: {},
+  executions: {},
   uiRequests: {},
   packages: [],
   rightPanelOpen: false,
@@ -334,9 +355,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   unreadSessionIds: {},
   composerPrefill: null,
   recentProjects: [],
+  recentProjectsLoaded: false,
   historySessions: [],
   runtimeOverview: null,
   runtimeModels: [],
+  runtimeModelCatalog: [],
   sessionThinking: {},
   sessionModelVersion: {},
   loginState: { status: 'idle' },
@@ -355,7 +378,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCurrentProject: (currentProject) =>
     set((state) => {
       if (!currentProject) return { currentProject }
-      // Keep the MRU recent-projects list in sync (dedup, cap 10, persisted)
+      // Keep the MRU recent-projects list in sync (dedup, cap 10, persisted).
+      // Persist ONLY once the persisted list has hydrated — writing before then
+      // would clobber the on-disk MRU with a single-entry list (bootstrap race).
       const recentProjects = [
         currentProject,
         ...state.recentProjects.filter((p) => p !== currentProject)
@@ -363,7 +388,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       const changed =
         recentProjects.length !== state.recentProjects.length ||
         recentProjects.some((p, i) => p !== state.recentProjects[i])
-      if (changed) window.electronAPI.setStore('recentProjects', recentProjects)
+      if (changed && state.recentProjectsLoaded) {
+        window.electronAPI.setStore('recentProjects', recentProjects)
+      }
       return { currentProject, recentProjects }
     }),
   setSessions: (sessions) =>
@@ -573,7 +600,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearSessionUnread: (sessionId) =>
     set((state) => ({ unreadSessionIds: { ...state.unreadSessionIds, [sessionId]: false } })),
   setComposerPrefill: (composerPrefill) => set({ composerPrefill }),
-  setRecentProjects: (recentProjects) => set({ recentProjects }),
+  setRecentProjects: (recentProjects) => set({ recentProjects, recentProjectsLoaded: true }),
   removeRecentProject: (path) =>
     set((state) => {
       const recentProjects = state.recentProjects.filter((p) => p !== path)
@@ -624,6 +651,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadRuntimeModels: async () => {
     const runtimeModels = await window.electronAPI.runtimeListModels()
     set({ runtimeModels })
+  },
+
+  loadRuntimeModelCatalog: async () => {
+    const runtimeModelCatalog = await window.electronAPI.runtimeListModelCatalog()
+    set({ runtimeModelCatalog })
   },
 
   selectRuntimeDefaultModel: async (selector) => {
@@ -708,6 +740,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applySessionEvent: (event) => {
+    // Fold into the single execution projection first — the Agent Hub and
+    // trajectory surfaces both derive from this one fold, never a copy each.
+    set((state) => {
+      const current = state.executions[event.sessionId] ?? emptyProjection(event.sessionId)
+      const next = foldExecutionEvent(current, event)
+      if (next === current) return state
+      return { executions: { ...state.executions, [event.sessionId]: next } }
+    })
+
     if (event.type === 'message') {
       if (event.role === 'user') {
         get().addMessage(event.sessionId, {
@@ -820,6 +861,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             get().addMessage(event.sessionId, {
               id: crypto.randomUUID(),
               role: 'user',
+              kind: 'prompt',
               content: next.text,
               images: next.images?.map(({ data, mimeType }) => ({ data, mimeType })),
               runtimeModel: snap.modelSelector,

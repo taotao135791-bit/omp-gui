@@ -63,7 +63,7 @@ describe('current OMP — settings schema fidelity (isolated)', () => {
     if (!available) return
     const iso = createIsolatedOmpEnvironment()
     try {
-      const run = makeExecRunner(bin, { env: iso.env })
+      const run = makeExecRunner(bin, { env: iso.env, envMode: 'replace' })
       // Fixture: explicit initial state in the isolated env.
       expect(await configSet(run, 'enabledModels', ['model-a', 'model-b', 'model-c'])).toBe(true)
       expect(await configSet(run, 'modelRoles', { default: 'model-a' })).toBe(true)
@@ -86,7 +86,7 @@ describe('current OMP — settings schema fidelity (isolated)', () => {
     if (!available) return
     const iso = createIsolatedOmpEnvironment()
     try {
-      const run = makeExecRunner(bin, { env: iso.env })
+      const run = makeExecRunner(bin, { env: iso.env, envMode: 'replace' })
       expect(await configSet(run, 'modelRoles', { default: 'A', smol: 'B', slow: 'C' })).toBe(true)
 
       const svc = makeService(iso)
@@ -105,7 +105,7 @@ describe('current OMP — settings schema fidelity (isolated)', () => {
     if (!available) return
     const iso = createIsolatedOmpEnvironment()
     try {
-      const run = makeExecRunner(bin, { env: iso.env })
+      const run = makeExecRunner(bin, { env: iso.env, envMode: 'replace' })
       expect(await configSet(run, 'enabledModels', ['model-a', 'model-b'])).toBe(true)
       expect(await configSet(run, 'modelRoles', {})).toBe(true)
 
@@ -127,7 +127,7 @@ describe('current OMP — settings schema fidelity (isolated)', () => {
         'foo/bar/baz/qux'
       ]
       for (const selector of selectors) {
-        const run = makeExecRunner(bin, { env: iso.env })
+        const run = makeExecRunner(bin, { env: iso.env, envMode: 'replace' })
         expect(await configSet(run, 'modelRoles', { default: selector })).toBe(true)
         const roles = (await configGet(run, 'modelRoles'))?.value as Record<string, string>
         expect(roles.default).toBe(selector)
@@ -168,7 +168,7 @@ describe('current OMP — settings schema fidelity (isolated)', () => {
     if (!available) return
     const iso = createIsolatedOmpEnvironment()
     try {
-      const run = makeExecRunner(bin, { env: iso.env })
+      const run = makeExecRunner(bin, { env: iso.env, envMode: 'replace' })
       const authBefore = existsSync(path.join(iso.agentDir, 'auth.json'))
       const settingsBefore = existsSync(path.join(iso.agentDir, 'settings.json'))
 

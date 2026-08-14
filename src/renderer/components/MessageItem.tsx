@@ -130,9 +130,17 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
   }
 
   if (isUser) {
+    const isSteer = message.kind === 'steer'
     return (
       <div className="msg-in group flex justify-end">
         <div className="relative max-w-[85%]">
+          {isSteer && (
+            <div className="mb-1 flex justify-end">
+              <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2 py-px text-[10px] font-medium uppercase tracking-wider text-accent">
+                {t('msg.steer')}
+              </span>
+            </div>
+          )}
           <div className="whitespace-pre-wrap rounded-[18px] rounded-br-[6px] bg-ink-700 px-4 py-2.5 text-[14px] leading-[1.75] text-cream">
             {message.images && message.images.length > 0 && (
               <div className="mb-1.5 flex flex-wrap gap-1.5">

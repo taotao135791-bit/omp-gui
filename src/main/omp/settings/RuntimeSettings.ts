@@ -21,6 +21,7 @@ import {
 } from './OmpConfigCli'
 import { BOOTSTRAP_PROVIDER_ID, RuntimeRpcClient } from './RuntimeRpcClient'
 import { isValidModelSelector, PROVIDER_ID_PATTERN, splitModelSelector } from './modelSelector'
+import { switchModelSelector } from '../../../shared/modelSelector'
 
 /**
  * Unified runtime-settings facade for the IPC layer: one API, two adapters.
@@ -307,14 +308,18 @@ export class RuntimeSettings {
     return this.enqueue(async () => {
       if (selector) {
         const before = await configGet(this.run, CONFIG_MODEL_ROLES)
-        const merged = { ...this.modelRolesRecord(before), default: selector }
+        const currentDefault = this.modelRolesRecord(before).default ?? ''
+        // Preserve the role-level thinking override when the caller switches
+        // only the model half (A:high → B:high, never silently dropping :high).
+        const effective = switchModelSelector(currentDefault, selector)
+        const merged = { ...this.modelRolesRecord(before), default: effective }
         if (!(await configSet(this.run, CONFIG_MODEL_ROLES, merged))) {
           return { ok: false, error: 'omp config set failed' }
         }
         const verify = await configGet(this.run, CONFIG_MODEL_ROLES)
         this.invalidate()
         const actual = this.modelRolesRecord(verify).default
-        if (actual !== selector) {
+        if (actual !== effective) {
           return {
             ok: false,
             error: `runtime did not confirm the change (got "${actual || 'unset'}")`

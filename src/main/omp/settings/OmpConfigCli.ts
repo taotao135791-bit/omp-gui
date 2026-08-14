@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { EnvMode, resolveSubprocessEnv } from '../env'
 
 /**
  * Thin wrapper over `omp config list|get|set|reset --json` — the official
@@ -25,26 +26,37 @@ const DEFAULT_TIMEOUT_MS = 10_000
 export interface CliRunnerOptions {
   /** Extra environment overrides (e.g. PI_CODING_AGENT_DIR / HOME for isolation). */
   env?: NodeJS.ProcessEnv
+  /**
+   * `inherit` merges `env` over the host `process.env` (production default);
+   * `replace` uses ONLY `env`, so a test-isolated root is the whole
+   * environment and the developer's real credentials never leak in.
+   */
+  envMode?: EnvMode
   timeoutMs?: number
 }
 
 /**
- * Default runner: execFile with argv (never a shell string). `env` is merged
- * over `process.env` so an isolated test root can be injected without
- * touching the real environment.
+ * Default runner: execFile with argv (never a shell string). Production
+ * (`envMode: 'inherit'`) merges `env` over `process.env`; integration
+ * (`envMode: 'replace'`) uses only the injected `env` so an isolated test
+ * root can be passed without the child re-absorbing the host environment.
  */
 export function makeExecRunner(
   executable: string,
   options: CliRunnerOptions | number = {}
 ): CliRunner {
-  const { env, timeoutMs = DEFAULT_TIMEOUT_MS } =
+  const { env, envMode = 'inherit', timeoutMs = DEFAULT_TIMEOUT_MS } =
     typeof options === 'number' ? { timeoutMs: options } : options
   return (args) =>
     new Promise((resolve) => {
       execFile(
         executable,
         args,
-        { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, ...(env ?? {}) } },
+        {
+          timeout: timeoutMs,
+          maxBuffer: 4 * 1024 * 1024,
+          env: resolveSubprocessEnv(envMode, env ?? {})
+        },
         (err, stdout, stderr) => {
           resolve({
             ok: !err,

@@ -84,6 +84,7 @@ import {
 } from './omp/settings/RuntimeSettings'
 import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
+import { listOmpModelCatalog } from './omp/settings/OmpModelCatalog'
 
 const fsGuard = new FsGuard()
 
@@ -530,6 +531,11 @@ export function registerIpc() {
 
   ipcMain.handle(IPC_CHANNELS.RUNTIME_LIST_MODELS, async () => {
     return runtimeSettings.listModels()
+  })
+
+  // Full static catalog — the Settings model dropdown (credential-independent).
+  ipcMain.handle(IPC_CHANNELS.RUNTIME_LIST_MODEL_CATALOG, async () => {
+    return listOmpModelCatalog()
   })
 
   ipcMain.handle(

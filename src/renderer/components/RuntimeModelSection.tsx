@@ -23,6 +23,8 @@ import { currentValueState } from '../lib/runtimeSelect'
 export default function RuntimeModelSection() {
   const overview = useAppStore((s) => s.runtimeOverview)
   const runtimeModels = useAppStore((s) => s.runtimeModels)
+  const runtimeModelCatalog = useAppStore((s) => s.runtimeModelCatalog)
+  const loadRuntimeModelCatalog = useAppStore((s) => s.loadRuntimeModelCatalog)
   const selectRuntimeDefaultModel = useAppStore((s) => s.selectRuntimeDefaultModel)
   const setRuntimeDefaultThinking = useAppStore((s) => s.setRuntimeDefaultThinking)
   const setRuntimeApiKey = useAppStore((s) => s.setRuntimeApiKey)
@@ -56,15 +58,31 @@ export default function RuntimeModelSection() {
     if (!provider && defaultModel) setProvider(defaultModel.split('/')[0])
   }, [provider, defaultModel])
 
+  // Load the full static catalog once (concrete models, key-independent).
+  useEffect(() => {
+    void loadRuntimeModelCatalog()
+  }, [loadRuntimeModelCatalog])
+
   const sortedProviders = [...providers].sort(
     (a, b) => Number(b.authenticated) - Number(a.authenticated) || a.name.localeCompare(b.name)
   )
 
-  const modelOptions = runtimeModels.filter((m) => m.provider === provider)
+  // Prefer the full static catalog (concrete models for every provider),
+  // falling back to the credential-filtered live catalog for extension/dynamic
+  // models the static catalog does not know.
+  const catalogByProvider = runtimeModelCatalog.filter((m) => m.provider === provider)
+  const modelOptions =
+    catalogByProvider.length > 0
+      ? catalogByProvider
+      : runtimeModels.filter((m) => m.provider === provider)
   const modelSelectors = modelOptions.map((m) => m.selector)
   const modelState = currentValueState(model, modelSelectors)
 
+  // Derive thinking options from the same source the model dropdown uses
+  // (static catalog first, so a key-less provider still shows its levels).
   const defaultEntry =
+    modelOptions.find((m) => m.selector === model) ??
+    modelOptions.find((m) => m.selector === defaultModel) ??
     runtimeModels.find((m) => m.selector === model) ??
     runtimeModels.find((m) => m.selector === defaultModel)
   const thinkingOptions = defaultThinkingOptionsFor(defaultEntry)
@@ -176,7 +194,7 @@ export default function RuntimeModelSection() {
         <div className="flex items-center justify-between gap-3 py-3">
           <span className="text-[13px] text-cream">{t('settings.defaultModel')}</span>
           <select value={modelState.value} onChange={(e) => setModel(e.target.value)} className={selectCls}>
-            <option value="">{t('settings.modelAuto')}</option>
+            <option value="">{t('settings.modelRuntimeDefault')}</option>
             {modelState.unavailable && (
               <option value={modelState.value}>
                 {modelState.value} · {t('settings.modelUnavailable')}
@@ -231,7 +249,7 @@ export default function RuntimeModelSection() {
                 </button>
               </>
             ) : (
-              <span className="text-xs text-cream-faint">{t('settings.modelAuto')}</span>
+              <span className="text-xs text-cream-faint">{t('settings.selectProviderFirst')}</span>
             )}
           </span>
         </div>

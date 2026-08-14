@@ -374,9 +374,6 @@ describe('parseRpcLine', () => {
       { type: 'host_tool_call', id: 'h1', toolCallId: 't1', toolName: 'x', arguments: {} },
       { type: 'host_tool_cancel', id: 'h2', targetId: 'h1' },
       { type: 'host_uri_request', id: 'u1', operation: 'read', url: 'db://x' },
-      { type: 'subagent_lifecycle', payload: {} },
-      { type: 'subagent_progress', payload: {} },
-      { type: 'subagent_event', payload: {} },
       { type: 'a_future_frame_nobody_knows', whatever: true }
     ]) {
       expect(parseRpcLine(JSON.stringify(frame), 's1')).toEqual({ kind: 'none' })

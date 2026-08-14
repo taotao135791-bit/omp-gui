@@ -65,6 +65,7 @@ export const IPC_CHANNELS = {
   NOTIFY_SELECT_SESSION: 'notify:select-session',
   RUNTIME_OVERVIEW: 'runtime:overview',
   RUNTIME_LIST_MODELS: 'runtime:list-models',
+  RUNTIME_LIST_MODEL_CATALOG: 'runtime:list-model-catalog',
   RUNTIME_SET_DEFAULT_MODEL: 'runtime:set-default-model',
   RUNTIME_SET_DEFAULT_THINKING: 'runtime:set-default-thinking',
   RUNTIME_SET_MACHINE_SKILLS: 'runtime:set-machine-skills',

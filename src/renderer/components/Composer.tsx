@@ -315,6 +315,7 @@ export default function Composer({
     useAppStore.getState().addMessage(currentSessionId, {
       id: crypto.randomUUID(),
       role: 'user',
+      kind: 'steer',
       content: m.text,
       images: m.images?.map(({ data, mimeType }) => ({ data, mimeType }))
     })

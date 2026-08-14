@@ -104,6 +104,7 @@ const en = {
   'msg.copy': 'Copy',
   'msg.copied': 'Copied',
   'msg.edit': 'Edit',
+  'msg.steer': 'Steer',
   'msg.thinking': 'Thinking',
 
   // Turn progress row (live) and summary (finished)
@@ -151,6 +152,8 @@ const en = {
   'settings.defaultModel': 'Default model',
   'settings.defaultModelPlaceholder': 'Model id (blank = provider default)',
   'settings.modelAuto': 'Provider default',
+  'settings.modelRuntimeDefault': 'Automatic (runtime default)',
+  'settings.selectProviderFirst': 'Select a provider first',
   'settings.saveModel': 'Save model settings',
   'settings.resetModel': 'Reset model settings',
   'settings.thinking': 'Thinking level',
@@ -468,6 +471,7 @@ const zh: Record<I18nKey, string> = {
   'msg.copy': '复制',
   'msg.copied': '已复制',
   'msg.edit': '编辑',
+  'msg.steer': '转向',
   'msg.thinking': '思考',
 
   'turn.doing': '正在{verb}',
@@ -512,6 +516,8 @@ const zh: Record<I18nKey, string> = {
   'settings.defaultModel': '默认模型',
   'settings.defaultModelPlaceholder': '模型 id（留空用服务商默认）',
   'settings.modelAuto': '服务商默认',
+  'settings.modelRuntimeDefault': '自动（运行时默认）',
+  'settings.selectProviderFirst': '请先选择服务商',
   'settings.saveModel': '保存模型设置',
   'settings.resetModel': '重置模型设置',
   'settings.thinking': '思考深度',
