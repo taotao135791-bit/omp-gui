@@ -18,7 +18,8 @@ import {
   DEFAULT_THINKING_LEVELS,
   SelectImageResult,
   LoginAnswer,
-  LoginState
+  LoginState,
+  SubagentTranscriptSelector
 } from '../shared/types'
 import {
   detectCli,
@@ -42,7 +43,9 @@ import {
   exportHtml,
   getSessionState,
   setSessionName,
-  resumeSession
+  resumeSession,
+  getSubagents,
+  getSubagentMessages
 } from './omp'
 import {
   listPackages,
@@ -135,6 +138,39 @@ function sanitizeImages(images: unknown): PromptImage[] | undefined {
 
 function sanitizeStreamingBehavior(value: unknown): StreamingBehavior | undefined {
   return value === 'steer' || value === 'followUp' ? value : undefined
+}
+
+/**
+ * Sanitize a child-transcript selector from the renderer. Accepts a stable
+ * subagentId (no control chars, bounded) and/or a sessionFile (also bounded),
+ * plus an optional finite fromByte cursor. Existence is the runtime's call —
+ * the GUI only guarantees IPC safety, never forwards arbitrary commands.
+ */
+function sanitizeSubagentSelector(value: unknown): SubagentTranscriptSelector {
+  const out: SubagentTranscriptSelector = {}
+  if (value && typeof value === 'object') {
+    const v = value as Partial<SubagentTranscriptSelector>
+    if (typeof v.subagentId === 'string' && isSafeId(v.subagentId)) out.subagentId = v.subagentId
+    if (typeof v.sessionFile === 'string' && v.sessionFile.length <= 4096 && !hasControl(v.sessionFile)) {
+      out.sessionFile = v.sessionFile
+    }
+    if (typeof v.fromByte === 'number' && Number.isFinite(v.fromByte) && v.fromByte >= 0) {
+      out.fromByte = Math.trunc(v.fromByte)
+    }
+  }
+  return out
+}
+
+/** An id that is a non-empty, control-char-free, reasonably-bounded string. */
+function isSafeId(id: string): boolean {
+  return id.length > 0 && id.length <= 512 && !hasControl(id)
+}
+
+// eslint-disable-next-line no-control-regex
+const CONTROL_RE = /[\x00-\x1f\x7f]/
+
+function hasControl(s: string): boolean {
+  return CONTROL_RE.test(s)
 }
 
 /** Dialog filters from the renderer; falls back to the legacy ts/js default. */
@@ -393,6 +429,24 @@ export function registerIpc() {
     async (_event: IpcMainInvokeEvent, sessionId: string, name: string) => {
       if (typeof sessionId !== 'string' || !sessionId || typeof name !== 'string') return false
       return setSessionName(sessionId, name)
+    }
+  )
+
+  // Subagent bridge — typed, validated. The renderer NEVER issues arbitrary OMP
+  // commands; only these two read paths are exposed (roster + child transcript).
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_GET_SUBAGENTS,
+    async (_event: IpcMainInvokeEvent, sessionId: string) => {
+      if (typeof sessionId !== 'string' || !sessionId) return null
+      return getSubagents(sessionId)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.OMP_GET_SUBAGENT_MESSAGES,
+    async (_event: IpcMainInvokeEvent, sessionId: string, selector: unknown) => {
+      if (typeof sessionId !== 'string' || !sessionId) return null
+      return getSubagentMessages(sessionId, sanitizeSubagentSelector(selector))
     }
   )
 

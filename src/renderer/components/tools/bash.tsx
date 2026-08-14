@@ -1,4 +1,5 @@
 import GenericToolContent from './generic'
+import RetainedOutput from './RetainedOutput'
 import { ToolContentProps, toolInputObject, toolOutputText } from './index'
 
 // Always-dark terminal panel, in both themes — a terminal looks like a terminal.
@@ -17,7 +18,7 @@ export default function BashToolContent({ toolCall }: ToolContentProps) {
       </div>
       {output !== null && (
         <div className="mt-2 whitespace-pre-wrap break-words border-t border-white/10 pt-2 text-[#b3aea6]">
-          {output}
+          <RetainedOutput text={output} />
         </div>
       )}
     </div>

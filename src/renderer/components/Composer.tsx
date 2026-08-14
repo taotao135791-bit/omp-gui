@@ -319,6 +319,9 @@ export default function Composer({
       content: m.text,
       images: m.images?.map(({ data, mimeType }) => ({ data, mimeType }))
     })
+    // Steer is an interaction INSIDE the active turn, not a new prompt turn —
+    // record it in the execution projection's current-turn trajectory.
+    useAppStore.getState().recordSteer(currentSessionId, m.text)
     void window.electronAPI.steer(currentSessionId, m.text, m.images)
   }
 

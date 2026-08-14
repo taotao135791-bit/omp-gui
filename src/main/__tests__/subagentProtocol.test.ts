@@ -1,18 +1,77 @@
 import { describe, it, expect } from 'vitest'
 import { normalizeRpcFrame } from '../omp/OmpProtocol'
 
-describe('subagent RPC normalization (tolerant)', () => {
-  it('maps subagent_lifecycle onto a normalized subagent event', () => {
+describe('subagent RPC normalization (real 17.2.12 contract)', () => {
+  it('maps a started lifecycle to a running subagent event', () => {
     const result = normalizeRpcFrame(
       {
         type: 'subagent_lifecycle',
-        agentId: 'agent-1',
-        parentId: 'agent-0',
-        name: 'Security Review',
-        status: 'running',
-        phase: 'started',
-        provider: 'openrouter',
-        model: 'deepseek/deepseek-v4'
+        payload: {
+          id: 'agent-1',
+          agent: 'security-review',
+          agentSource: 'bundled',
+          description: 'Review auth',
+          status: 'started',
+          sessionFile: '/tmp/agent-1.jsonl',
+          parentToolCallId: 'tool-9',
+          index: 0,
+          detached: true
+        }
+      },
+      'session-1'
+    )
+    expect(result.kind).toBe('event')
+    if (result.kind !== 'event') throw new Error('unreachable')
+    expect(result.event).toEqual({
+      type: 'subagent',
+      sessionId: 'session-1',
+      id: 'agent-1',
+      agent: 'security-review',
+      agentSource: 'bundled',
+      description: 'Review auth',
+      status: 'running',
+      phase: 'started',
+      sessionFile: '/tmp/agent-1.jsonl',
+      parentToolCallId: 'tool-9',
+      index: 0,
+      detached: true
+    })
+  })
+
+  it('keeps terminal lifecycle statuses verbatim (completed/failed/aborted)', () => {
+    for (const status of ['completed', 'failed', 'aborted'] as const) {
+      const result = normalizeRpcFrame(
+        { type: 'subagent_lifecycle', payload: { id: 'x', agent: 'a', agentSource: 'bundled', status } },
+        'session-1'
+      )
+      expect(result.kind).toBe('event')
+      if (result.kind !== 'event') throw new Error('unreachable')
+      expect(result.event).toMatchObject({ type: 'subagent', status, phase: status })
+    }
+  })
+
+  it('maps subagent_progress onto the same subagent event with aggregated facts', () => {
+    const result = normalizeRpcFrame(
+      {
+        type: 'subagent_progress',
+        payload: {
+          index: 0,
+          agent: 'explore',
+          agentSource: 'bundled',
+          task: 'Read the repo',
+          assignment: 'architecture',
+          sessionFile: '/tmp/explore.jsonl',
+          progress: {
+            id: 'agent-2',
+            agent: 'explore',
+            agentSource: 'bundled',
+            status: 'running',
+            task: 'Read the repo',
+            currentTool: 'read',
+            lastIntent: 'Reading files',
+            toolCount: 7
+          }
+        }
       },
       'session-1'
     )
@@ -20,47 +79,28 @@ describe('subagent RPC normalization (tolerant)', () => {
     if (result.kind !== 'event') throw new Error('unreachable')
     expect(result.event).toMatchObject({
       type: 'subagent',
-      sessionId: 'session-1',
-      agentId: 'agent-1',
-      parentAgentId: 'agent-0',
-      name: 'Security Review',
-      phase: 'started',
-      provider: 'openrouter',
-      model: 'deepseek/deepseek-v4'
+      id: 'agent-2',
+      status: 'running',
+      task: 'Read the repo',
+      currentTool: 'read',
+      lastIntent: 'Reading files',
+      toolCount: 7
     })
   })
 
-  it('accepts alternate upstream field names', () => {
+  it('drops a lifecycle event with an unknown status (never guesses)', () => {
     const result = normalizeRpcFrame(
-      { type: 'subagent_event', id: 'x', title: 'Tests', state: 'completed' },
+      { type: 'subagent_lifecycle', payload: { id: 'x', agent: 'a', agentSource: 'bundled', status: 'weird' } },
       'session-1'
     )
-    expect(result.kind).toBe('event')
-    if (result.kind !== 'event') throw new Error('unreachable')
-    expect(result.event).toMatchObject({
-      type: 'subagent',
-      agentId: 'x',
-      name: 'Tests',
-      status: 'completed'
-    })
+    expect(result.kind).toBe('none')
   })
 
-  it('maps subagent_progress to a progress event', () => {
+  it('ignores subagent_event (raw child stream — never projected)', () => {
     const result = normalizeRpcFrame(
-      { type: 'subagent_progress', agentId: 'x', text: 'Reading files' },
+      { type: 'subagent_event', payload: { id: 'x', event: { type: 'message' } } },
       'session-1'
     )
-    expect(result.kind).toBe('event')
-    if (result.kind !== 'event') throw new Error('unreachable')
-    expect(result.event).toEqual({
-      type: 'subagent_progress',
-      sessionId: 'session-1',
-      agentId: 'x',
-      text: 'Reading files'
-    })
-  })
-
-  it('ignores unknown frames by construction', () => {
-    expect(normalizeRpcFrame({ type: 'totally_unknown_frame' }, 'session-1').kind).toBe('none')
+    expect(result.kind).toBe('none')
   })
 })

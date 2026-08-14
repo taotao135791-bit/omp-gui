@@ -4,7 +4,11 @@ import {
   Session,
   SessionEvent,
   SessionRuntimeState,
-  StreamingBehavior
+  StreamingBehavior,
+  SubagentMessagesResult,
+  SubagentSnapshot,
+  SubagentSubscriptionLevel,
+  SubagentTranscriptSelector
 } from '../../shared/types'
 import {
   LineReader,
@@ -164,6 +168,32 @@ export class OmpSession {
   /** Hot-switch the model via the RPC set_model command. */
   setModel(provider: string, modelId: string): boolean {
     return this.write({ id: crypto.randomUUID(), type: 'set_model', provider, modelId })
+  }
+
+  /** Enable/disable the subagent event subscription (current profile only). */
+  async setSubagentSubscription(level: SubagentSubscriptionLevel): Promise<boolean> {
+    const res = await this.query({ type: 'set_subagent_subscription', level })
+    return Boolean(res && res.success === true)
+  }
+
+  /** Fetch the live subagent roster (`get_subagents`). Null on failure/unsupported. */
+  async getSubagents(): Promise<SubagentSnapshot[] | null> {
+    const res = await this.query({ type: 'get_subagents' })
+    if (!res || res.success !== true || !res.data) return null
+    const subagents = (res.data as { subagents?: unknown }).subagents
+    if (!Array.isArray(subagents)) return null
+    return subagents as SubagentSnapshot[]
+  }
+
+  /**
+   * Incrementally read a child agent's transcript (`get_subagent_messages`).
+   * `fromByte` supports cursor-based incremental reads; a missing session file
+   * returns an empty result rather than throwing (upstream contract).
+   */
+  async getSubagentMessages(selector: SubagentTranscriptSelector): Promise<SubagentMessagesResult | null> {
+    const res = await this.query({ type: 'get_subagent_messages', ...selector })
+    if (!res || res.success !== true || !res.data) return null
+    return res.data as SubagentMessagesResult
   }
 
   /**

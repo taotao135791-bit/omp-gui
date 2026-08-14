@@ -272,6 +272,8 @@ const en = {
   'tool.input': 'Input',
   'tool.output': 'Output',
   'tool.lines': '{count} lines',
+  'tool.showFullOutput': 'Show full output ({lines} lines)',
+  'tool.collapse': 'Collapse',
 
   // Code block
   'code.copy': 'Copy',
@@ -634,6 +636,8 @@ const zh: Record<I18nKey, string> = {
   'tool.input': '输入',
   'tool.output': '输出',
   'tool.lines': '{count} 行',
+  'tool.showFullOutput': '显示完整输出（{lines} 行）',
+  'tool.collapse': '收起',
 
   'code.copy': '复制',
   'mermaid.failed': '图表渲染失败，已显示源码。',

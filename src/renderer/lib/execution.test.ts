@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import type { SessionEvent } from '@shared/types'
+import type { SessionEvent, SubagentSnapshot } from '@shared/types'
 import {
   emptyProjection,
   foldExecutionEvent,
+  applyAgentRoster,
+  foldUserSteer,
+  normalizeOmpAgentStatus,
+  classifyToolCall,
   orderedAgents,
   agentHubSummary,
-  turnSummary,
-  toAgentStatus,
+  currentTurn,
+  sessionToolTotals,
   ROOT_AGENT_ID
 } from './execution'
 
@@ -14,98 +18,140 @@ function subagent(
   sessionId: string,
   patch: Partial<Extract<SessionEvent, { type: 'subagent' }>>
 ): SessionEvent {
-  return { type: 'subagent', sessionId, ...patch }
+  return {
+    type: 'subagent',
+    sessionId,
+    id: 'a1',
+    agent: 'explore',
+    agentSource: 'bundled',
+    status: 'running',
+    ...patch
+  }
 }
 
 const S = 'session-1'
 
-describe('toAgentStatus', () => {
-  it('maps upstream tokens to normalized statuses', () => {
-    expect(toAgentStatus('started')).toBe('running')
-    expect(toAgentStatus(undefined, 'completed')).toBe('completed')
-    expect(toAgentStatus(undefined, 'failed')).toBe('failed')
-    expect(toAgentStatus(undefined, 'cancelled')).toBe('cancelled')
-    expect(toAgentStatus('unknown-thing')).toBeUndefined()
+describe('classifyToolCall (single classifier)', () => {
+  it('maps tool names to the shared categories', () => {
+    expect(classifyToolCall('read')).toBe('read')
+    expect(classifyToolCall('grep')).toBe('search')
+    expect(classifyToolCall('bash')).toBe('command')
+    expect(classifyToolCall('edit')).toBe('edit')
+    expect(classifyToolCall('subagent')).toBe('subagent')
+    expect(classifyToolCall('some-extension-tool')).toBe('other')
   })
 })
 
-describe('execution projection — agent tree', () => {
-  it('builds root → child → grandchild with correct depths', () => {
-    let p = emptyProjection(S)
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'A', name: 'Explore', phase: 'started' }), 1)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'B', parentAgentId: 'A', name: 'Security', phase: 'started' }), 2)
-
-    const nodes = orderedAgents(p)
-    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]))
-    expect(byId[ROOT_AGENT_ID].depth).toBe(0)
-    expect(byId.A.depth).toBe(1)
-    expect(byId.A.parentId).toBe(ROOT_AGENT_ID)
-    expect(byId.B.depth).toBe(2)
-    expect(byId.B.parentId).toBe('A')
+describe('normalizeOmpAgentStatus (exact)', () => {
+  it('maps the AgentProgress status enum verbatim', () => {
+    expect(normalizeOmpAgentStatus('pending')).toBe('pending')
+    expect(normalizeOmpAgentStatus('running')).toBe('running')
+    expect(normalizeOmpAgentStatus('completed')).toBe('completed')
+    expect(normalizeOmpAgentStatus('failed')).toBe('failed')
+    expect(normalizeOmpAgentStatus('aborted')).toBe('aborted')
   })
 
-  it('handles out-of-order completion (B ends before A)', () => {
+  it('never guesses unknown strings', () => {
+    expect(normalizeOmpAgentStatus('parked')).toBe('unknown')
+    expect(normalizeOmpAgentStatus('interrupted')).toBe('unknown')
+    expect(normalizeOmpAgentStatus(undefined)).toBe('unknown')
+  })
+})
+
+describe('multi-turn execution projection', () => {
+  it('keeps turn 1 and turn 2 fully independent', () => {
+    let p = emptyProjection(S)
+    // Turn 1
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
+    p = foldExecutionEvent(p, { type: 'thinking', sessionId: S, delta: '...' }, 1)
+    p = foldExecutionEvent(p, { type: 'tool_call', sessionId: S, tool: 'read', input: {} }, 2)
+    p = foldExecutionEvent(p, { type: 'tool_call', sessionId: S, tool: 'bash', input: {} }, 3)
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 4)
+    // Turn 2
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 5)
+    p = foldExecutionEvent(p, { type: 'thinking', sessionId: S, delta: '...' }, 6)
+    p = foldExecutionEvent(p, { type: 'tool_call', sessionId: S, tool: 'edit', input: {} }, 7)
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 8)
+
+    expect(p.turnOrder).toEqual(['turn-1', 'turn-2'])
+    expect(p.turns['turn-1'].tools).toMatchObject({ read: 1, command: 1 })
+    expect(p.turns['turn-1'].trajectory.some((e) => e.kind === 'reasoning')).toBe(true)
+    expect(p.turns['turn-2'].tools).toMatchObject({ edit: 1, read: 0, command: 0 })
+    expect(p.turns['turn-2'].trajectory.some((e) => e.kind === 'reasoning')).toBe(true)
+    expect(sessionToolTotals(p)).toMatchObject({ read: 1, command: 1, edit: 1 })
+    expect(p.turns['turn-2'].startedAt).toBe(5)
+  })
+
+  it('does not end the turn when agent_end has isTerminal false', () => {
     let p = emptyProjection(S)
     p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'A', phase: 'started' }), 1)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'B', phase: 'started' }), 2)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'B', phase: 'completed' }), 3)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'A', phase: 'completed' }), 4)
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: false }, 1)
+    expect(p.currentTurnId).toBe('turn-1')
+    expect(p.turns['turn-1'].status).toBe('running')
+  })
+})
 
+describe('agent graph (flat roster)', () => {
+  it('orders root first then children by index', () => {
+    let p = emptyProjection(S)
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
+    p = foldExecutionEvent(p, subagent(S, { id: 'b', agent: 'review', index: 2 }), 1)
+    p = foldExecutionEvent(p, subagent(S, { id: 'a', agent: 'explore', index: 1 }), 1)
+    const ordered = orderedAgents(p)
+    expect(ordered.map((n) => n.id)).toEqual([ROOT_AGENT_ID, 'a', 'b'])
+  })
+
+  it('handles out-of-order completion', () => {
+    let p = emptyProjection(S)
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
+    p = foldExecutionEvent(p, subagent(S, { id: 'A', status: 'running' }), 1)
+    p = foldExecutionEvent(p, subagent(S, { id: 'B', status: 'running' }), 2)
+    p = foldExecutionEvent(p, subagent(S, { id: 'B', status: 'completed' }), 3)
+    p = foldExecutionEvent(p, subagent(S, { id: 'A', status: 'completed' }), 4)
     expect(p.agents.A.status).toBe('completed')
     expect(p.agents.B.status).toBe('completed')
-    expect(p.agents.A.endedAt).toBe(4)
   })
 
-  it('marks a still-running subagent interrupted at turn end (reconcile)', () => {
+  it('merges a roster snapshot then live events onto the same node', () => {
     let p = emptyProjection(S)
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'A', phase: 'started' }), 1)
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 5)
-
-    expect(p.agents.A.status).toBe('interrupted')
-    expect(p.agents[ROOT_AGENT_ID].status).toBe('completed')
+    const snapshot: SubagentSnapshot = {
+      id: 'x',
+      index: 0,
+      agent: 'security',
+      agentSource: 'bundled',
+      status: 'running',
+      task: 'Review auth',
+      lastUpdate: 100
+    }
+    p = applyAgentRoster(p, [snapshot], 1)
+    expect(p.agents.x).toMatchObject({ id: 'x', status: 'running', task: 'Review auth' })
+    p = foldExecutionEvent(p, subagent(S, { id: 'x', status: 'completed' }), 2)
+    expect(Object.values(p.agents).filter((n) => n.id === 'x')).toHaveLength(1)
+    expect(p.agents.x.status).toBe('completed')
   })
 
-  it('tracks a failed child agent', () => {
+  it('reports agent hub counts (running/done/failed)', () => {
     let p = emptyProjection(S)
     p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'A', phase: 'started' }), 1)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'A', phase: 'failed', resultSummary: 'boom' }), 2)
-    expect(p.agents.A.status).toBe('failed')
-    expect(p.agents.A.resultSummary).toBe('boom')
+    p = foldExecutionEvent(p, subagent(S, { id: 'A', status: 'running' }), 1)
+    p = foldExecutionEvent(p, subagent(S, { id: 'B', status: 'completed' }), 1)
+    p = foldExecutionEvent(p, subagent(S, { id: 'C', status: 'aborted' }), 1)
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 2)
+
+    const hub = agentHubSummary(p)
+    expect(hub.total).toBe(4)
+    expect(hub.running).toBe(0)
+    expect(hub.done).toBe(2)
+    expect(hub.failed).toBe(1)
   })
 })
 
-describe('execution projection — tool counts & summary', () => {
-  it('classifies tools and reports the turn summary', () => {
-    let p = emptyProjection(S)
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 1000)
-    p = foldExecutionEvent(p, { type: 'tool_call', sessionId: S, tool: 'read', input: {} }, 1100)
-    p = foldExecutionEvent(p, { type: 'tool_call', sessionId: S, tool: 'bash', input: {} }, 1200)
-    p = foldExecutionEvent(p, { type: 'tool_call', sessionId: S, tool: 'edit', input: {} }, 1300)
-    p = foldExecutionEvent(p, { type: 'tool_call', sessionId: S, tool: 'some-ext', input: {} }, 1400)
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 2000)
-
-    const summary = turnSummary(p)
-    expect(summary.elapsedMs).toBe(1000)
-    expect(summary.tools).toEqual({ filesRead: 1, commands: 1, edits: 1, other: 1 })
-    expect(summary.agentCount).toBe(1) // just the root agent
-  })
-
-  it('reports agent hub counts', () => {
+describe('steer', () => {
+  it('appends to the active turn without creating a new one', () => {
     let p = emptyProjection(S)
     p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'A', phase: 'started' }), 1)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'B', phase: 'started' }), 1)
-    p = foldExecutionEvent(p, subagent(S, { agentId: 'A', phase: 'completed' }), 2)
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 3)
-
-    const hub = agentHubSummary(p)
-    expect(hub.total).toBe(3) // main + A + B
-    expect(hub.running).toBe(0)
-    expect(hub.done).toBe(2) // main completed + A completed
-    expect(hub.failed).toBe(1) // B interrupted at reconcile
+    p = foldUserSteer(p, 'Focus only on runtime layer')
+    expect(p.turnOrder).toEqual(['turn-1'])
+    expect(currentTurn(p)?.trajectory.some((e) => e.kind === 'steer')).toBe(true)
   })
 })

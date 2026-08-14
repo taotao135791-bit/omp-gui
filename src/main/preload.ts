@@ -30,7 +30,10 @@ import {
   RuntimeOverview,
   RuntimeModelInfo,
   LoginState,
-  LoginAnswer
+  LoginAnswer,
+  SubagentSnapshot,
+  SubagentMessagesResult,
+  SubagentTranscriptSelector
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -104,6 +107,13 @@ export interface ElectronAPI {
   deleteSessionFile: (filePath: string) => Promise<boolean>
   /** Set a session's display name (single line, max 60 chars). */
   setSessionName: (sessionId: string, name: string) => Promise<boolean>
+  /** Live subagent roster (get_subagents); null when unsupported/unavailable. */
+  getSubagents: (sessionId: string) => Promise<SubagentSnapshot[] | null>
+  /** Incrementally read a child agent transcript (get_subagent_messages). */
+  getSubagentMessages: (
+    sessionId: string,
+    selector: SubagentTranscriptSelector
+  ) => Promise<SubagentMessagesResult | null>
   /** Snapshot the session's project as a git checkpoint; null for non-git dirs. */
   checkpointCreate: (
     sessionId: string,
@@ -254,6 +264,10 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.OMP_DELETE_SESSION_FILE, filePath),
   setSessionName: (sessionId: string, name: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SET_SESSION_NAME, sessionId, name),
+  getSubagents: (sessionId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_GET_SUBAGENTS, sessionId),
+  getSubagentMessages: (sessionId: string, selector: SubagentTranscriptSelector) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_GET_SUBAGENT_MESSAGES, sessionId, selector),
   checkpointCreate: (sessionId: string, msgIndex: number, promptPreview: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_CREATE, sessionId, msgIndex, promptPreview),
   checkpointList: (sessionId: string) =>

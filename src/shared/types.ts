@@ -32,6 +32,68 @@ export interface CliCapabilities {
   extensionUi: boolean
   fork: boolean
   thinking: boolean
+  /**
+   * Subagent capabilities, probed from REAL RPC responses — never guessed from
+   * the `current` profile. Each is 'unknown' until a live session proves it:
+   * - subagents: `get_subagents` answers (roster hydration).
+   * - subagentProgress: `set_subagent_subscription` to 'progress' is accepted.
+   * - subagentMessages: `get_subagent_messages` answers.
+   * - subagentControl: kill/revive/steer-subagent RPC exists (not in 17.2.12).
+   */
+  subagents: CapabilityState
+  subagentProgress: CapabilityState
+  subagentMessages: CapabilityState
+  subagentControl: CapabilityState
+}
+
+/** Subagent subscription levels (`set_subagent_subscription`). */
+export type SubagentSubscriptionLevel = 'off' | 'progress' | 'events'
+
+/** Agent definition source. */
+export type SubagentAgentSource = 'bundled' | 'user' | 'project'
+
+/** Normalized subagent status (mirrors `AgentProgress.status` + lifecycle). */
+export type SubagentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'aborted'
+
+/** Raw lifecycle phase carried by `subagent_lifecycle` payloads. */
+export type SubagentLifecyclePhase = 'started' | 'completed' | 'failed' | 'aborted'
+
+/** One entry of the `get_subagents` roster. */
+export interface SubagentSnapshot {
+  id: string
+  index: number
+  agent: string
+  agentSource: SubagentAgentSource
+  description?: string
+  status: SubagentStatus
+  task?: string
+  assignment?: string
+  sessionFile?: string
+  lastUpdate: number
+  parentToolCallId?: string
+  /** Aggregated progress, when the runtime supplied it. */
+  lastIntent?: string
+  currentTool?: string
+  toolCount?: number
+}
+
+/** Result of an incremental `get_subagent_messages` read. */
+export interface SubagentMessagesResult {
+  sessionFile: string
+  fromByte: number
+  nextByte: number
+  reset: boolean
+  /** Raw session entries (opaque to the GUI; mapped to messages below). */
+  entries: unknown[]
+  /** Mapped agent messages. */
+  messages: unknown[]
+}
+
+/** Selector for `get_subagent_messages` (one of subagentId / sessionFile). */
+export interface SubagentTranscriptSelector {
+  subagentId?: string
+  sessionFile?: string
+  fromByte?: number
 }
 
 /**
@@ -99,30 +161,37 @@ export type SessionEvent =
   /** The session's model changed (set_model / fallback); refetch get_state. */
   | { type: 'model_changed'; sessionId: string }
   /**
-   * A subagent (child agent) lifecycle/status event, normalized from upstream
-   * `subagent_lifecycle` / `subagent_event` frames. Fields are tolerated —
-   * every one is optional because the upstream payload shape varies by runtime
-   * version; the renderer projection treats absent fields as unknown, never
-   * fabricates them. Emitted only when the runtime's subagent subscription is
-   * enabled (see `set_subagent_subscription`).
+   * A subagent (child agent) state update, normalized from upstream
+   * `subagent_lifecycle` and `subagent_progress` frames onto ONE event surface.
+   * Both frame kinds upsert the same node: lifecycle carries the phase
+   * (started/completed/failed/aborted), progress carries aggregated task/tool
+   * facts. `id` is OMP's stable registry id — never the label or array index.
+   * Emitted only when the runtime's subagent subscription is enabled (see
+   * `set_subagent_subscription`); the roster is hydrated separately via
+   * `get_subagents` so a late-attached GUI still sees agents it missed.
    */
   | {
       type: 'subagent'
       sessionId: string
-      agentId?: string
-      parentAgentId?: string
-      name?: string
-      status?: string
-      phase?: string
-      provider?: string
-      model?: string
-      purpose?: string
-      startedAt?: number
-      endedAt?: number
-      resultSummary?: string
+      id: string
+      agent: string
+      agentSource: SubagentAgentSource
+      description?: string
+      /** Normalized status; lifecycle 'started' arrives as 'running'. */
+      status: SubagentStatus
+      /** Raw lifecycle phase, present on lifecycle-derived events. */
+      phase?: SubagentLifecyclePhase
+      task?: string
+      assignment?: string
+      sessionFile?: string
+      parentToolCallId?: string
+      index?: number
+      detached?: boolean
+      /** Aggregated progress facts (from `subagent_progress`). */
+      lastIntent?: string
+      currentTool?: string
+      toolCount?: number
     }
-  /** Streamed activity text of a subagent (normalized from `subagent_progress`). */
-  | { type: 'subagent_progress'; sessionId: string; agentId?: string; text?: string }
   | { type: 'closed'; sessionId: string }
 
 /** Token/context usage of a session, as returned by the RPC get_session_stats command. */

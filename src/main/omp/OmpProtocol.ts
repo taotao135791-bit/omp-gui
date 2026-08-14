@@ -347,54 +347,72 @@ export function normalizeRpcFrame(
       return { kind: 'none' }
 
     // ----------------------------------------------------------------- subagents
-    // Current Oh My Pi exposes a subagent graph via `subagent_lifecycle` /
-    // `subagent_event` / `subagent_progress` (gated by
-    // `set_subagent_subscription`, default off). The GUI projects these onto a
-    // normalized, TOLERANT `subagent` event: every field is optional because
-    // the upstream payload shape varies, and unknown fields are ignored rather
-    // than guessed. `subagent_progress` carries activity text only — it is
-    // never mistaken for a lifecycle transition.
-    case 'subagent_lifecycle':
-    case 'subagent_event': {
-      const agentId = firstString(payload, 'agentId', 'subagentId', 'id')
-      const parentAgentId = firstString(payload, 'parentAgentId', 'parentId')
-      const name = firstString(payload, 'name', 'title', 'label')
-      const status = firstString(payload, 'status', 'state')
-      const phase = firstString(payload, 'phase', 'lifecycle')
-      const provider = firstString(payload, 'provider')
-      const model = firstString(payload, 'model')
-      const purpose = firstString(payload, 'purpose', 'goal', 'task')
-      const startedAt = firstNumber(payload, 'startedAt', 'startTime', 'createdAt')
-      const endedAt = firstNumber(payload, 'endedAt', 'endTime')
-      const resultSummary = firstString(payload, 'resultSummary', 'summary', 'result')
+    // Current Oh My Pi exposes the subagent graph via `subagent_lifecycle` and
+    // `subagent_progress` frames (gated by `set_subagent_subscription`, default
+    // off). Both normalize onto the SAME `subagent` event — lifecycle carries
+    // the phase (started → 'running', completed/failed/aborted), progress
+    // carries aggregated task/tool facts. `subagent_event` (raw child-session
+    // events) only fires at subscription level 'events'; the GUI subscribes at
+    // 'progress', so it is deliberately not projected. Status mapping is EXACT
+    // (no substring guessing): `AgentProgress.status` / lifecycle phase only.
+    case 'subagent_lifecycle': {
+      const p = asRecord(payload.payload)
+      const id = asString(p.id)
+      const status = normalizeSubagentStatus(p.status)
+      if (!id || !status) return { kind: 'none' }
       return {
         kind: 'event',
         event: {
           type: 'subagent',
           sessionId,
-          agentId,
-          parentAgentId,
-          name,
+          id,
+          agent: asString(p.agent) ?? '',
+          agentSource: asAgentSource(p.agentSource) ?? 'bundled',
+          description: asString(p.description),
           status,
-          phase,
-          provider,
-          model,
-          purpose,
-          startedAt,
-          endedAt,
-          resultSummary
+          phase: asLifecyclePhase(p.status),
+          sessionFile: asString(p.sessionFile),
+          parentToolCallId: asString(p.parentToolCallId),
+          index: asNumber(p.index),
+          detached: p.detached === true ? true : undefined
         }
       }
     }
 
     case 'subagent_progress': {
-      const agentId = firstString(payload, 'agentId', 'subagentId', 'id')
-      const text = firstString(payload, 'text', 'message', 'activity')
+      const p = asRecord(payload.payload)
+      const progress = asRecord(p.progress)
+      const id = asString(progress.id)
+      const status = normalizeSubagentStatus(progress.status)
+      if (!id || !status) return { kind: 'none' }
       return {
         kind: 'event',
-        event: { type: 'subagent_progress', sessionId, agentId, text }
+        event: {
+          type: 'subagent',
+          sessionId,
+          id,
+          agent: asString(p.agent) ?? '',
+          agentSource: asAgentSource(p.agentSource) ?? 'bundled',
+          description: asString(progress.description),
+          status,
+          task: asString(p.task),
+          assignment: asString(p.assignment),
+          sessionFile: asString(p.sessionFile),
+          parentToolCallId: asString(p.parentToolCallId),
+          index: asNumber(p.index),
+          detached: p.detached === true ? true : undefined,
+          lastIntent: asString(progress.lastIntent),
+          currentTool: asString(progress.currentTool),
+          toolCount: asNumber(progress.toolCount)
+        }
       }
     }
+
+    case 'subagent_event':
+      // Raw child-session events (only at subscription level 'events'). The GUI
+      // never subscribes there — and if it ever does, these stay out of the
+      // main renderer stream (child transcripts are read via get_subagent_messages).
+      return { kind: 'none' }
 
     default:
       // Everything else is deliberately not surfaced: turn_*/message_start,
@@ -407,22 +425,52 @@ export function normalizeRpcFrame(
   }
 }
 
-/** First key of `keys` whose payload value is a string; undefined otherwise. */
-function firstString(payload: Record<string, unknown>, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    if (typeof payload[key] === 'string') return payload[key] as string
-  }
-  return undefined
+/** A string value, or undefined. */
+function asString(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined
 }
 
-/** First key of `keys` whose payload value is a finite number; undefined otherwise. */
-function firstNumber(payload: Record<string, unknown>, ...keys: string[]): number | undefined {
-  for (const key of keys) {
-    if (typeof payload[key] === 'number' && Number.isFinite(payload[key])) {
-      return payload[key] as number
-    }
+/** A finite number value, or undefined. */
+function asNumber(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
+}
+
+/** An object value, or an empty record. */
+function asRecord(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+}
+
+/** An agent-source literal, or undefined (caller supplies a default). */
+function asAgentSource(v: unknown): 'bundled' | 'user' | 'project' | undefined {
+  return v === 'bundled' || v === 'user' || v === 'project' ? v : undefined
+}
+
+/** A lifecycle phase literal, or undefined. */
+function asLifecyclePhase(v: unknown): 'started' | 'completed' | 'failed' | 'aborted' | undefined {
+  return v === 'started' || v === 'completed' || v === 'failed' || v === 'aborted'
+    ? v
+    : undefined
+}
+
+/**
+ * EXACT status normalization. Lifecycle `started` → 'running' (mirrors the
+ * upstream `statusFromLifecycle`); the other values are the `AgentProgress`
+ * status enum verbatim. Unknown values → undefined (the caller drops the
+ * event rather than guessing). No substring matching.
+ */
+function normalizeSubagentStatus(raw: unknown): 'pending' | 'running' | 'completed' | 'failed' | 'aborted' | undefined {
+  switch (raw) {
+    case 'started':
+      return 'running'
+    case 'pending':
+    case 'running':
+    case 'completed':
+    case 'failed':
+    case 'aborted':
+      return raw
+    default:
+      return undefined
   }
-  return undefined
 }
 
 /** Line-oriented wrapper: parse the JSONL frame, then normalize it. */

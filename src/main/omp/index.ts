@@ -12,14 +12,25 @@ import {
   SessionStats,
   SlashCommand,
   StreamingBehavior,
-  SessionThinkingLevel
+  SessionThinkingLevel,
+  SubagentMessagesResult,
+  SubagentSnapshot,
+  SubagentSubscriptionLevel,
+  SubagentTranscriptSelector
 } from '../../shared/types'
 import { getStore, setStore } from '../store'
 import { AgentMessage, mapAgentMessages } from '../messageMapping'
 import { isSessionFilePath } from '../sessionHistory'
 import { planSpawn, removeApprovalConfig, resolvePermissionMode, spawnProcess, writeApprovalConfig } from './OmpProcess'
 import { OmpSession } from './OmpSession'
-import { detectCli, noteHandshake, noteSessionState } from './OmpCapabilities'
+import {
+  detectCli,
+  noteHandshake,
+  noteSessionState,
+  noteSubagentSubscription,
+  noteSubagentRoster,
+  noteSubagentMessages
+} from './OmpCapabilities'
 
 /**
  * Facade over the omp session modules (OmpProcess / OmpTransport /
@@ -134,7 +145,16 @@ export function createSession(
       label: cli.command,
       onEvent,
       onGone: () => sessions.delete(id),
-      onHandshake: noteHandshake,
+      onHandshake: (outcome) => {
+        noteHandshake(outcome)
+        // Current Oh My Pi: enable subagent progress subscription + roster
+        // hydration once the profile is confirmed. A subscription failure never
+        // fails the session — subagent capability just stays unknown/unsupported.
+        if (outcome.profile === 'current') {
+          const entry = sessions.get(id)
+          if (entry) void bootstrapSubagentBridge(entry)
+        }
+      },
       onOpenUrl: (url, launchUrl) => {
         // OAuth-style flows ask the host to open a browser; http(s) only.
         const target = launchUrl ?? url
@@ -189,6 +209,57 @@ export function respondExtensionUi(
 /** Hot-switch the model of a live session via the RPC set_model command. */
 export function setSessionModel(sessionId: string, provider: string, modelId: string): boolean {
   return sessions.get(sessionId)?.setModel(provider, modelId) ?? false
+}
+
+/**
+ * Enable/disable the subagent event subscription on a live session. Returns
+ * false when the session is missing, dead, or the runtime rejected it.
+ */
+export async function setSubagentSubscription(
+  sessionId: string,
+  level: SubagentSubscriptionLevel
+): Promise<boolean> {
+  const ok = await (sessions.get(sessionId)?.setSubagentSubscription(level) ?? Promise.resolve(false))
+  noteSubagentSubscription(ok)
+  return ok
+}
+
+/**
+ * Fetch the live subagent roster (`get_subagents`) and record the capability.
+ * Null when the session is missing or the runtime has no roster command.
+ */
+export async function getSubagents(sessionId: string): Promise<SubagentSnapshot[] | null> {
+  const roster = await (sessions.get(sessionId)?.getSubagents() ?? Promise.resolve(null))
+  noteSubagentRoster(roster !== null)
+  return roster
+}
+
+/**
+ * Incrementally read a child agent transcript (`get_subagent_messages`). The
+ * transcript is NOT merged into the root transcript — it is a separate
+ * conversation surfaced only when the user opens the child. Null on failure.
+ */
+export async function getSubagentMessages(
+  sessionId: string,
+  selector: SubagentTranscriptSelector
+): Promise<SubagentMessagesResult | null> {
+  const result = await (sessions.get(sessionId)?.getSubagentMessages(selector) ?? Promise.resolve(null))
+  noteSubagentMessages(result !== null)
+  return result
+}
+
+/**
+ * Post-handshake bootstrap for a Current-Oh-My-Pi session: enable the
+ * `progress` subscription and hydrate the roster, recording real capabilities.
+ * Best-effort — a legacy runtime (or one without the event bus) simply never
+ * reaches this path, and a rejected subscription leaves the session usable.
+ */
+async function bootstrapSubagentBridge(session: OmpSession): Promise<void> {
+  const subscribed = await session.setSubagentSubscription('progress')
+  noteSubagentSubscription(subscribed)
+  if (!subscribed) return
+  const roster = await session.getSubagents()
+  noteSubagentRoster(roster !== null)
 }
 
 /**

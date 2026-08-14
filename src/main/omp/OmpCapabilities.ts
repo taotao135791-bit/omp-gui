@@ -110,7 +110,13 @@ function featureMatrix(enabled: boolean): Omit<CliCapabilities, 'cliVersion' | '
     compaction: enabled,
     extensionUi: enabled,
     fork: enabled,
-    thinking: enabled
+    thinking: enabled,
+    // Subagent capabilities are NEVER guessed from the `current` profile —
+    // they flip only on a real RPC response (see the note* functions).
+    subagents: 'unknown',
+    subagentProgress: 'unknown',
+    subagentMessages: 'unknown',
+    subagentControl: 'unsupported'
   }
 }
 
@@ -165,4 +171,26 @@ export function noteHandshake(outcome: HandshakeOutcome): void {
 export function noteSessionState(_state: SessionState): void {
   if (!capabilitiesCache) return
   capabilitiesCache = { ...capabilitiesCache, ...featureMatrix(true) }
+}
+
+/** Patch cached subagent capabilities once a real RPC response proves/disproves them. */
+function noteSubagentCapability(patch: Partial<CliCapabilities>): void {
+  if (capabilitiesCache) {
+    capabilitiesCache = { ...capabilitiesCache, ...patch }
+  }
+}
+
+/** `set_subagent_subscription` answered — progress subscription is supported iff success. */
+export function noteSubagentSubscription(ok: boolean): void {
+  noteSubagentCapability({ subagentProgress: ok ? 'supported' : 'unsupported' })
+}
+
+/** `get_subagents` answered — roster hydration is supported iff success. */
+export function noteSubagentRoster(ok: boolean): void {
+  noteSubagentCapability({ subagents: ok ? 'supported' : 'unsupported' })
+}
+
+/** `get_subagent_messages` answered — child transcript access is supported iff success. */
+export function noteSubagentMessages(ok: boolean): void {
+  noteSubagentCapability({ subagentMessages: ok ? 'supported' : 'unsupported' })
 }

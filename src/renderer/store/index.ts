@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
-import { emptyProjection, foldExecutionEvent, ExecutionProjection } from '../lib/execution'
+import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, classifyToolCall, foldUserSteer } from '../lib/execution'
 
 export interface MessageLike {
   id: string
@@ -70,14 +70,24 @@ export function emptyTurnCounts(): TurnCounts {
   return { filesRead: 0, searches: 0, commands: 0, edits: 0, toolCalls: 0 }
 }
 
-/** Bucket a tool name into its turn-progress verb. */
+/** Bucket a tool name into its turn-progress verb (legacy chat-row verb mapping). */
 export function classifyTool(tool: string): TurnVerb {
-  const name = tool.toLowerCase()
-  if (name === 'read' || name === 'ls') return 'read'
-  if (name === 'grep' || name === 'find') return 'search'
-  if (name === 'bash') return 'run'
-  if (name === 'edit' || name === 'write') return 'edit'
-  return 'call'
+  // Single underlying classifier — the chat summary and the projection share it.
+  const cat = classifyToolCall(tool)
+  switch (cat) {
+    case 'read':
+      return 'read'
+    case 'search':
+      return 'search'
+    case 'command':
+      return 'run'
+    case 'edit':
+      return 'edit'
+    case 'subagent':
+    case 'other':
+    default:
+      return 'call'
+  }
 }
 
 function countField(verb: TurnVerb): keyof TurnCounts {
@@ -212,6 +222,10 @@ interface AppState {
   setSessions: (sessions: Session[]) => void
   addSession: (session: Session) => void
   setCurrentSessionId: (id: string | null) => void
+  /** Hydrate the subagent roster for a session from `get_subagents` (live merge). */
+  hydrateSubagents: (sessionId: string) => Promise<void>
+  /** Record a steer interaction inside the ACTIVE turn's trajectory. */
+  recordSteer: (sessionId: string, text: string) => void
   addMessage: (sessionId: string, message: MessageLike) => void
   /** Replace a session's whole transcript (history resume backfill). */
   setMessages: (sessionId: string, messages: MessageLike[]) => void
@@ -422,12 +436,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (st?.sessionFile) get().setSessionFile(session.id, st.sessionFile)
       })
     }
+    // Hydrate the (possibly already-running) subagent roster.
+    void get().hydrateSubagents(session.id)
   },
   setSessionFile: (sessionId, sessionFile) =>
     set((state) => ({
       sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, sessionFile } : s))
     })),
-  setCurrentSessionId: (currentSessionId) =>
+  setCurrentSessionId: (currentSessionId) => {
+    // Re-attaching to a session re-hydrates its roster (reconcile any agents
+    // that spawned while the user was elsewhere).
+    if (currentSessionId) void get().hydrateSubagents(currentSessionId)
     set((state) => ({
       currentSessionId,
       // Selecting a session marks it read
@@ -435,7 +454,27 @@ export const useAppStore = create<AppState>((set, get) => ({
         currentSessionId && state.unreadSessionIds[currentSessionId]
           ? { ...state.unreadSessionIds, [currentSessionId]: false }
           : state.unreadSessionIds
-    })),
+    }))
+  },
+  hydrateSubagents: async (sessionId) => {
+    const roster = await window.electronAPI.getSubagents(sessionId)
+    if (roster === null) return
+    set((state) => {
+      const current = state.executions[sessionId] ?? emptyProjection(sessionId)
+      const next = applyAgentRoster(current, roster)
+      if (next === current) return state
+      return { executions: { ...state.executions, [sessionId]: next } }
+    })
+  },
+  recordSteer: (sessionId, text) => {
+    set((state) => {
+      const current = state.executions[sessionId]
+      if (!current) return state
+      const next = foldUserSteer(current, text)
+      if (next === current) return state
+      return { executions: { ...state.executions, [sessionId]: next } }
+    })
+  },
   addMessage: (sessionId, message) => set((state) => ({
     messages: {
       ...state.messages,

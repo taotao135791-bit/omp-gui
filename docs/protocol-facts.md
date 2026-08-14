@@ -134,6 +134,51 @@ Current-only renames the GUI probes with fallback: `get_available_commands`
 the GUI): `queuedMessageCount`, `fastModeEnabled/Active`, `tokensPerSecond`,
 `todoPhases`, `contextUsage`, `steeringMode`, `followUpMode`, `interruptMode`.
 
+## Subagent bridge (verified 17.2.12)
+
+The current runtime exposes a subagent graph over RPC. Verified against the
+installed `@oh-my-pi/pi-coding-agent` 17.2.12 source (`src/modes/rpc/*`,
+`src/task/types.ts`) and cross-checked live via `integration/omp/subagent.compat.test.ts`.
+
+**Commands (current profile only):**
+
+- `set_subagent_subscription { level }` — level ∈ `"off" | "progress" | "events"`.
+  Response `{ command, success:true, data:{ level } }`. `progress` emits
+  `subagent_lifecycle` + `subagent_progress`; `events` additionally emits raw
+  child `subagent_event` frames. The GUI subscribes at **`progress`** (never
+  `events` — raw child token/transcript streams must not flood the main renderer).
+- `get_subagents` → `{ subagents: RpcSubagentSnapshot[] }`. The roster is a
+  **live-only** snapshot: a terminal lifecycle deletes the agent from the
+  registry, so completed/failed/aborted agents that finished before the GUI
+  attached are absent (upstream limitation, documented).
+- `get_subagent_messages { subagentId?, sessionFile?, fromByte? }` →
+  `{ sessionFile, fromByte, nextByte, reset, entries, messages }`. `fromByte`/
+  `nextByte` support incremental reads; a `fromByte` past EOF resets to 0
+  (`reset:true`). An unknown `subagentId`/`sessionFile` is a clean `success:false`.
+
+**Snapshot / payload fields (exact):**
+
+`RpcSubagentSnapshot`: `id, index, agent, agentSource, description?, status,
+task?, assignment?, sessionFile?, lastUpdate, progress?, parentToolCallId?`.
+`agentSource` ∈ `"bundled" | "user" | "project"`. `status` is `AgentProgress.status`
+∈ `"pending" | "running" | "completed" | "failed" | "aborted"`.
+
+`subagent_lifecycle.payload`: `id, agent, agentSource, description?, status,
+sessionFile?, parentToolCallId?, index, detached?` — `status` ∈
+`"started" | "completed" | "failed" | "aborted"`. `started` maps to `running`
+(upstream `statusFromLifecycle`).
+
+`subagent_progress.payload`: `index, agent, agentSource, task, parentToolCallId?,
+assignment?, progress: AgentProgress, sessionFile?, detached?`. `AgentProgress`
+carries `id, status, task, lastIntent?, currentTool?, toolCount, …`.
+
+**No subagent control RPC exists in 17.2.12** — there is no `kill`, `revive`,
+`park`, `unpark`, or subagent-steer command. The internal registry has `idle`
+and `parked` states, but those are NOT exposed over RPC (`get_subagents` only
+carries `AgentProgress.status`). The GUI's `subagentControl` capability is
+therefore `unsupported`; `subagentProgress`/`subagents`/`subagentMessages` flip
+to `supported` only after a live RPC response confirms them.
+
 ## Session files
 
 `~/.omp/agent/sessions/--<cwd with / → ->--/<ISO-ts>_<uuid>.jsonl` (legacy:

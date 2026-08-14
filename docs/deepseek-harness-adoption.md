@@ -99,63 +99,95 @@ The new execution projection (`src/renderer/lib/execution.ts`) is part of the
 renderer's projection layer, **not** a runtime.
 
 ## New architecture (projection layer)
-## Capability gating (what OMP actually exposes)
+## Capability gating (what OMP actually exposes — verified 17.2.12)
 
 | Capability | Status | Basis |
 |---|---|---|
-| Subagents | **supported** | OMP `subagent_lifecycle` / `subagent_event` / `subagent_progress` (gated by `set_subagent_subscription`, default off). Normalized tolerantly in `OmpProtocol.ts`. |
-| Interrupt/kill a child agent | **unknown** | Requires OMP to expose an interrupt/kill RPC. No fake Stop button is shown until it exists. |
-| Plan / Todo | **unknown → supported when events appear** | OMP emits `todo_*` / `goal_updated`; the GUI does **not** invent a plan from Markdown checklists. |
-| Background jobs | **unknown** | Project OMP async work (long commands / subagents) only when a real lifecycle event exists. |
-| Persistent terminal | **unsupported in this pass** | No second terminal runtime; OMP's DAP/REPL surface was not confirmed. |
-| Session full-text search | **future** | Local-only FTS over OMP session files; design borrows `session-query`, no DSH query runtime imported. |
+| Subagent roster | **supported** | `get_subagents` answers (live-only roster). Verified live in `integration/omp/subagent.compat.test.ts`. |
+| Subagent progress events | **supported** | `set_subagent_subscription('progress')` accepted; `subagent_lifecycle`/`subagent_progress` normalize onto one `subagent` event. |
+| Child transcript | **supported** | `get_subagent_messages` answers (incremental `fromByte`/`nextByte`); never merged into the root transcript. |
+| Subagent control (kill/revive/park/steer) | **unsupported** | No such RPC exists in 17.2.12 (`subagentControl` stays `unsupported`). |
+| Plan / Todo | **unknown** | OMP emits `todo_*` / `goal_updated`; the GUI does **not** invent a plan from Markdown. |
+| Persistent terminal | **unsupported in this pass** | No second terminal runtime. |
+| Session full-text search | **future** | Local-only FTS over OMP session files. |
 
 Anything `unknown`/`unsupported` is rendered honestly (no dead buttons), never
-faked. The GUI degrades gracefully to the current behavior.
+faked.
 
-## Stage 1 — Core truth cleanup (done this pass)
+## Stage 1 — Core truth cleanup
 
-1. **Hermetic subprocess env** — `envMode: 'inherit' | 'replace'` added to
-   `makeExecRunner` (OmpConfigCli), `RuntimeRpcClient.spawn`, `planSpawn`
-   (OmpProcess). Production inherits; integration replaces (never re-merges
-   `process.env`, so test isolation cannot leak real credentials).
+1. **Hermetic subprocess env** — `envMode: 'inherit' | 'replace'` on
+   `makeExecRunner`, `RuntimeRpcClient.spawn`, `planSpawn`; integration replaces.
 2. **Role selector thinking suffix** — `src/shared/modelSelector.ts`
-   (`parseModelSelector` / `switchModelSelector`): `provider/model:high` parses
-   to `{ modelSelector, thinkingOverride }`, and switching the default model
-   preserves the role-level override (`A:high → B:high`).
-3. **Steer explicit modeling** — `MessageLike.kind: 'prompt' | 'steer'`; a
-   steered message is rendered as a user-like bubble with a `Steer` badge and
-   belongs to the active turn, never a new prompt turn.
-4. **recentProjects bootstrap race** — the persisted list is hydrated once
-   (`recentProjectsLoaded`), and `setCurrentProject` no longer re-reads/re-writes
-   the persistence store on every change.
-5. **Per-turn metadata persistence** — `runtimeModel`/`runtimeThinking` remain
-   reconstructed from the official OMP session where possible; a GUI sidecar is
-   the fallback for GUI-only metadata (documented, not yet needed for model /
-   thinking since `get_state`/`get_messages` carry them).
+   (`parseModelSelector` / `switchModelSelector`): `provider/model:high` →
+   `{ modelSelector, thinkingOverride }`, and switching the default model keeps
+   the role-level override (`A:high → B:high`).
+3. **Steer explicit modeling** — `MessageLike.kind: 'prompt' | 'steer'`; steer
+   also records a trajectory entry INSIDE the active turn (`foldUserSteer`).
+4. **recentProjects bootstrap race** — hydrated once, MRU write guarded.
+5. **Per-turn metadata** — `runtimeModel`/`runtimeThinking` reconstructed from
+   OMP `get_state`/`get_messages` where possible; a GUI sidecar is the fallback
+   for GUI-only metadata (documented, not yet needed).
+
+## Stage 2/3 — Subagent bridge + multi-turn projection (this round)
+
+**Host (main process):**
+- Typed `OmpSession` methods + facade wrappers for `set_subagent_subscription`,
+  `get_subagents`, `get_subagent_messages`.
+- Post-handshake bootstrap: on a `current`-profile session the host subscribes
+  at `progress` and hydrates the roster — a subscription failure never fails the
+  session.
+- `CliCapabilities` gains `subagents` / `subagentProgress` / `subagentMessages` /
+  `subagentControl`, flipped only by REAL RPC responses (never guessed).
+- Typed IPC + preload for `getSubagents` / `getSubagentMessages` (no arbitrary
+  command passthrough; no kill/revive since none exists).
+
+**Projection (renderer):**
+- `execution.ts` rewritten to multi-turn: `ExecutionProjection = { agents,
+  turns, turnOrder, currentTurnId }`. Agents are session-scoped (flat roster +
+  root); turns are prompt-scoped (fresh `TurnProjection` per `agent_start`,
+  per-turn tool counts / reasoning / trajectory).
+- EXACT status mapping `normalizeOmpAgentStatus` (no substring guessing; unknown
+  → `unknown`).
+- `classifyToolCall` is the single tool classifier; the legacy chat row maps onto
+  it (one classification source).
+- `applyAgentRoster` merges `get_subagents` snapshots through the SAME
+  `upsertAgent` reducer as live events — one graph, not two.
+
+**Output retention:** `RetainedOutput` now wraps bash/read/generic tool output —
+large outputs render head + hidden-count + tail by default, with a
+keyboard-reachable expand to the full text. `retention.ts` is now actually used.
+
+**Not yet (next round — Agent Hub + Trajectory product UI):** the Agent Hub tree
+panel, child navigation, trajectory timeline/summary, interrupt/revive controls
+(upstream doesn't expose them anyway), and search index. The projection + bridge
+data layer for all of it is in place and tested.
 
 ## License compliance
 
 See `THIRD_PARTY_NOTICES.md`. Every reused source file carries its own MIT
-header with the source commit, and no upstream header was deleted.
+header with the source commit, and no upstream header was deleted. `retention.ts`
+(adapted) and `atomicWrite.ts` (vendored) are in active use.
 
 ## Performance
 
 - The projection is an immutable fold gated by `Object.is` (no-op events return
   the same reference), so Zustand selectors can memoize.
-- Trajectory virtualization and search indexing remain future work; the current
-  projection keeps a single chronological ledger (O(n) memory, no per-event
-  deep re-copy of history).
+- The multi-turn fold only touches the current turn / the changed agent; it never
+  deep-clones whole-session history per event.
+- Large tool outputs are head/tail retained in the DOM by default, so a 4 MB
+  output never materializes as tens of thousands of nodes.
 
 ## Remaining OMP upstream limitations
 
 These are strictly **OMP runtime does not expose it** — not OMP GUI missing:
 
-- Subagent interrupt/kill/revive (no confirmed RPC command).
-- A durable child-agent transcript independent of the root session (read from
-  OMP child sessions if/when they exist).
-- Plan/todo as first-class runtime events (events exist; their exact schema was
-  not confirmed against a live runtime in this pass).
+- Subagent kill/revive/park/unpark/steer (no RPC in 17.2.12; `idle`/`parked`
+  exist only in the internal registry, not the RPC surface).
+- A durable roster of already-completed subagents (`get_subagents` is live-only;
+  terminal agents are dropped from the registry).
+- Plan/todo as first-class runtime events (events exist; exact schema not yet
+  confirmed against a live runtime).
 - Persistent per-agent PTY (no confirmed terminal tool surface).
 
 These are **OMP GUI missing** (future work in this repo):

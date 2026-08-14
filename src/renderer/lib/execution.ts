@@ -5,127 +5,170 @@
  *
  * This is NOT a second runtime. Oh My Pi still owns execution; this module only
  * *projects* the already-normalized events (see src/main/omp/OmpProtocol.ts)
- * into UI-facing shapes. The design rule: the same fact is never copied into a
- * Chat state, a Trajectory state, an Agent-Hub state and a Jobs state — the
- * store holds this single projection and every surface derives via selectors.
+ * into UI-facing shapes. One fold, many selectors — no per-UI copies.
+ *
+ * Lifecycle model (the important split):
+ *   - Agents are SESSION-scoped. A subagent persists across the turns that use
+ *     it (its lifecycle is driven by `subagent_lifecycle` / `subagent_progress`
+ *     frames and hydrated by `get_subagents`). OMP exposes a FLAT roster (each
+ *     agent links to its spawner via `parentToolCallId`, not a parent-agent id),
+ *     so the graph is root + children — never a guessed tree.
+ *   - Turns are PROMPT-scoped. Each `agent_start` opens a fresh TurnProjection;
+ *     each terminal `agent_end` closes it. Tool counts, reasoning coalescing and
+ *     trajectory are per-turn; a session total is DERIVED (sum over turns), never
+ *     a second increment.
  *
  * Pure functions, no React, no Electron — unit-testable in isolation.
  */
 
-import type { SessionEvent } from '@shared/types'
+import type { SessionEvent, SubagentSnapshot, SubagentStatus } from '@shared/types'
 
-export type AgentStatus =
-  | 'queued'
-  | 'running'
-  | 'waiting'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'interrupted'
+export type AgentStatus = SubagentStatus | 'unknown'
 
-/** Normalized agent node (the Agent Hub tree). Fields follow what OMP exposes. */
-export interface AgentNode {
-  id: string
-  parentId?: string
-  rootSessionId: string
-  label?: string
-  purpose?: string
-  depth: number
-  status: AgentStatus
-  provider?: string
-  model?: string
-  startedAt?: number
-  endedAt?: number
-  resultSummary?: string
-  /** Latest normalized activity text (never a raw RPC event). */
-  activity?: string
-}
+export type ToolCategory = 'read' | 'search' | 'edit' | 'command' | 'subagent' | 'other'
 
-export interface ToolCounts {
-  filesRead: number
-  commands: number
-  edits: number
+export interface ToolStats {
+  read: number
+  search: number
+  edit: number
+  command: number
+  subagent: number
   other: number
 }
 
-/** One entry in the chronological trajectory ledger. */
+export function emptyToolStats(): ToolStats {
+  return { read: 0, search: 0, edit: 0, command: 0, subagent: 0, other: 0 }
+}
+
+/**
+ * The SINGLE tool-category classifier. Chat turn summaries, the trajectory and
+ * any future surface all derive from this one function — never per-surface
+ * switches that drift apart.
+ */
+export function classifyToolCall(tool: string): ToolCategory {
+  const name = tool.toLowerCase()
+  if (name === 'read' || name === 'ls' || name === 'cat' || name === 'head' || name === 'tail') {
+    return 'read'
+  }
+  if (name === 'grep' || name === 'find' || name === 'rg' || name === 'search' || name === 'glob') {
+    return 'search'
+  }
+  if (name === 'bash' || name === 'run' || name === 'exec') return 'command'
+  if (name === 'edit' || name === 'write' || name === 'patch') return 'edit'
+  if (name === 'subagent' || name === 'agent' || name === 'task' || name === 'spawn') {
+    return 'subagent'
+  }
+  return 'other'
+}
+
+function addTool(stats: ToolStats, tool: string): ToolStats {
+  const category = classifyToolCall(tool)
+  return { ...stats, [category]: stats[category] + 1 }
+}
+
+/**
+ * EXACT upstream status normalization. Only the `AgentProgress.status` /
+ * lifecycle values are recognized; anything else is 'unknown' — never guessed,
+ * never substring-matched, and never folded into a lossy 'cancelled'.
+ */
+export function normalizeOmpAgentStatus(raw: unknown): AgentStatus {
+  switch (raw) {
+    case 'pending':
+    case 'running':
+    case 'completed':
+    case 'failed':
+    case 'aborted':
+      return raw
+    default:
+      return 'unknown'
+  }
+}
+
+export interface AgentNode {
+  /** OMP's stable registry id (or ROOT_AGENT_ID for the main agent). */
+  id: string
+  /** Agent definition name (e.g. 'explore', 'review'); root is 'main'. */
+  agent: string
+  agentSource: 'bundled' | 'user' | 'project'
+  status: AgentStatus
+  description?: string
+  task?: string
+  assignment?: string
+  sessionFile?: string
+  /** The tool call that spawned this agent (not a parent-agent id). */
+  parentToolCallId?: string
+  index?: number
+  /** Arrival timestamp of first observation — a UI estimate, not durable. */
+  startedAt?: number
+  /** Arrival timestamp of the terminal observation — a UI estimate, not durable. */
+  endedAt?: number
+  /** Runtime-reported `lastUpdate` (ms epoch). */
+  lastUpdate?: number
+  lastIntent?: string
+  currentTool?: string
+  toolCount?: number
+}
+
 export interface TrajectoryEntry {
   seq: number
-  kind: 'reasoning' | 'message' | 'tool' | 'subagent'
+  kind: 'reasoning' | 'message' | 'tool' | 'subagent' | 'steer'
   label: string
   agentId?: string
+}
+
+export type TurnStatus = 'running' | 'completed' | 'failed' | 'interrupted'
+
+export interface TurnProjection {
+  id: string
+  startedAt?: number
+  endedAt?: number
+  status: TurnStatus
+  tools: ToolStats
+  trajectory: TrajectoryEntry[]
 }
 
 export interface ExecutionProjection {
   agents: Record<string, AgentNode>
   rootAgentId: string
-  turnActive: boolean
-  turnStartedAt?: number
-  turnEndedAt?: number
-  tools: ToolCounts
-  trajectory: TrajectoryEntry[]
+  turns: Record<string, TurnProjection>
+  turnOrder: string[]
+  currentTurnId?: string
+  /** Monotonic per-session turn counter — the source of stable turn ids. */
+  turnCounter: number
 }
 
-/** Stable root-agent id within one session's projection. */
 export const ROOT_AGENT_ID = 'main'
 
-export function emptyToolCounts(): ToolCounts {
-  return { filesRead: 0, commands: 0, edits: 0, other: 0 }
-}
-
-export function emptyProjection(sessionId: string): ExecutionProjection {
+export function emptyProjection(_sessionId?: string): ExecutionProjection {
   return {
     agents: {
       [ROOT_AGENT_ID]: {
         id: ROOT_AGENT_ID,
-        rootSessionId: sessionId,
-        depth: 0,
-        status: 'queued'
+        agent: 'main',
+        agentSource: 'bundled',
+        status: 'pending'
       }
     },
     rootAgentId: ROOT_AGENT_ID,
-    turnActive: false,
-    tools: emptyToolCounts(),
-    trajectory: []
+    turns: {},
+    turnOrder: [],
+    turnCounter: 0
   }
 }
 
-function classifyTool(tool: string): keyof ToolCounts {
-  const name = tool.toLowerCase()
-  if (name === 'read' || name === 'ls') return 'filesRead'
-  if (name === 'bash') return 'commands'
-  if (name === 'edit' || name === 'write') return 'edits'
-  return 'other'
+function isTerminalAgent(status: AgentStatus): boolean {
+  return status === 'completed' || status === 'failed' || status === 'aborted'
 }
 
-const START_TOKENS = ['start', 'started', 'creat', 'spawn', 'launch', 'queued', 'running', 'begin']
-const END_TOKENS = ['complete', 'finished', 'succeed', 'done', 'success', 'end']
-const FAIL_TOKENS = ['fail', 'error']
-const CANCEL_TOKENS = ['cancel', 'abort', 'kill', 'interrupt']
-
-/** Tolerant upstream phase/status string → normalized AgentStatus (undefined if unknown). */
-export function toAgentStatus(phase?: string, status?: string): AgentStatus | undefined {
-  const token = `${phase ?? ''} ${status ?? ''}`.toLowerCase()
-  if (CANCEL_TOKENS.some((t) => token.includes(t))) return 'cancelled'
-  if (FAIL_TOKENS.some((t) => token.includes(t))) return 'failed'
-  if (START_TOKENS.some((t) => token.includes(t))) return 'running'
-  if (END_TOKENS.some((t) => token.includes(t))) return 'completed'
-  return undefined
+function isBusyAgent(status: AgentStatus): boolean {
+  return status === 'pending' || status === 'running'
 }
-
-function isTerminalStatus(status: AgentStatus): boolean {
-  return (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'cancelled' ||
-    status === 'interrupted'
-  )
-}
+// --------------------------------------------------------------------- fold
 
 /**
  * Fold one normalized SessionEvent into the projection. Returns a NEW projection
- * (never mutates the input) so the store's selector layer can memoize on
- * reference equality. Uninteresting events return the same reference.
+ * (never mutates the input) so Zustand selectors can memoize on reference
+ * equality; uninteresting events return the same reference.
  */
 export function foldExecutionEvent(
   state: ExecutionProjection,
@@ -134,80 +177,73 @@ export function foldExecutionEvent(
 ): ExecutionProjection {
   switch (event.type) {
     case 'status': {
-      if (event.status === 'working') {
-        const root = state.agents[state.rootAgentId]
-        const agents = {
-          ...state.agents,
-          [state.rootAgentId]: {
-            ...root,
-            status: 'running' as const,
-            startedAt: root.startedAt ?? now
-          }
-        }
-        return {
-          ...state,
-          agents,
-          turnActive: true,
-          turnStartedAt: state.turnStartedAt ?? now
-        }
-      }
-      // agent_end (idle) with isTerminal !== false closes the turn.
-      if (event.status === 'idle' && event.isTerminal !== false && state.turnActive) {
-        return endTurn(state, now)
+      if (event.status === 'working') return startTurn(state, now)
+      if (event.status === 'idle' && event.isTerminal !== false && state.currentTurnId) {
+        return endTurn(state, now, 'completed')
       }
       return state
     }
 
+    case 'error': {
+      // A non-recoverable error ends the current turn (mirrors OmpSession).
+      if (event.recoverable === true || !state.currentTurnId) return state
+      return endTurn(state, now, 'failed')
+    }
+
     case 'tool_call': {
-      const key = classifyTool(event.tool)
+      const turn = state.currentTurnId ? state.turns[state.currentTurnId] : undefined
+      if (!turn) return state
       return {
         ...state,
-        tools: { ...state.tools, [key]: state.tools[key] + 1 },
-        trajectory: [
-          ...state.trajectory,
-          { seq: state.trajectory.length, kind: 'tool', label: event.tool }
-        ]
+        turns: {
+          ...state.turns,
+          [turn.id]: {
+            ...turn,
+            tools: addTool(turn.tools, event.tool),
+            trajectory: appendEntry(turn.trajectory, { kind: 'tool', label: event.tool })
+          }
+        }
       }
     }
 
     case 'thinking': {
-      // Coalesce the stream: one reasoning entry per turn, not per delta.
-      if (state.trajectory.some((e) => e.kind === 'reasoning')) return state
+      const turn = state.currentTurnId ? state.turns[state.currentTurnId] : undefined
+      if (!turn) return state
+      // Reasoning coalesces PER TURN — turn 2 gets its own Thinking entry.
+      if (turn.trajectory.some((e) => e.kind === 'reasoning')) return state
       return {
         ...state,
-        trajectory: [
-          ...state.trajectory,
-          { seq: state.trajectory.length, kind: 'reasoning', label: 'Thinking' }
-        ]
+        turns: {
+          ...state.turns,
+          [turn.id]: {
+            ...turn,
+            trajectory: appendEntry(turn.trajectory, { kind: 'reasoning', label: 'Thinking' })
+          }
+        }
       }
     }
 
     case 'message': {
       if (event.role !== 'assistant') return state
-      const label = event.content.split('\n')[0].slice(0, 80) || 'Message'
+      const turn = state.currentTurnId ? state.turns[state.currentTurnId] : undefined
+      if (!turn) return state
       return {
         ...state,
-        trajectory: [
-          ...state.trajectory,
-          { seq: state.trajectory.length, kind: 'message', label }
-        ]
+        turns: {
+          ...state.turns,
+          [turn.id]: {
+            ...turn,
+            trajectory: appendEntry(turn.trajectory, {
+              kind: 'message',
+              label: event.content.split('\n')[0].slice(0, 80) || 'Message'
+            })
+          }
+        }
       }
     }
 
     case 'subagent': {
-      return foldSubagent(state, event, now)
-    }
-
-    case 'subagent_progress': {
-      const id = event.agentId
-      if (!id || !state.agents[id]) return state
-      return {
-        ...state,
-        agents: {
-          ...state.agents,
-          [id]: { ...state.agents[id], activity: event.text?.slice(0, 120) }
-        }
-      }
+      return upsertAgent(state, toAgentNode(event, now), now)
     }
 
     default:
@@ -215,113 +251,166 @@ export function foldExecutionEvent(
   }
 }
 
-function foldSubagent(
+/** Append a steer interaction to the ACTIVE turn's trajectory (never a new turn). */
+export function foldUserSteer(
   state: ExecutionProjection,
-  event: Extract<SessionEvent, { type: 'subagent' }>,
-  now: number
+  text: string
 ): ExecutionProjection {
-  const id = event.agentId
-  const status = toAgentStatus(event.phase, event.status)
-
-  // No stable id → nothing to key the tree on; surface as a trajectory entry only.
-  if (!id) {
-    if (!status) return state
-    return {
-      ...state,
-      trajectory: [
-        ...state.trajectory,
-        { seq: state.trajectory.length, kind: 'subagent', label: event.name ?? 'Subagent' }
-      ]
-    }
-  }
-
-  const existing = state.agents[id]
-  const parentId = event.parentAgentId ?? state.rootAgentId
-  const parent = state.agents[parentId] ?? state.agents[state.rootAgentId]
-  const depth = parent ? parent.depth + 1 : 1
-
-  // Status unknown → update metadata only (label/purpose/model) without guessing.
-  const nextStatus = status ?? existing?.status ?? 'running'
-
-  const node: AgentNode = {
-    id,
-    parentId,
-    rootSessionId: event.sessionId,
-    label: event.name ?? existing?.label,
-    purpose: event.purpose ?? existing?.purpose,
-    depth: existing?.depth ?? depth,
-    status: nextStatus,
-    provider: event.provider ?? existing?.provider,
-    model: event.model ?? existing?.model,
-    startedAt: event.startedAt ?? existing?.startedAt ?? now,
-    endedAt: isTerminalStatus(nextStatus)
-      ? event.endedAt ?? existing?.endedAt ?? now
-      : existing?.endedAt,
-    resultSummary: event.resultSummary ?? existing?.resultSummary
-  }
-
-  const isFirstSeen = !existing
+  const turn = state.currentTurnId ? state.turns[state.currentTurnId] : undefined
+  if (!turn) return state
   return {
     ...state,
-    agents: { ...state.agents, [id]: node },
-    trajectory:
-      status && isFirstSeen
-        ? [
-            ...state.trajectory,
-            {
-              seq: state.trajectory.length,
-              kind: 'subagent',
-              label: node.label ?? 'Subagent',
-              agentId: id
-            }
-          ]
-        : state.trajectory
+    turns: {
+      ...state.turns,
+      [turn.id]: {
+        ...turn,
+        trajectory: appendEntry(turn.trajectory, {
+          kind: 'steer',
+          label: text.split('\n')[0].slice(0, 80) || 'Steer'
+        })
+      }
+    }
   }
 }
 
-function endTurn(state: ExecutionProjection, now: number): ExecutionProjection {
-  // Reconcile: any subagent still running at turn end cannot be running anymore
-  // (its process is gone) — mark it interrupted, never fabricate a "running".
+function appendEntry(list: TrajectoryEntry[], entry: Omit<TrajectoryEntry, 'seq'>): TrajectoryEntry[] {
+  return [...list, { ...entry, seq: list.length }]
+}
+
+function startTurn(state: ExecutionProjection, now: number): ExecutionProjection {
+  const turnId = `turn-${state.turnCounter + 1}`
+  const turn: TurnProjection = {
+    id: turnId,
+    startedAt: now,
+    status: 'running',
+    tools: emptyToolStats(),
+    trajectory: []
+  }
+  return {
+    ...state,
+    turnCounter: state.turnCounter + 1,
+    currentTurnId: turnId,
+    turns: { ...state.turns, [turnId]: turn },
+    turnOrder: [...state.turnOrder, turnId],
+    agents: {
+      ...state.agents,
+      [state.rootAgentId]: {
+        ...state.agents[state.rootAgentId],
+        status: 'running',
+        startedAt: state.agents[state.rootAgentId].startedAt ?? now
+      }
+    }
+  }
+}
+
+function endTurn(
+  state: ExecutionProjection,
+  now: number,
+  status: TurnStatus
+): ExecutionProjection {
+  const turnId = state.currentTurnId
+  if (!turnId) return state
+  const turn = state.turns[turnId]
   const agents: Record<string, AgentNode> = {}
   for (const [id, node] of Object.entries(state.agents)) {
     agents[id] =
-      id !== state.rootAgentId && node.status === 'running'
-        ? { ...node, status: 'interrupted', endedAt: node.endedAt ?? now }
+      id !== state.rootAgentId && isBusyAgent(node.status)
+        ? { ...node, status: 'unknown', endedAt: node.endedAt ?? now }
         : node
   }
-  agents[state.rootAgentId] = {
-    ...agents[state.rootAgentId],
-    status: 'completed',
-    endedAt: now
-  }
+  agents[state.rootAgentId] = { ...agents[state.rootAgentId], status: 'completed', endedAt: now }
   return {
     ...state,
     agents,
-    turnActive: false,
-    turnEndedAt: now
+    currentTurnId: undefined,
+    turns: {
+      ...state.turns,
+      [turnId]: { ...turn, status, endedAt: now }
+    }
   }
 }
 
+function toAgentNode(event: Extract<SessionEvent, { type: 'subagent' }>, now: number): AgentNode {
+  return {
+    id: event.id,
+    agent: event.agent,
+    agentSource: event.agentSource,
+    status: normalizeOmpAgentStatus(event.status),
+    description: event.description,
+    task: event.task,
+    assignment: event.assignment,
+    sessionFile: event.sessionFile,
+    parentToolCallId: event.parentToolCallId,
+    index: event.index,
+    lastUpdate: now,
+    lastIntent: event.lastIntent,
+    currentTool: event.currentTool,
+    toolCount: event.toolCount
+  }
+}
 
-// --------------------------------------------------------------------- selectors
+function upsertAgent(
+  state: ExecutionProjection,
+  incoming: AgentNode,
+  now: number
+): ExecutionProjection {
+  const existing = state.agents[incoming.id]
+  const startedAt = existing?.startedAt ?? now
+  const endedAt = isTerminalAgent(incoming.status) ? existing?.endedAt ?? now : existing?.endedAt
+  const node: AgentNode = { ...existing, ...incoming, startedAt, endedAt }
+  return {
+    ...state,
+    agents: { ...state.agents, [incoming.id]: node }
+  }
+}
 
-/** Agents ordered depth-first (root first), for the Agent Hub tree. */
+/**
+ * Upsert a `get_subagents` roster snapshot. Uses the SAME `upsertAgent` reducer
+ * as live events, so snapshot hydration and incremental events converge on one
+ * graph — never two state machines. Terminal agents that only existed before the
+ * GUI attached are simply absent from the roster (upstream drops them).
+ */
+export function applyAgentRoster(
+  state: ExecutionProjection,
+  snapshots: readonly SubagentSnapshot[],
+  now = Date.now()
+): ExecutionProjection {
+  let next = state
+  for (const s of snapshots) {
+    next = upsertAgent(next, snapshotToAgentNode(s, now), now)
+  }
+  return next
+}
+
+function snapshotToAgentNode(s: SubagentSnapshot, now: number): AgentNode {
+  return {
+    id: s.id,
+    agent: s.agent,
+    agentSource: s.agentSource,
+    status: normalizeOmpAgentStatus(s.status),
+    description: s.description,
+    task: s.task,
+    assignment: s.assignment,
+    sessionFile: s.sessionFile,
+    parentToolCallId: s.parentToolCallId,
+    index: s.index,
+    lastUpdate: s.lastUpdate,
+    lastIntent: s.lastIntent,
+    currentTool: s.currentTool,
+    toolCount: s.toolCount,
+    startedAt: now
+  }
+}
+
+// ------------------------------------------------------------------ selectors
+
+/** Agents ordered root-first then by spawn index (flat roster — no guessed tree). */
 export function orderedAgents(projection: ExecutionProjection): AgentNode[] {
-  const byParent = new Map<string | undefined, AgentNode[]>()
-  for (const node of Object.values(projection.agents)) {
-    const list = byParent.get(node.parentId) ?? []
-    list.push(node)
-    byParent.set(node.parentId, list)
-  }
-  const out: AgentNode[] = []
-  const visit = (id: string | undefined): void => {
-    for (const node of byParent.get(id) ?? []) {
-      out.push(node)
-      visit(node.id)
-    }
-  }
-  visit(undefined)
-  return out
+  const root = projection.agents[projection.rootAgentId]
+  const children = Object.values(projection.agents)
+    .filter((n) => n.id !== projection.rootAgentId)
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id.localeCompare(b.id))
+  return [root, ...children]
 }
 
 export interface AgentHubSummary {
@@ -333,29 +422,34 @@ export interface AgentHubSummary {
 
 export function agentHubSummary(projection: ExecutionProjection): AgentHubSummary {
   const nodes = Object.values(projection.agents)
-  const isBusy = (s: AgentStatus): boolean =>
-    s === 'running' || s === 'waiting' || s === 'queued'
   return {
-    running: nodes.filter((n) => isBusy(n.status)).length,
+    running: nodes.filter((n) => isBusyAgent(n.status)).length,
     done: nodes.filter((n) => n.status === 'completed').length,
-    failed: nodes.filter(
-      (n) => n.status === 'failed' || n.status === 'cancelled' || n.status === 'interrupted'
-    ).length,
+    failed: nodes.filter((n) => n.status === 'failed' || n.status === 'aborted').length,
     total: nodes.length
   }
 }
 
-/** "Worked 1m42s · 14 files · 6 commands · 3 agents" summary data. */
-export function turnSummary(projection: ExecutionProjection): {
-  elapsedMs: number
-  tools: ToolCounts
-  agentCount: number
-} {
-  const start = projection.turnStartedAt ?? projection.turnEndedAt ?? 0
-  const end = projection.turnEndedAt ?? start
-  return {
-    elapsedMs: Math.max(0, end - start),
-    tools: projection.tools,
-    agentCount: Object.keys(projection.agents).length
-  }
+/** The current (in-flight) turn, or undefined. */
+export function currentTurn(projection: ExecutionProjection): TurnProjection | undefined {
+  return projection.currentTurnId ? projection.turns[projection.currentTurnId] : undefined
 }
+
+/** Elapsed wall time of a turn (arrival-based; non-durable across resume). */
+export function turnElapsedMs(turn: TurnProjection): number {
+  const start = turn.startedAt ?? turn.endedAt ?? 0
+  const end = turn.endedAt ?? start
+  return Math.max(0, end - start)
+}
+
+/** Session-wide tool totals DERIVED by summing turns — never a second counter. */
+export function sessionToolTotals(projection: ExecutionProjection): ToolStats {
+  const totals = emptyToolStats()
+  for (const turn of Object.values(projection.turns)) {
+    for (const key of Object.keys(totals) as (keyof ToolStats)[]) {
+      totals[key] += turn.tools[key]
+    }
+  }
+  return totals
+}
+

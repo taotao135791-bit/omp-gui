@@ -51,6 +51,8 @@ export const IPC_CHANNELS = {
   OMP_RESUME_SESSION: 'omp:resume-session',
   OMP_DELETE_SESSION_FILE: 'omp:delete-session-file',
   OMP_SET_SESSION_NAME: 'omp:set-session-name',
+  OMP_GET_SUBAGENTS: 'omp:get-subagents',
+  OMP_GET_SUBAGENT_MESSAGES: 'omp:get-subagent-messages',
   CHECKPOINT_CREATE: 'checkpoint:create',
   CHECKPOINT_LIST: 'checkpoint:list',
   CHECKPOINT_RESTORE: 'checkpoint:restore',
