@@ -33,7 +33,8 @@ import {
   LoginAnswer,
   SubagentSnapshot,
   SubagentMessagesResult,
-  SubagentTranscriptSelector
+  SubagentTranscriptSelector,
+  HistoricalAgentRecord
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -92,8 +93,8 @@ export interface ElectronAPI {
   setThinkingLevel: (sessionId: string, level: SessionThinkingLevel) => Promise<boolean>
   /** Rewrite a live session's approval-extension config (permission mode hot-swap). */
   updateApprovalConfig: (sessionId: string, mode: PermissionMode) => Promise<boolean>
-  /** Export the session transcript as HTML; resolves the saved path (null on failure). */
-  exportHtml: (sessionId: string, outputPath?: string) => Promise<string | null>
+  /** Export the session transcript as HTML to the host's Downloads dir; resolves the path. */
+  exportHtml: (sessionId: string) => Promise<string | null>
   /** Live RPC get_state snapshot of a session; null when unavailable. */
   getSessionState: (sessionId: string) => Promise<SessionState | null>
   /** Persisted sessions of a project (pi session files), newest first. */
@@ -102,7 +103,7 @@ export interface ElectronAPI {
   resumeSession: (
     projectDir: string,
     filePath: string
-  ) => Promise<{ session: Session; messages: ChatMessage[] } | null>
+  ) => Promise<{ session: Session; messages: ChatMessage[]; historicalAgents: HistoricalAgentRecord[] } | null>
   /** Delete a persisted session file (guarded to pi's sessions root). */
   deleteSessionFile: (filePath: string) => Promise<boolean>
   /** Set a session's display name (single line, max 60 chars). */
@@ -252,8 +253,8 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SET_THINKING, sessionId, level),
   updateApprovalConfig: (sessionId: string, mode: PermissionMode) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_UPDATE_APPROVAL_CONFIG, sessionId, mode),
-  exportHtml: (sessionId: string, outputPath?: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.OMP_EXPORT_HTML, sessionId, outputPath),
+  exportHtml: (sessionId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_EXPORT_HTML, sessionId),
   getSessionState: (sessionId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SESSION_STATE, sessionId),
   listSessionHistory: (projectDir: string) =>

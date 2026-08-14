@@ -212,7 +212,7 @@ export class OmpSession {
         this.pending.delete(id)
         resolve(null)
       }, timeoutMs)
-      this.pending.set(id, { resolve, timer })
+      this.pending.set(id, { resolve, timer, commandType: String(command.type ?? '') })
       this.proc.stdin?.write(serializeCommand({ id, ...command }))
     })
   }
@@ -313,6 +313,24 @@ export class OmpSession {
       if (this.pendingPrompts.delete(logical.id)) {
         this.handlePromptAck(logical)
         return
+      }
+    }
+    // 3b. id-less failure correlation. Older OMP builds answer an unknown
+    // command with `{ success:false, error:"Unknown command: X" }` and NO id.
+    // Correlate that ONLY when the parsed command matches EXACTLY ONE pending
+    // request — never guess across multiple same-type requests, and never treat
+    // a non-"Unknown command:" id-less error as an answer.
+    if (logical.type === 'response' && logical.success === false && typeof logical.id !== 'string') {
+      const commandType = parseUnknownCommandError(logical.error)
+      if (commandType) {
+        const matches = [...this.pending.entries()].filter(([, q]) => q.commandType === commandType)
+        if (matches.length === 1) {
+          const [pendingId, q] = matches[0]
+          this.pending.delete(pendingId)
+          clearTimeout(q.timer)
+          q.resolve(logical)
+          return
+        }
       }
     }
     if (logical.type === 'prompt_result') {
@@ -596,6 +614,8 @@ const NEGOTIATE_TIMEOUT_MS = 5_000
 interface PendingQuery {
   resolve: (payload: Record<string, unknown> | null) => void
   timer: ReturnType<typeof setTimeout>
+  /** The command type of this request, for safe id-less error correlation. */
+  commandType: string
 }
 
 /**
@@ -624,6 +644,15 @@ export function classifyRpcResponse<T>(
     return { kind: 'unsupported', error, code }
   }
   return { kind: 'command-error', error, code }
+}
+
+/** Strictly parse an OMP `Unknown command: X` error; null for anything else. */
+const UNKNOWN_COMMAND_RE = /^Unknown command: ([A-Za-z_][A-Za-z0-9_]*)\s*$/
+
+export function parseUnknownCommandError(error: unknown): string | null {
+  if (typeof error !== 'string') return null
+  const match = UNKNOWN_COMMAND_RE.exec(error.trim())
+  return match ? match[1] : null
 }
 
 /**

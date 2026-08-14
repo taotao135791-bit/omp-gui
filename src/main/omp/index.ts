@@ -17,11 +17,12 @@ import {
   SubagentSnapshot,
   SubagentSubscriptionLevel,
   SubagentTranscriptSelector,
-  RpcOutcome
+  RpcOutcome,
+  HistoricalAgentRecord
 } from '../../shared/types'
 import { getStore, setStore } from '../store'
 import { AgentMessage, mapAgentMessages } from '../messageMapping'
-import { reconstructSessionMetadata } from '../sessionMetadata'
+import { reconstructSessionMetadata, reconstructHistoricalAgents } from '../sessionMetadata'
 import { isSessionFilePath } from '../sessionHistory'
 import { planSpawn, removeApprovalConfig, resolvePermissionMode, spawnProcess, writeApprovalConfig } from './OmpProcess'
 import { OmpSession } from './OmpSession'
@@ -413,7 +414,7 @@ export async function resumeSession(
   cwd: string,
   onEvent: (event: SessionEvent) => void,
   filePath: string
-): Promise<{ session: Session; messages: ChatMessage[] } | null> {
+): Promise<{ session: Session; messages: ChatMessage[]; historicalAgents: HistoricalAgentRecord[] } | null> {
   if (!isSessionFilePath(filePath)) return null
   const session = createSession(cwd, onEvent, { resumeSessionPath: filePath })
   if (session.status === 'error') return null
@@ -430,5 +431,9 @@ export async function resumeSession(
     if (meta.model !== undefined) message.runtimeModel = meta.model
     if (meta.thinking !== undefined) message.runtimeThinking = meta.thinking
   }
-  return { session, messages }
+  // Reconstruct completed/failed/aborted historical children from durable task
+  // results, so a resumed session shows its agent history even though the live
+  // roster is empty. Running state is NEVER claimed from durable data.
+  const historicalAgents = await reconstructHistoricalAgents(filePath)
+  return { session, messages, historicalAgents }
 }

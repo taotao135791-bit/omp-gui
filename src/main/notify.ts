@@ -17,8 +17,14 @@ export function maybeNotifyTurnFinished(event: SessionEvent): void {
   if (win && !win.isDestroyed() && win.isFocused()) return
 
   const title = getSession(event.sessionId)?.title || 'OMP GUI'
+  // Privacy: by default the notification body is generic ("Agent turn finished.")
+  // and never leaks assistant response content — previews are opt-in. Previews
+  // may surface in the OS notification center / lock screen.
   const text = getLastAssistantText(event.sessionId).trim()
-  const body = text ? text.slice(0, 120) : 'Agent turn finished.'
+  const body =
+    getStore('notificationPreviews') === true && text
+      ? text.slice(0, 120)
+      : 'Agent turn finished.'
 
   const notification = new Notification({ title, body, silent: false })
   notification.on('click', () => {

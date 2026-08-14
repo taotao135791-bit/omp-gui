@@ -10,7 +10,6 @@ import {
   ModelConfig,
   CheckpointInfo,
   PermissionMode,
-  PromptImage,
   StreamingBehavior,
   SessionThinkingLevel,
   DefaultThinkingLevel,
@@ -88,6 +87,7 @@ import {
 import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
 import { listOmpModelCatalog } from './omp/settings/OmpModelCatalog'
+import { sanitizeImages } from './imageValidation'
 
 const fsGuard = new FsGuard()
 
@@ -122,18 +122,6 @@ function broadcastSessionEvent(event: SessionEvent): void {
   }
   maybeNotifyTurnFinished(event)
   maybeNotifyUiRequest(event)
-}
-
-/** Accept only well-formed prompt images from the renderer. */
-function sanitizeImages(images: unknown): PromptImage[] | undefined {
-  if (!Array.isArray(images)) return undefined
-  const out: PromptImage[] = []
-  for (const img of images as Partial<PromptImage>[]) {
-    if (img && typeof img.data === 'string' && typeof img.mimeType === 'string') {
-      out.push({ type: 'image', data: img.data, mimeType: img.mimeType })
-    }
-  }
-  return out.length ? out : undefined
 }
 
 function sanitizeStreamingBehavior(value: unknown): StreamingBehavior | undefined {
@@ -374,15 +362,15 @@ export function registerIpc() {
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_EXPORT_HTML,
-    async (_event: IpcMainInvokeEvent, sessionId: string, outputPath?: string) => {
+    async (_event: IpcMainInvokeEvent, sessionId: string) => {
       if (typeof sessionId !== 'string' || !sessionId) return null
-      const target =
-        typeof outputPath === 'string' && outputPath
-          ? outputPath
-          : path.join(
-              app.getPath('downloads'),
-              defaultExportFileName(getSession(sessionId)?.title, sessionId)
-            )
+      // The renderer may NOT choose an arbitrary destination: the host always
+      // exports to a Main-owned safe directory (Downloads) with a sanitized
+      // filename, then reveals it in the Finder.
+      const target = path.join(
+        app.getPath('downloads'),
+        defaultExportFileName(getSession(sessionId)?.title, sessionId)
+      )
       const saved = await exportHtml(sessionId, target)
       if (saved) shell.showItemInFolder(saved)
       return saved
@@ -736,8 +724,19 @@ export function registerIpc() {
   ipcMain.handle(
     IPC_CHANNELS.FS_SET_ROOT,
     async (_event: IpcMainInvokeEvent, root: string) => {
+      // A workspace root must be a real, existing directory. The renderer can
+      // only ADD a root it already holds (a user-selected folder from the
+      // native dialog, or a persisted recent workspace) — it never grants
+      // itself arbitrary filesystem authority. Reject non-directories / junk.
       if (typeof root !== 'string' || !root.trim()) return false
-      fsGuard.addRoot(root)
+      const resolved = path.resolve(root)
+      try {
+        const st = await (await import('node:fs/promises')).stat(resolved)
+        if (!st.isDirectory()) return false
+      } catch {
+        return false
+      }
+      fsGuard.addRoot(resolved)
       return true
     }
   )

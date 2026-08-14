@@ -71,10 +71,32 @@ export interface SubagentSnapshot {
   sessionFile?: string
   lastUpdate: number
   parentToolCallId?: string
-  /** Aggregated progress, when the runtime supplied it. */
+  /** Aggregated progress, when the runtime supplied it (nested, verbatim). */
+  progress?: SubagentTelemetry
+}
+
+/**
+ * Observability telemetry OMP exposes on `AgentProgress` / `SingleResult`. The
+ * GUI preserves these fields rather than throwing them away at the wire edge —
+ * future Agent Hub rows render model / duration / tokens / cost / context /
+ * retry / intent / current tool from them. All optional, all verbatim shapes.
+ */
+export interface SubagentTelemetry {
+  resolvedModel?: string
+  resolvedModelIsFallback?: boolean
+  modelRole?: string
+  durationMs?: number
+  requests?: number
+  tokens?: number
+  cost?: number
+  contextTokens?: number
+  contextWindow?: number
+  retryState?: { attempt: number; maxAttempts: number; delayMs: number; errorMessage: string; startedAtMs: number }
+  retryFailure?: { attempt: number; errorMessage: string }
   lastIntent?: string
   currentTool?: string
   toolCount?: number
+  recentTools?: Array<{ tool: string; args: string; endMs: number }>
 }
 
 /** Result of an incremental `get_subagent_messages` read. */
@@ -94,6 +116,30 @@ export interface SubagentTranscriptSelector {
   subagentId?: string
   sessionFile?: string
   fromByte?: number
+}
+
+/**
+ * A completed/failed/aborted subagent reconstructed from OMP's durable `task`
+ * tool result (not the live `get_subagents` roster). Lets a resumed session show
+ * its historical children even when the live roster is empty.
+ */
+export interface HistoricalAgentRecord {
+  id: string
+  agent: string
+  agentSource: SubagentAgentSource
+  status: SubagentStatus
+  task?: string
+  assignment?: string
+  description?: string
+  lastIntent?: string
+  resolvedModel?: string
+  resolvedModelIsFallback?: boolean
+  durationMs?: number
+  tokens?: number
+  requests?: number
+  contextTokens?: number
+  contextWindow?: number
+  resultSummary?: string
 }
 
 /**
@@ -204,10 +250,22 @@ export type SessionEvent =
       parentToolCallId?: string
       index?: number
       detached?: boolean
-      /** Aggregated progress facts (from `subagent_progress`). */
+      /** Aggregated progress facts (from `subagent_progress` / `AgentProgress`). */
       lastIntent?: string
       currentTool?: string
       toolCount?: number
+      resolvedModel?: string
+      resolvedModelIsFallback?: boolean
+      modelRole?: string
+      durationMs?: number
+      requests?: number
+      tokens?: number
+      cost?: number
+      contextTokens?: number
+      contextWindow?: number
+      retryState?: { attempt: number; maxAttempts: number; delayMs: number; errorMessage: string; startedAtMs: number }
+      retryFailure?: { attempt: number; errorMessage: string }
+      recentTools?: Array<{ tool: string; args: string; endMs: number }>
     }
   | { type: 'closed'; sessionId: string }
 
@@ -572,6 +630,8 @@ export interface AppSettings {
   machineSkills: boolean
   /** Desktop notification when an agent turn finishes while the window is unfocused. */
   notifications: boolean
+  /** Show a preview of the assistant response in turn-finished notifications. */
+  notificationPreviews: boolean
   /** Sidebar: sessions pinned to the top of the list. */
   pinnedSessionIds: string[]
   /** Sidebar: sessions folded away into the archived group. */
@@ -600,6 +660,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   permissionMode: 'ask',
   machineSkills: false,
   notifications: true,
+  notificationPreviews: false,
   pinnedSessionIds: [],
   archivedSessionIds: []
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyRpcResponse } from '../omp/OmpSession'
+import { classifyRpcResponse, parseUnknownCommandError } from '../omp/OmpSession'
 
 /** Parse helper: identity over `data.subagents` arrays for the roster tests. */
 function parseRoster(data: unknown): string[] | null {
@@ -56,5 +56,19 @@ describe('classifyRpcResponse — capability semantics', () => {
       parseRoster
     )
     expect(outcome.kind).toBe('unknown')
+  })
+})
+
+describe('parseUnknownCommandError (strict)', () => {
+  it('parses the official "Unknown command: X" format', () => {
+    expect(parseUnknownCommandError('Unknown command: get_subagent_messages')).toBe('get_subagent_messages')
+    expect(parseUnknownCommandError('Unknown command: negotiate_protocol')).toBe('negotiate_protocol')
+  })
+
+  it('rejects non-unknown-command errors (never guessed)', () => {
+    expect(parseUnknownCommandError('Internal runtime error')).toBeNull()
+    expect(parseUnknownCommandError('Unknown subagent or session file unavailable: x')).toBeNull()
+    expect(parseUnknownCommandError(undefined)).toBeNull()
+    expect(parseUnknownCommandError('Unknown command: with extra words')).toBeNull()
   })
 })

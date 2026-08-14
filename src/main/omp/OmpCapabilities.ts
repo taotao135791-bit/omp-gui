@@ -102,7 +102,16 @@ export function probeCliVersion(cli: CliInfo): Promise<string | null> {
   })
 }
 
-function featureMatrix(enabled: boolean): Omit<CliCapabilities, 'cliVersion' | 'protocol'> {
+/**
+ * Static feature flags flipped on once the CLI proves responsive. These are
+ * "generic runtime works" facts; the subagent capabilities are SEPARATE probed
+ * facts and must never be reset by this (a get_state refresh must not turn a
+ * proven `supported` subagent capability back to `unknown`).
+ */
+function featureMatrix(enabled: boolean): Omit<
+  CliCapabilities,
+  'cliVersion' | 'protocol' | 'subagents' | 'subagentProgress' | 'subagentMessages' | 'subagentControl'
+> {
   return {
     steering: enabled,
     followUp: enabled,
@@ -110,14 +119,19 @@ function featureMatrix(enabled: boolean): Omit<CliCapabilities, 'cliVersion' | '
     compaction: enabled,
     extensionUi: enabled,
     fork: enabled,
-    thinking: enabled,
-    // Subagent capabilities are NEVER guessed from the `current` profile —
-    // they flip only on a real RPC response (see the note* functions).
-    subagents: 'unknown',
-    subagentProgress: 'unknown',
-    subagentMessages: 'unknown',
-    subagentControl: 'unsupported'
+    thinking: enabled
   }
+}
+
+/** Subagent capabilities start unknown/unsupported and are only ever set by a real RPC outcome. */
+const SUBAGENT_CAPABILITY_DEFAULTS: Pick<
+  CliCapabilities,
+  'subagents' | 'subagentProgress' | 'subagentMessages' | 'subagentControl'
+> = {
+  subagents: 'unknown',
+  subagentProgress: 'unknown',
+  subagentMessages: 'unknown',
+  subagentControl: 'unsupported'
 }
 
 /** RPC facts declared by a settled handshake, mapped onto the capability shape. */
@@ -146,7 +160,8 @@ export async function getCapabilities(): Promise<CliCapabilities> {
     cliVersion,
     protocol: pendingHandshake?.protocolVersion ?? 1,
     ...(pendingHandshake ? handshakeFacts(pendingHandshake) : {}),
-    ...featureMatrix(cliVersion !== null)
+    ...featureMatrix(cliVersion !== null),
+    ...SUBAGENT_CAPABILITY_DEFAULTS
   }
   return capabilitiesCache
 }

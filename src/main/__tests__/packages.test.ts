@@ -18,7 +18,8 @@ import {
   canonicalSourceForCommand,
   parsePackages,
   listPackages,
-  setPackageEnabled
+  setPackageEnabled,
+  resourceEntries
 } from '../packages'
 
 let dir: string
@@ -252,5 +253,30 @@ describe('setPackageEnabled', () => {
   it('fails for unknown sources', () => {
     writeSettings({ packages: [] })
     expect(setPackageEnabled('npm:nope', false, dir).ok).toBe(false)
+  })
+})
+
+describe('resourceEntries (manifest path traversal)', () => {
+  it('keeps valid nested resource paths inside the package dir', () => {
+    const entries = resourceEntries(
+      '/pkg',
+      { pi: { extensions: ['src/ext', 'dist/index.js'] } },
+      'extensions',
+      'extensions'
+    )
+    expect(entries).toContain('/pkg/src/ext')
+    expect(entries).toContain('/pkg/dist/index.js')
+  })
+
+  it('rejects manifest resource paths that escape the package dir', () => {
+    const entries = resourceEntries(
+      '/pkg',
+      { pi: { extensions: ['../../secret', '../..', '/etc'] } },
+      'extensions',
+      'extensions'
+    )
+    // Every escaping path is dropped; only the convention remains.
+    expect(entries.some((e) => e.includes('secret') || e.startsWith('/etc'))).toBe(false)
+    expect(entries).toContain('/pkg/extensions')
   })
 })

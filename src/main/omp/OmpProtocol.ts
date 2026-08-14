@@ -403,7 +403,27 @@ export function normalizeRpcFrame(
           detached: p.detached === true ? true : undefined,
           lastIntent: asString(progress.lastIntent),
           currentTool: asString(progress.currentTool),
-          toolCount: asNumber(progress.toolCount)
+          toolCount: asNumber(progress.toolCount),
+          resolvedModel: asString(progress.resolvedModel),
+          resolvedModelIsFallback: progress.resolvedModelIsFallback === true ? true : undefined,
+          modelRole: asString(progress.modelRole),
+          durationMs: asNumber(progress.durationMs),
+          requests: asNumber(progress.requests),
+          tokens: asNumber(progress.tokens),
+          cost: asNumber(progress.cost),
+          contextTokens: asNumber(progress.contextTokens),
+          contextWindow: asNumber(progress.contextWindow),
+          retryState: asRecord(progress.retryState) as Extract<
+            SessionEvent,
+            { type: 'subagent' }
+          >['retryState'],
+          retryFailure: asRecord(progress.retryFailure) as Extract<
+            SessionEvent,
+            { type: 'subagent' }
+          >['retryFailure'],
+          recentTools: Array.isArray(progress.recentTools)
+            ? (progress.recentTools as Extract<SessionEvent, { type: 'subagent' }>['recentTools'])
+            : undefined
         }
       }
     }

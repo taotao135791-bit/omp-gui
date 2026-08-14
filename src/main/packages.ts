@@ -163,11 +163,17 @@ function safeReaddir(dir: string): string[] {
 }
 
 /** Declared resource entries: manifest `pi.*` paths (glob suffixes stripped) + conventions. */
-function resourceEntries(dir: string, manifest: PkgManifest | null, key: 'extensions' | 'skills' | 'prompts' | 'themes', convention: string): string[] {
+export function resourceEntries(dir: string, manifest: PkgManifest | null, key: 'extensions' | 'skills' | 'prompts' | 'themes', convention: string): string[] {
   const entries = new Set<string>()
+  const root = path.resolve(dir)
   const add = (entry: string) => {
     const cleaned = entry.split(/[*!]/)[0].replace(/\/+$/, '').replace(/^\.(\/|$)/, '')
-    if (cleaned) entries.add(path.normalize(path.join(dir, cleaned)))
+    if (!cleaned) return
+    const resolved = path.resolve(root, cleaned)
+    // Reject manifest resource paths that escape the package dir (path
+    // traversal via `../` — a package must not declare resources outside itself).
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) return
+    entries.add(path.normalize(resolved))
   }
   add(convention)
   for (const entry of manifest?.pi?.[key] ?? []) {

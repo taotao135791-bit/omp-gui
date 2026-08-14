@@ -21,7 +21,7 @@
  * Pure functions, no React, no Electron — unit-testable in isolation.
  */
 
-import type { SessionEvent, SubagentSnapshot, SubagentStatus } from '@shared/types'
+import type { SessionEvent, SubagentSnapshot, SubagentStatus, SessionRuntimeState, SubagentTelemetry, HistoricalAgentRecord } from '@shared/types'
 
 export type AgentStatus = SubagentStatus | 'unknown'
 
@@ -84,10 +84,10 @@ export function normalizeOmpAgentStatus(raw: unknown): AgentStatus {
   }
 }
 
-export interface AgentNode {
-  /** OMP's stable registry id (or ROOT_AGENT_ID for the main agent). */
+export interface AgentNode extends SubagentTelemetry {
+  /** OMP's stable registry id (children only — the root is a separate view). */
   id: string
-  /** Agent definition name (e.g. 'explore', 'review'); root is 'main'. */
+  /** Agent definition name (e.g. 'explore', 'review'). */
   agent: string
   agentSource: 'bundled' | 'user' | 'project'
   status: AgentStatus
@@ -104,9 +104,8 @@ export interface AgentNode {
   endedAt?: number
   /** Runtime-reported `lastUpdate` (ms epoch). */
   lastUpdate?: number
-  lastIntent?: string
-  currentTool?: string
-  toolCount?: number
+  /** Final summary/result of a durable (historical) agent. */
+  resultSummary?: string
 }
 
 export interface TrajectoryEntry {
@@ -137,6 +136,10 @@ export interface ExecutionProjection {
   currentTurnId?: string
   /** Monotonic per-session turn counter — the source of stable turn ids. */
   turnCounter: number
+  /** The session's runtime state (working/idle/waiting_for_user/…). */
+  sessionStatus: SessionRuntimeState
+  /** Count of pending interactive dialogs (drives the root "waiting" status). */
+  pendingUi: number
 }
 
 export const ROOT_AGENT_ID = 'main'
@@ -147,7 +150,9 @@ export function emptyProjection(_sessionId?: string): ExecutionProjection {
     rootAgentId: ROOT_AGENT_ID,
     turns: {},
     turnOrder: [],
-    turnCounter: 0
+    turnCounter: 0,
+    sessionStatus: 'idle',
+    pendingUi: 0
   }
 }
 
@@ -172,18 +177,31 @@ export function foldExecutionEvent(
 ): ExecutionProjection {
   switch (event.type) {
     case 'status': {
-      if (event.status === 'working') return startTurn(state, now)
-      if (event.status === 'idle' && event.isTerminal !== false && state.currentTurnId) {
-        return endTurn(state, now, 'completed')
+      // Track the session's runtime state for the root-agent derivation, THEN
+      // handle turn boundaries. A turn boundary never mutates agent status.
+      const next = { ...state, sessionStatus: event.status }
+      if (event.status === 'working') return startTurn(next, now)
+      if (event.status === 'idle' && event.isTerminal !== false && next.currentTurnId) {
+        return endTurn(next, now, 'completed')
       }
-      return state
+      return next
     }
 
     case 'error': {
-      // A non-recoverable error ends the current turn (mirrors OmpSession).
-      if (event.recoverable === true || !state.currentTurnId) return state
-      return endTurn(state, now, 'failed')
+      if (event.recoverable === true) return state
+      const failed = { ...state, sessionStatus: 'failed' as SessionRuntimeState }
+      if (!state.currentTurnId) return failed
+      return endTurn(failed, now, 'failed')
     }
+
+    case 'ui_request':
+      return { ...state, pendingUi: state.pendingUi + 1 }
+
+    case 'ui_cancel':
+      return { ...state, pendingUi: Math.max(0, state.pendingUi - 1) }
+
+    case 'closed':
+      return { ...state, sessionStatus: 'closed' }
 
     case 'tool_call': {
       const turn = state.currentTurnId ? state.turns[state.currentTurnId] : undefined
@@ -330,6 +348,47 @@ function endTurn(
   }
 }
 
+/** Telemetry keys preserved from OMP's AgentProgress / SingleResult. */
+const TELEMETRY_KEYS: (keyof SubagentTelemetry)[] = [
+  'resolvedModel',
+  'resolvedModelIsFallback',
+  'modelRole',
+  'durationMs',
+  'requests',
+  'tokens',
+  'cost',
+  'contextTokens',
+  'contextWindow',
+  'retryState',
+  'retryFailure',
+  'lastIntent',
+  'currentTool',
+  'toolCount',
+  'recentTools'
+]
+
+function pickTelemetry(source: Record<string, unknown>): SubagentTelemetry {
+  const out: Record<string, unknown> = {}
+  for (const key of TELEMETRY_KEYS) {
+    const value = source[key]
+    if (value !== undefined) out[key] = value
+  }
+  return out as SubagentTelemetry
+}
+
+/**
+ * Sparse-safe merge: an omitted / undefined incoming field preserves the
+ * existing value; only explicit values overwrite. This is the "missing ≠ clear"
+ * rule — a sparse roster snapshot must not erase live progress telemetry.
+ */
+function mergeDefinedFields(existing: AgentNode | undefined, incoming: AgentNode): AgentNode {
+  const out: AgentNode = { ...(existing ?? ({} as AgentNode)) }
+  for (const [key, value] of Object.entries(incoming)) {
+    if (value !== undefined) (out as unknown as Record<string, unknown>)[key] = value
+  }
+  return out
+}
+
 function toAgentNode(event: Extract<SessionEvent, { type: 'subagent' }>, now: number): AgentNode {
   return {
     id: event.id,
@@ -343,9 +402,7 @@ function toAgentNode(event: Extract<SessionEvent, { type: 'subagent' }>, now: nu
     parentToolCallId: event.parentToolCallId,
     index: event.index,
     lastUpdate: now,
-    lastIntent: event.lastIntent,
-    currentTool: event.currentTool,
-    toolCount: event.toolCount
+    ...pickTelemetry(event as unknown as Record<string, unknown>)
   }
 }
 
@@ -355,9 +412,11 @@ function upsertAgent(
   now: number
 ): ExecutionProjection {
   const existing = state.agents[incoming.id]
-  const startedAt = existing?.startedAt ?? now
-  const endedAt = isTerminalAgent(incoming.status) ? existing?.endedAt ?? now : existing?.endedAt
-  const node: AgentNode = { ...existing, ...incoming, startedAt, endedAt }
+  const startedAt = existing?.startedAt ?? incoming.startedAt ?? now
+  const endedAt = isTerminalAgent(incoming.status)
+    ? existing?.endedAt ?? incoming.endedAt ?? now
+    : existing?.endedAt ?? incoming.endedAt
+  const node = mergeDefinedFields(existing, { ...incoming, startedAt, endedAt })
   return {
     ...state,
     agents: { ...state.agents, [incoming.id]: node }
@@ -395,31 +454,88 @@ function snapshotToAgentNode(s: SubagentSnapshot, now: number): AgentNode {
     parentToolCallId: s.parentToolCallId,
     index: s.index,
     lastUpdate: s.lastUpdate,
-    lastIntent: s.lastIntent,
-    currentTool: s.currentTool,
-    toolCount: s.toolCount,
-    startedAt: now
+    startedAt: now,
+    ...pickTelemetry((s.progress ?? {}) as Record<string, unknown>)
+  }
+}
+
+/**
+ * Upsert durable historical agents (reconstructed from OMP `task` results)
+ * through the SAME `upsertAgent` reducer. Live roster/events override history
+ * for CURRENT status field-wise, while history supplies the completed/failed/
+ * aborted children that the live `get_subagents` roster no longer reports.
+ */
+export function applyHistoricalAgents(
+  state: ExecutionProjection,
+  records: readonly HistoricalAgentRecord[],
+  now = Date.now()
+): ExecutionProjection {
+  let next = state
+  for (const r of records) {
+    next = upsertAgent(next, historicalToAgentNode(r, now), now)
+  }
+  return next
+}
+
+function historicalToAgentNode(r: HistoricalAgentRecord, now: number): AgentNode {
+  return {
+    id: r.id,
+    agent: r.agent,
+    agentSource: r.agentSource,
+    status: normalizeOmpAgentStatus(r.status),
+    task: r.task,
+    assignment: r.assignment,
+    description: r.description,
+    lastIntent: r.lastIntent,
+    resolvedModel: r.resolvedModel,
+    resolvedModelIsFallback: r.resolvedModelIsFallback,
+    durationMs: r.durationMs,
+    tokens: r.tokens,
+    requests: r.requests,
+    contextTokens: r.contextTokens,
+    contextWindow: r.contextWindow,
+    resultSummary: r.resultSummary,
+    startedAt: now,
+    endedAt: now
   }
 }
 
 // ------------------------------------------------------------------ selectors
 
-/** The synthetic root agent (the main session executor) with a DERIVED status. */
-export function rootAgent(projection: ExecutionProjection): AgentNode {
+/**
+ * The root agent is the LIVING SESSION, not a one-shot child task. Its status is
+ * derived from the session runtime state + turn + interaction state — never
+ * `completed`/`failed`/`aborted` (those are child task statuses).
+ */
+export type RootAgentStatus = 'active' | 'idle' | 'waiting' | 'error' | 'disconnected'
+
+export interface RootAgentView {
+  id: string
+  agent: string
+  status: RootAgentStatus
+}
+
+export function deriveRootAgentStatus(projection: ExecutionProjection): RootAgentStatus {
+  if (projection.sessionStatus === 'closed') return 'disconnected'
+  if (projection.sessionStatus === 'failed') return 'error'
+  if (projection.pendingUi > 0) return 'waiting'
+  if (projection.currentTurnId) return 'active'
+  return 'idle'
+}
+
+export function rootView(projection: ExecutionProjection): RootAgentView {
   return {
     id: projection.rootAgentId,
     agent: 'main',
-    agentSource: 'bundled',
-    status: projection.currentTurnId ? 'running' : 'completed'
+    status: deriveRootAgentStatus(projection)
   }
 }
 
-/** Agents ordered root-first then by spawn index (flat roster — no guessed tree). */
+/** Child subagents ordered by spawn index (flat roster — no guessed tree). */
 export function orderedAgents(projection: ExecutionProjection): AgentNode[] {
-  const children = Object.values(projection.agents).sort(
+  return Object.values(projection.agents).sort(
     (a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id.localeCompare(b.id)
   )
-  return [rootAgent(projection), ...children]
 }
 
 export interface AgentHubSummary {

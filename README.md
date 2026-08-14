@@ -104,6 +104,44 @@ pnpm install
 pnpm dev
 ```
 
+## Security
+
+- **Electron boundary** — `contextIsolation: true`, `nodeIntegration: false`,
+  `sandbox: true`. The renderer talks to the host only through the typed
+  contextBridge API; there is no `invoke(command, args)` escape hatch.
+- **Workspace authorization** — filesystem reads go through `FsGuard`, a
+  realpath-canonicalized root allowlist. Roots come from user-selected folders
+  (native dialog) or persisted recent workspaces; the renderer can't grant
+  itself arbitrary filesystem authority.
+- **Symlink containment** — Git changes, session history and project-file reads
+  resolve real paths, so an in-workspace symlink pointing outside the workspace
+  is never read through (its target content is not exposed).
+- **Installer trust** — the auto-installer downloads from an HTTPS host
+  allowlist (`omp.sh` / GitHub), refuses redirects to untrusted hosts, and caps
+  the script size.
+- **Notifications** — completion notifications default to a generic body
+  ("Agent turn finished."). Response previews are opt-in and may appear in the
+  OS notification center / lock screen.
+- **Signing** — see below.
+
+## Signing & notarization
+
+Unsigned development builds are self-signed (ad-hoc) and may be quarantined by
+macOS Gatekeeper (`xattr -cr`). For a distributable release, `pnpm package`
+reads these environment variables; omit them to produce an unsigned build:
+
+```bash
+CSC_LINK=…                      # base64 .p12 or path to the Developer ID cert
+CSC_KEY_PASSWORD=…              # cert password
+APPLE_ID=…                      # Apple ID (for notarization)
+APPLE_APP_SPECIFIC_PASSWORD=…   # app-specific password (notarization)
+APPLE_TEAM_ID=…                 # team id (notarization)
+```
+
+`build/entitlements.mac.plist` supplies the hardened-runtime entitlements.
+`.github/workflows/release.yml` signs/notarizes only when the matching secrets
+are configured — certificates and passwords are never committed.
+
 ## Test & Build
 
 ```bash
@@ -162,5 +200,5 @@ omp-gui/
 - The GUI detects `omp` first and falls back to `pi` if omp is not installed.
 - If no CLI is found, the "New Chat" button is disabled and a setup wizard offers auto-install.
 - pi itself has no built-in tool approval prompts; coarse permission modes work by passing `--exclude-tools` to new sessions, and the "Ask" mode's per-call prompts come from the bundled `resources/omp-approval` extension, which hooks pi's `tool_call` event and asks through the GUI's dialog bridge.
-- Auto-update runs through electron-updater against GitHub Releases. The dmgs are unsigned (no Apple Developer ID), so macOS refuses in-app installs — when that happens Settings → About offers the download page as a one-click fallback.
-- Completion and approval-waiting notifications are standard macOS notifications; the first one triggers the system's permission prompt, which decides whether later ones arrive.
+- Auto-update runs through electron-updater against GitHub Releases. Unsigned (ad-hoc) builds are quarantined by macOS Gatekeeper, so Settings → About offers the download page as a one-click fallback; signed/notarized releases (when the signing env vars are configured) install without the quarantine workaround.
+- Completion and approval-waiting notifications are standard macOS notifications; the first one triggers the system's permission prompt, which decides whether later ones arrive. Completion notifications default to a generic body — response previews are opt-in (`notificationPreviews`) and may appear on the lock screen.

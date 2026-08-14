@@ -1,17 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import type { SessionEvent, SubagentSnapshot } from '@shared/types'
+import type { SessionEvent, SubagentSnapshot, HistoricalAgentRecord } from '@shared/types'
 import {
   emptyProjection,
   foldExecutionEvent,
   applyAgentRoster,
+  applyHistoricalAgents,
   foldUserSteer,
   normalizeOmpAgentStatus,
   classifyToolCall,
   orderedAgents,
+  rootView,
+  deriveRootAgentStatus,
   agentHubSummary,
   currentTurn,
-  sessionToolTotals,
-  ROOT_AGENT_ID
+  sessionToolTotals
 } from './execution'
 
 function subagent(
@@ -92,13 +94,13 @@ describe('multi-turn execution projection', () => {
 })
 
 describe('agent graph (flat roster)', () => {
-  it('orders root first then children by index', () => {
+  it('orders children by index (root is a separate view)', () => {
     let p = emptyProjection(S)
     p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
     p = foldExecutionEvent(p, subagent(S, { id: 'b', agent: 'review', index: 2 }), 1)
     p = foldExecutionEvent(p, subagent(S, { id: 'a', agent: 'explore', index: 1 }), 1)
     const ordered = orderedAgents(p)
-    expect(ordered.map((n) => n.id)).toEqual([ROOT_AGENT_ID, 'a', 'b'])
+    expect(ordered.map((n) => n.id)).toEqual(['a', 'b'])
   })
 
   it('handles out-of-order completion', () => {
@@ -165,5 +167,99 @@ describe('steer', () => {
     p = foldUserSteer(p, 'Focus only on runtime layer')
     expect(p.turnOrder).toEqual(['turn-1'])
     expect(currentTurn(p)?.trajectory.some((e) => e.kind === 'steer')).toBe(true)
+  })
+})
+
+describe('root agent lifecycle (session, not a child task)', () => {
+  it('derives idle → active → idle across a turn', () => {
+    let p = emptyProjection(S)
+    expect(deriveRootAgentStatus(p)).toBe('idle')
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
+    expect(deriveRootAgentStatus(p)).toBe('active')
+    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 1)
+    expect(deriveRootAgentStatus(p)).toBe('idle')
+  })
+
+  it('derives waiting when a dialog is pending', () => {
+    let p = emptyProjection(S)
+    p = foldExecutionEvent(p, { type: 'ui_request', sessionId: S, id: 'u1', method: 'confirm', title: 'Allow?' }, 0)
+    expect(deriveRootAgentStatus(p)).toBe('waiting')
+    expect(rootView(p).status).toBe('waiting')
+  })
+
+  it('derives disconnected on closed and never uses completed/failed/aborted', () => {
+    let p = emptyProjection(S)
+    p = foldExecutionEvent(p, { type: 'closed', sessionId: S }, 0)
+    expect(deriveRootAgentStatus(p)).toBe('disconnected')
+  })
+})
+
+describe('agent telemetry + sparse merge', () => {
+  it('preserves resolvedModel/tokens/cost when a later sparse event only sets status', () => {
+    let p = emptyProjection(S)
+    p = foldExecutionEvent(
+      p,
+      subagent(S, { id: 'x', status: 'running', resolvedModel: 'claude/x', tokens: 42000, cost: 0.05 }),
+      1
+    )
+    p = foldExecutionEvent(p, subagent(S, { id: 'x', status: 'completed' }), 2)
+    expect(p.agents.x.status).toBe('completed')
+    expect(p.agents.x.resolvedModel).toBe('claude/x')
+    expect(p.agents.x.tokens).toBe(42000)
+    expect(p.agents.x.cost).toBe(0.05)
+  })
+
+  it('a sparse roster snapshot does not erase live telemetry', () => {
+    let p = emptyProjection(S)
+    p = foldExecutionEvent(p, subagent(S, { id: 'x', status: 'running', resolvedModel: 'claude/x', durationMs: 5000 }), 1)
+    const snapshot: SubagentSnapshot = {
+      id: 'x',
+      index: 0,
+      agent: 'explore',
+      agentSource: 'bundled',
+      status: 'running',
+      lastUpdate: 2
+    }
+    p = applyAgentRoster(p, [snapshot], 2)
+    expect(p.agents.x.resolvedModel).toBe('claude/x')
+    expect(p.agents.x.durationMs).toBe(5000)
+    expect(p.agents.x.status).toBe('running')
+  })
+})
+
+describe('durable historical agents', () => {
+  it('reconstructs a completed child that the live roster no longer reports', () => {
+    let p = emptyProjection(S)
+    const record: HistoricalAgentRecord = {
+      id: 'hist-1',
+      agent: 'explore',
+      agentSource: 'bundled',
+      status: 'completed',
+      resolvedModel: 'openai/gpt-a',
+      durationMs: 12000,
+      tokens: 9000,
+      resultSummary: 'Done'
+    }
+    p = applyHistoricalAgents(p, [record], 1)
+    expect(p.agents['hist-1'].status).toBe('completed')
+    expect(p.agents['hist-1'].resolvedModel).toBe('openai/gpt-a')
+    expect(p.agents['hist-1'].durationMs).toBe(12000)
+  })
+
+  it('live roster/events override history for status but keep historical telemetry', () => {
+    let p = emptyProjection(S)
+    p = applyHistoricalAgents(
+      p,
+      [{ id: 'a', agent: 'x', agentSource: 'bundled', status: 'completed', tokens: 100 }],
+      1
+    )
+    // A live snapshot says the agent is now running again (revived) without tokens.
+    p = applyAgentRoster(
+      p,
+      [{ id: 'a', index: 0, agent: 'x', agentSource: 'bundled', status: 'running', lastUpdate: 2 }],
+      2
+    )
+    expect(p.agents.a.status).toBe('running') // live wins for status
+    expect(p.agents.a.tokens).toBe(100) // historical telemetry preserved
   })
 })

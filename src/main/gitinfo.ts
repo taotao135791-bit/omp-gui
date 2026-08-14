@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync, lstatSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { GitFileChange, GitInfo } from '../shared/types'
@@ -122,7 +122,7 @@ export async function getGitInfo(projectDir: string): Promise<GitInfo | null> {
     const counts = numstat.get(entry.path)
     // Untracked files have no numstat row — count their lines for the +N badge.
     const untrackedAdds =
-      entry.status === 'untracked' ? countFileLines(path.join(projectDir, entry.path)) : null
+      entry.status === 'untracked' ? countFileLines(projectDir, entry.path) : null
     files.push({
       path: entry.path,
       status: entry.status,
@@ -146,10 +146,40 @@ export async function getGitInfo(projectDir: string): Promise<GitInfo | null> {
   return { branch, files, totalAdditions, totalDeletions }
 }
 
-/** Line count for an untracked file's +N badge; null for unreadable/binary/huge files. */
-function countFileLines(abs: string): number | null {
+/** Real path of a file only if it stays inside the project (no symlink escape). */
+function safeReadablePath(projectDir: string, relPath: string): string | null {
+  const rootReal = safeReal(projectDir)
+  if (!rootReal) return null
+  const abs = path.resolve(projectDir, relPath)
+  const real = safeReal(abs)
+  if (!real) return null
+  if (real !== rootReal && !real.startsWith(rootReal + path.sep)) return null
+  return real
+}
+
+function safeReal(p: string): string | null {
   try {
-    const buf = readFileSync(abs)
+    return realpathSync(p)
+  } catch {
+    return null
+  }
+}
+
+/** True when `relPath` is a symlink (for the "symlink → target" presentation). */
+function isSymlink(projectDir: string, relPath: string): boolean {
+  try {
+    return lstatSync(path.resolve(projectDir, relPath)).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/** Line count for an untracked file's +N badge; null for unreadable/binary/huge/escaping files. */
+function countFileLines(projectDir: string, relPath: string): number | null {
+  const safe = safeReadablePath(projectDir, relPath)
+  if (!safe) return null
+  try {
+    const buf = readFileSync(safe)
     if (buf.length > 2 * 1024 * 1024) return null
     if (buf.includes(0)) return null // binary
     let n = 0
@@ -182,7 +212,7 @@ export async function getFileDiff(projectDir: string, filePath: string): Promise
   const status = await git(projectDir, ['status', '--porcelain', '-z', '--', rel])
   let diff: string
   if (status.startsWith('??')) {
-    diff = synthesizeNewFileDiff(abs, rel)
+    diff = synthesizeNewFileDiff(projectDir, rel)
   } else {
     const head = await hasHead(projectDir)
     diff = head
@@ -199,10 +229,33 @@ export async function getFileDiff(projectDir: string, filePath: string): Promise
 }
 
 /** Fake a unified new-file diff for an untracked file (first 400 lines). */
-function synthesizeNewFileDiff(abs: string, rel: string): string {
+function synthesizeNewFileDiff(projectDir: string, rel: string): string {
+  // A symlink whose target escapes the workspace must never be read through.
+  // Show the symlink relationship instead of a synthetic text diff of the
+  // (out-of-workspace) target.
+  if (isSymlink(projectDir, rel)) {
+    const target = safeReal(path.resolve(projectDir, rel))
+    const targetText =
+      target && (target === safeReal(projectDir) || target.startsWith((safeReal(projectDir) ?? '') + path.sep))
+        ? target
+        : 'outside workspace'
+    return [
+      `diff --git a/${rel} b/${rel}`,
+      'new file mode 120000',
+      '--- /dev/null',
+      `+++ b/${rel}`,
+      `+symlink → ${targetText}`
+    ].join('\n')
+  }
+
+  const safe = safeReadablePath(projectDir, rel)
+  if (!safe) {
+    return `diff --git a/${rel} b/${rel}\nnew file mode 100644\n--- /dev/null\n+++ b/${rel}\n+(unreadable file)\n`
+  }
+
   let lines: string[]
   try {
-    lines = readFileSync(abs, 'utf-8').split('\n')
+    lines = readFileSync(safe, 'utf-8').split('\n')
   } catch {
     lines = []
   }

@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
-import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer } from '../lib/execution'
+import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer, applyHistoricalAgents } from '../lib/execution'
 
 export interface MessageLike {
   id: string
@@ -136,6 +136,8 @@ interface AppState {
   setCurrentSessionId: (id: string | null) => void
   /** Hydrate the subagent roster for a session from `get_subagents` (live merge). */
   hydrateSubagents: (sessionId: string) => Promise<void>
+  /** Fold durable historical agents (reconstructed on resume) into the projection. */
+  applyHistoricalAgents: (sessionId: string, records: HistoricalAgentRecord[]) => void
   /** Record a steer interaction inside the ACTIVE turn's trajectory. */
   recordSteer: (sessionId: string, text: string) => void
   addMessage: (sessionId: string, message: MessageLike) => void
@@ -372,6 +374,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => {
       const current = state.executions[sessionId] ?? emptyProjection(sessionId)
       const next = applyAgentRoster(current, roster)
+      if (next === current) return state
+      return { executions: { ...state.executions, [sessionId]: next } }
+    })
+  },
+  applyHistoricalAgents: (sessionId, records) => {
+    if (records.length === 0) return
+    set((state) => {
+      const current = state.executions[sessionId] ?? emptyProjection(sessionId)
+      const next = applyHistoricalAgents(current, records)
       if (next === current) return state
       return { executions: { ...state.executions, [sessionId]: next } }
     })

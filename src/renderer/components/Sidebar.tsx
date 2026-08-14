@@ -150,7 +150,7 @@ export default function Sidebar() {
         console.error('Failed to resume session:', info.filePath)
         return
       }
-      const { session, messages: restored } = result
+      const { session, messages: restored, historicalAgents } = result
       // The main process titles a resumed session after the project dir;
       // prefer the richer title from the history entry when there is one.
       const projectName = project.split('/').filter(Boolean).pop()
@@ -160,6 +160,9 @@ export default function Sidebar() {
           : session.title
       addSession({ ...session, title })
       setMessages(session.id, restored)
+      // Fold durable historical agents (completed/failed/aborted) into the
+      // projection — live roster is empty for these.
+      useAppStore.getState().applyHistoricalAgents(session.id, historicalAgents ?? [])
       setCurrentSessionId(session.id)
       navigate('/')
     } finally {

@@ -194,6 +194,62 @@ data layer for all of it is in place and tested.
    the renderer hydrates the roster once via `getSubagents()`, no discarded
    duplicate request.
 
+## Stage 5 — Final runtime truth hardening (this round)
+
+1. **id-less Unknown Command correlation** — pending requests carry their command
+   type; an id-less `Unknown command: X` response is correlated ONLY to a UNIQUE
+   pending request of that command (never guessed across multiple, never from a
+   non-"Unknown command" error). `parseUnknownCommandError` is a strict parser.
+2. **Capability preservation** — `featureMatrix` no longer owns subagent
+   capability state, so a `get_state` refresh never resets a proven
+   `supported`/`unsupported` back to `unknown`. Subagent capabilities flip only
+   on a real RPC outcome.
+3. **Branch-aware session replay** — `reconstructSessionMetadata` now walks the
+   ACTIVE path (leaf → root via `parentId`, cycle-protected), mirroring OMP's
+   `buildSessionContext`, so a rollback/fork never leaks abandoned-branch
+   model/thinking/steer into the active transcript.
+4. **Root lifecycle** — the main agent is a living session with a derived
+   `RootAgentStatus` (`active`/`idle`/`waiting`/`error`/`disconnected`), never a
+   child `completed`/`failed`/`aborted`.
+5. **Agent telemetry + sparse merge** — `AgentNode` preserves OMP's
+   `resolvedModel`/`durationMs`/`tokens`/`cost`/`contextTokens`/`contextWindow`/
+   `retryState`/`retryFailure`/`recentTools`/`currentTool`/`lastIntent`; merges
+   use `mergeDefinedFields` so a missing field never erases confirmed truth.
+6. **Durable historical agents** — `reconstructHistoricalAgents` rebuilds
+   completed/failed/aborted children from the active path's `task` tool results
+   (`details.results`), merged through the SAME `upsertAgent` reducer. Running
+   state is never claimed from durable data.
+
+## Stage 6 — Repository hardening (this round)
+
+P0 runtime truth (id-less Unknown Command correlation, get_state capability
+preservation, branch-aware session replay) was already in place and is retained.
+This round closed the remaining filesystem / IPC / installer / release
+boundaries:
+
+- **Git symlink containment** — untracked-file line counts and synthetic diffs
+  resolve real paths; a workspace symlink pointing outside the workspace is never
+  read through (shown as `symlink → outside workspace`).
+- **Session history realpath** — `isSessionFilePath` verifies real-path
+  containment, so a `session.jsonl -> /outside/file` symlink is never resumed.
+- **Workspace root validation** — `FS_SET_ROOT` accepts only real, existing
+  directories; roots originate from the native folder dialog or persisted
+  recent workspaces (the renderer never grants itself arbitrary authority).
+- **Installer trust** — HTTPS-only host allowlist (`omp.sh` / GitHub), redirect
+  host validation, max script size.
+- **Image IPC validation** — `sanitizeImages` enforces count / MIME allowlist /
+  base64 shape / per-image and total decoded-byte caps (in a pure
+  `imageValidation` module).
+- **Package manifest traversal** — manifest `pi.*` resource paths that escape the
+  package dir are rejected.
+- **Notification privacy** — completion notifications default to a generic body;
+  response previews are opt-in (`notificationPreviews`).
+- **CI / release** — `.github/workflows/ci.yml` (typecheck + test + build +
+  gitleaks + optional `test:omp`), `.github/workflows/release.yml`
+  (signs/notarizes only when secrets are configured), `build/entitlements.mac.plist`
+  + `electron-builder.json` hardened-runtime entitlements, and README security /
+  signing documentation.
+
 ## License compliance
 
 See `THIRD_PARTY_NOTICES.md`. Every reused source file carries its own MIT

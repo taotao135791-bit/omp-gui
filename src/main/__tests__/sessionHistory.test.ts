@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -212,5 +212,19 @@ describe('isSessionFilePath / deleteSessionFile', () => {
     const ghost = path.join(agentDir, 'sessions', expectedDirName(projectDir), 'ghost.jsonl')
     expect(isSessionFilePath(ghost, agentDir)).toBe(true)
     expect(await deleteSessionFile(ghost, agentDir)).toBe(false)
+  })
+
+  it('refuses a session symlink whose target escapes the sessions root', () => {
+    const dir = sessionDirFor(projectDir, agentDir)
+    mkdirSync(dir, { recursive: true })
+    // A real file OUTSIDE the sessions root (in the project dir), linked into it.
+    const outside = path.join(projectDir, 'outside.jsonl')
+    writeFileSync(outside, '{"type":"session"}')
+    const link = path.join(dir, 'evil.jsonl')
+    symlinkSync(outside, link)
+    // The symlink resolves outside the sessions root → must be rejected.
+    expect(isSessionFilePath(link, agentDir)).toBe(false)
+    // The outside target is untouched.
+    expect(existsSync(outside)).toBe(true)
   })
 })

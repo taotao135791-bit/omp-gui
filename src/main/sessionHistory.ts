@@ -41,7 +41,10 @@ export function sessionDirFor(projectDir: string, agentDir: string = defaultPiAg
 
 /**
  * Guard for destructive/resume operations: the resolved path must be a
- * .jsonl file inside the sessions root (any project's directory within it).
+ * .jsonl file inside the sessions root (any project's directory within it),
+ * and — crucially — its REAL path must also land inside the sessions root, so a
+ * `session.jsonl -> /outside/file` symlink can never be read/resumed as a
+ * transcript (or deleted through to its outside target).
  */
 export function isSessionFilePath(
   filePath: string,
@@ -50,7 +53,19 @@ export function isSessionFilePath(
   if (typeof filePath !== 'string' || !filePath.endsWith('.jsonl')) return false
   const root = path.resolve(sessionsRoot(agentDir))
   const resolved = path.resolve(filePath)
-  return resolved.startsWith(root + path.sep)
+  // Fast lexical reject first.
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) return false
+  // Realpath containment: when the file exists, its real path must stay inside
+  // the sessions root — a `session.jsonl -> /outside/file` symlink is rejected.
+  // A missing/broken target has nothing to follow (no symlink-escape risk), so
+  // the lexical check above already suffices there.
+  try {
+    const rootReal = realpathSync(root)
+    const fileReal = realpathSync(resolved)
+    return fileReal === rootReal || fileReal.startsWith(rootReal + path.sep)
+  } catch {
+    return true
+  }
 }
 
 /** Read at most `bytes` from the start of a file. */
