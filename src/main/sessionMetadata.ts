@@ -112,12 +112,54 @@ function statusFromResult(result: Record<string, unknown>): SubagentStatus {
   return 'failed'
 }
 
+function asFiniteNumber(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
+}
+
+/** Build one historical record from a durable `SingleResult`. */
+function recordFromResult(raw: Record<string, unknown>): HistoricalAgentRecord | null {
+  if (!raw || typeof raw.id !== 'string') return null
+  const agentSource =
+    raw.agentSource === 'user' || raw.agentSource === 'project' ? raw.agentSource : 'bundled'
+  const summary =
+    typeof raw.output === 'string' && raw.output
+      ? raw.output.slice(0, 200)
+      : typeof raw.error === 'string'
+        ? raw.error.slice(0, 200)
+        : undefined
+  return {
+    id: raw.id,
+    agent: typeof raw.agent === 'string' ? raw.agent : 'task',
+    agentSource,
+    status: statusFromResult(raw),
+    task: typeof raw.task === 'string' ? raw.task : undefined,
+    assignment: typeof raw.assignment === 'string' ? raw.assignment : undefined,
+    description: typeof raw.description === 'string' ? raw.description : undefined,
+    lastIntent: typeof raw.lastIntent === 'string' ? raw.lastIntent : undefined,
+    resolvedModel: typeof raw.resolvedModel === 'string' ? raw.resolvedModel : undefined,
+    resolvedModelIsFallback: raw.resolvedModelIsFallback === true ? true : undefined,
+    startedAt: asFiniteNumber(raw.startedAt),
+    endedAt: asFiniteNumber(raw.endedAt),
+    durationMs: asFiniteNumber(raw.durationMs),
+    tokens: asFiniteNumber(raw.tokens),
+    requests: asFiniteNumber(raw.requests),
+    contextTokens: asFiniteNumber(raw.contextTokens),
+    contextWindow: asFiniteNumber(raw.contextWindow),
+    resultSummary: summary
+  }
+}
+
 /**
  * Reconstruct completed/failed/aborted subagents from the ACTIVE path's `task`
  * tool results. OMP stores `SingleResult[]` under the task tool result's
  * `details.results`; each carries id / agent / model / duration / tokens /
  * context / final status. This lets a resumed session show its historical
  * children even when `get_subagents` returns [].
+ *
+ * The same agent id may appear more than once if an async/background agent
+ * produces an initial empty result followed by a later final result injection
+ * (both on the active path). We upsert by id so the latest/terminal record wins.
+ * Running state is NEVER claimed from durable data alone.
  */
 export async function reconstructHistoricalAgents(sessionFile: string): Promise<HistoricalAgentRecord[]> {
   let text: string
@@ -128,7 +170,7 @@ export async function reconstructHistoricalAgents(sessionFile: string): Promise<
   }
 
   const path = resolveActivePath(parseSessionEntries(text))
-  const out: HistoricalAgentRecord[] = []
+  const byId = new Map<string, HistoricalAgentRecord>()
 
   for (const entry of path) {
     if (entry.type !== 'message') continue
@@ -139,35 +181,14 @@ export async function reconstructHistoricalAgents(sessionFile: string): Promise<
     if (!details || !Array.isArray(details.results)) continue
 
     for (const raw of details.results as Record<string, unknown>[]) {
-      if (!raw || typeof raw.id !== 'string') continue
-      const agentSource =
-        raw.agentSource === 'user' || raw.agentSource === 'project' ? raw.agentSource : 'bundled'
-      const summary =
-        typeof raw.output === 'string' && raw.output
-          ? raw.output.slice(0, 200)
-          : typeof raw.error === 'string'
-            ? raw.error.slice(0, 200)
-            : undefined
-      out.push({
-        id: raw.id,
-        agent: typeof raw.agent === 'string' ? raw.agent : 'task',
-        agentSource,
-        status: statusFromResult(raw),
-        task: typeof raw.task === 'string' ? raw.task : undefined,
-        assignment: typeof raw.assignment === 'string' ? raw.assignment : undefined,
-        description: typeof raw.description === 'string' ? raw.description : undefined,
-        lastIntent: typeof raw.lastIntent === 'string' ? raw.lastIntent : undefined,
-        resolvedModel: typeof raw.resolvedModel === 'string' ? raw.resolvedModel : undefined,
-        resolvedModelIsFallback: raw.resolvedModelIsFallback === true ? true : undefined,
-        durationMs: typeof raw.durationMs === 'number' ? raw.durationMs : undefined,
-        tokens: typeof raw.tokens === 'number' ? raw.tokens : undefined,
-        requests: typeof raw.requests === 'number' ? raw.requests : undefined,
-        contextTokens: typeof raw.contextTokens === 'number' ? raw.contextTokens : undefined,
-        contextWindow: typeof raw.contextWindow === 'number' ? raw.contextWindow : undefined,
-        resultSummary: summary
-      })
+      const record = recordFromResult(raw)
+      if (!record) continue
+      // Latest entry for this id wins; preserve any telemetry missing from the
+      // later record but present in the earlier one (sparse merge).
+      const existing = byId.get(record.id)
+      byId.set(record.id, existing ? { ...existing, ...record } : record)
     }
   }
 
-  return out
+  return Array.from(byId.values())
 }

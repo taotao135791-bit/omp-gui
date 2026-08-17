@@ -124,4 +124,144 @@ describe('reconstructHistoricalAgents', () => {
     ])
     expect(await reconstructHistoricalAgents(file)).toEqual([])
   })
+
+  it('keeps real timestamps and leaves unknown ones undefined', async () => {
+    const file = writeSession([
+      entry('session', null),
+      entry('message', 'e0', {
+        message: {
+          role: 'toolResult',
+          toolName: 'task',
+          details: {
+            results: [
+              {
+                id: 'a1',
+                agent: 'explore',
+                exitCode: 0,
+                durationMs: 18400,
+                startedAt: 1729159200000,
+                endedAt: 1729159218400
+              }
+            ]
+          }
+        }
+      })
+    ])
+    const agents = await reconstructHistoricalAgents(file)
+    expect(agents).toHaveLength(1)
+    expect(agents[0].durationMs).toBe(18400)
+    expect(agents[0].startedAt).toBe(1729159200000)
+    expect(agents[0].endedAt).toBe(1729159218400)
+  })
+
+  it('does not fabricate timestamps when only duration is present', async () => {
+    const file = writeSession([
+      entry('session', null),
+      entry('message', 'e0', {
+        message: {
+          role: 'toolResult',
+          toolName: 'task',
+          details: {
+            results: [{ id: 'a1', agent: 'explore', exitCode: 0, durationMs: 18400 }]
+          }
+        }
+      })
+    ])
+    const [agent] = await reconstructHistoricalAgents(file)
+    expect(agent.durationMs).toBe(18400)
+    expect(agent.startedAt).toBeUndefined()
+    expect(agent.endedAt).toBeUndefined()
+  })
+
+  it('merges later async final result over the same agent id', async () => {
+    const file = writeSession([
+      entry('session', null),
+      entry('message', 'e0', {
+        message: {
+          role: 'toolResult',
+          toolName: 'task',
+          details: { results: [{ id: 'bg1', agent: 'security', status: 'running', durationMs: 0, output: '' }] }
+        }
+      }),
+      entry('message', 'e1', {
+        message: {
+          role: 'toolResult',
+          toolName: 'task',
+          details: {
+            results: [
+              {
+                id: 'bg1',
+                agent: 'security',
+                exitCode: 0,
+                durationMs: 5000,
+                tokens: 1200,
+                output: 'No issues'
+              }
+            ]
+          }
+        }
+      })
+    ])
+    const [agent] = await reconstructHistoricalAgents(file)
+    expect(agent.id).toBe('bg1')
+    expect(agent.status).toBe('completed')
+    expect(agent.durationMs).toBe(5000)
+    expect(agent.tokens).toBe(1200)
+    expect(agent.resultSummary).toBe('No issues')
+  })
+
+  it('reconstructs multiple background agents independently', async () => {
+    const file = writeSession([
+      entry('session', null),
+      entry('message', 'e0', {
+        message: {
+          role: 'toolResult',
+          toolName: 'task',
+          details: {
+            results: [
+              { id: 'bg1', agent: 'security', exitCode: 0, durationMs: 1000 },
+              { id: 'bg2', agent: 'review', exitCode: 1, error: 'failed', durationMs: 2000 }
+            ]
+          }
+        }
+      })
+    ])
+    const agents = await reconstructHistoricalAgents(file)
+    expect(agents.map((a) => [a.id, a.status])).toEqual([
+      ['bg1', 'completed'],
+      ['bg2', 'failed']
+    ])
+  })
+
+  it('records aborted background agents', async () => {
+    const file = writeSession([
+      entry('session', null),
+      entry('message', 'e0', {
+        message: {
+          role: 'toolResult',
+          toolName: 'task',
+          details: { results: [{ id: 'bg1', agent: 'security', aborted: true, durationMs: 800 }] }
+        }
+      })
+    ])
+    const [agent] = await reconstructHistoricalAgents(file)
+    expect(agent.status).toBe('aborted')
+  })
+
+  it('does not claim running status when a spawned agent has no final result', async () => {
+    const file = writeSession([
+      entry('session', null),
+      entry('message', 'e0', {
+        message: {
+          role: 'toolResult',
+          toolName: 'task',
+          details: { results: [{ id: 'bg1', agent: 'security', status: 'running', durationMs: 0 }] }
+        }
+      })
+    ])
+    const agents = await reconstructHistoricalAgents(file)
+    // No terminal signal: status is derived as failed by statusFromResult,
+    // which is honest (we never show "running" from durable data alone).
+    expect(agents[0].status).not.toBe('running')
+  })
 })
