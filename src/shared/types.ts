@@ -122,6 +122,10 @@ export interface SubagentTranscriptSelector {
  * A completed/failed/aborted subagent reconstructed from OMP's durable `task`
  * tool result (not the live `get_subagents` roster). Lets a resumed session show
  * its historical children even when the live roster is empty.
+ *
+ * Timestamp rule: startedAt/endedAt are only populated when the durable runtime
+ * record supplies real timestamps. A record that only carries durationMs keeps
+ * startedAt/endedAt undefined — never fabricate Date.now() values.
  */
 export interface HistoricalAgentRecord {
   id: string
@@ -134,12 +138,34 @@ export interface HistoricalAgentRecord {
   lastIntent?: string
   resolvedModel?: string
   resolvedModelIsFallback?: boolean
+  /** Real start timestamp (epoch ms) when the runtime recorded one. */
+  startedAt?: number
+  /** Real end timestamp (epoch ms) when the runtime recorded one. */
+  endedAt?: number
   durationMs?: number
   tokens?: number
   requests?: number
   contextTokens?: number
   contextWindow?: number
   resultSummary?: string
+}
+
+/**
+ * A Main-owned filesystem capability. The renderer cannot mint one; it can only
+ * request activation of a workspace that originated from a trusted source.
+ */
+export interface WorkspaceGrant {
+  /** Stable grant id used by the renderer for workspace-sensitive IPC. */
+  id: string
+  /** Canonical real path of the workspace (symlinks resolved). This is the path
+   * passed to OMP/FsGuard/Git. */
+  realPath: string
+  /** Path shown in the UI (may be the original selected path before realpath). */
+  displayPath: string
+  /** How this grant was authorized. */
+  source: 'dialog' | 'recent-project' | 'session' | 'runtime'
+  /** Epoch ms when the grant was created. */
+  createdAt: number
 }
 
 /**

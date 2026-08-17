@@ -9,6 +9,7 @@ import ChangesPanel from './ChangesPanel'
 export default function RightPanel() {
   const {
     activeRightTab,
+    currentWorkspace,
     selectedFile,
     previewContent,
     setActiveRightTab,
@@ -18,8 +19,8 @@ export default function RightPanel() {
   const t = useT()
 
   useEffect(() => {
-    if (selectedFile && activeRightTab === 'preview') {
-      window.electronAPI.readFile(selectedFile).then((result) => {
+    if (selectedFile && currentWorkspace && activeRightTab === 'preview') {
+      window.electronAPI.readFile(currentWorkspace.id, selectedFile).then((result) => {
         setPreviewContent(
           result.ok
             ? result.content
@@ -27,7 +28,7 @@ export default function RightPanel() {
         )
       })
     }
-  }, [selectedFile, activeRightTab, setPreviewContent])
+  }, [selectedFile, currentWorkspace, activeRightTab, setPreviewContent])
 
   return (
     <aside className="flex w-72 shrink-0 flex-col border-l border-line bg-ink-900">

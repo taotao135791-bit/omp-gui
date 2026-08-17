@@ -33,7 +33,7 @@ export default function Sidebar() {
   const location = useLocation()
   const t = useT()
   const {
-    currentProject,
+    currentWorkspace,
     sessions,
     currentSessionId,
     cliAvailable,
@@ -48,7 +48,8 @@ export default function Sidebar() {
     uiRequests,
     historySessions,
     recentProjects,
-    setCurrentProject,
+    selectWorkspace,
+    activateRecentWorkspace,
     setCurrentSessionId,
     setSessions,
     setRightPanelOpen,
@@ -74,12 +75,12 @@ export default function Sidebar() {
   const [confirmDeleteSessionId, setConfirmDeleteSessionId] = useState<string | null>(null)
   const [deleteFailedPath, setDeleteFailedPath] = useState<string | null>(null)
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // One-time bootstrap of the most-recent project: only before the initial
-  // hydration completes. A user explicitly clearing the current project must
+  // One-time bootstrap of the most-recent workspace: only before the initial
+  // hydration completes. A user explicitly clearing the current workspace must
   // NOT be yanked back to projects[0]. This effect runs ONCE on mount (deps
   // are the stable store setters) — re-reading the persistence store on every
-  // `currentProject` change was the MRU race: a stale read could clobber the
-  // on-disk list with a single-entry list mid-hydration.
+  // `currentWorkspace` change was the MRU race: a stale read could clobber the
+  // on-disk MRU with a single-entry list mid-hydration.
   const hydratedRecent = useRef(false)
 
   useEffect(() => {
@@ -87,18 +88,17 @@ export default function Sidebar() {
       setRecentProjects(projects)
       if (hydratedRecent.current) return
       hydratedRecent.current = true
-      if (projects.length > 0 && !useAppStore.getState().currentProject) {
-        setCurrentProject(projects[0])
-        window.electronAPI.setFsRoot(projects[0])
+      if (projects.length > 0 && !useAppStore.getState().currentWorkspace) {
+        void activateRecentWorkspace(projects[0])
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setCurrentProject, setRecentProjects])
+  }, [activateRecentWorkspace, setRecentProjects])
 
-  // Load the persisted session history on startup and whenever the project changes
+  // Load the persisted session history on startup and whenever the workspace changes
   useEffect(() => {
-    void loadHistorySessions(currentProject)
-  }, [currentProject, loadHistorySessions])
+    void loadHistorySessions(currentWorkspace?.id ?? null)
+  }, [currentWorkspace, loadHistorySessions])
 
   const handleNewChat = async () => {
     const id = await createSessionForCurrentProject()
@@ -106,18 +106,13 @@ export default function Sidebar() {
   }
 
   const handleSelectProject = async () => {
-    const folder = await window.electronAPI.selectFolder()
-    if (folder) {
-      setCurrentProject(folder)
-      window.electronAPI.setFsRoot(folder)
-    }
+    await selectWorkspace()
   }
 
-  // Switching projects reloads the session history via the currentProject effect
+  // Switching workspaces reloads the session history via the currentWorkspace effect
   const handleSwitchProject = (path: string) => {
-    if (path === currentProject) return
-    setCurrentProject(path)
-    window.electronAPI.setFsRoot(path)
+    if (path === currentWorkspace?.displayPath) return
+    void activateRecentWorkspace(path)
   }
 
   const handleDeleteSession = (id: string) => {
@@ -127,24 +122,24 @@ export default function Sidebar() {
       setCurrentSessionId(null)
     }
     // The killed session's file may now appear in the on-disk history
-    void loadHistorySessions(currentProject)
+    void loadHistorySessions(currentWorkspace?.id ?? null)
   }
 
   const handleResumeHistory = async (info: HistorySessionInfo) => {
     if (resumingPath) return
-    // A history session belongs to a project. When none is selected, derive it
+    // A history session belongs to a workspace. When none is selected, derive it
     // from the session itself so clicking always opens the chat (never a
     // no-op that just stays on the home page).
-    const project = currentProject ?? info.cwd
-    if (!project) return
+    let grant = currentWorkspace
+    if (!grant) {
+      await activateRecentWorkspace(info.cwd)
+      grant = useAppStore.getState().currentWorkspace
+      if (!grant) return
+    }
     setResumingPath(info.filePath)
     setRestoreFailedPath(null)
     try {
-      if (!currentProject) {
-        setCurrentProject(project)
-        window.electronAPI.setFsRoot(project)
-      }
-      const result = await window.electronAPI.resumeSession(project, info.filePath)
+      const result = await window.electronAPI.resumeSession(grant.id, info.filePath)
       if (!result) {
         setRestoreFailedPath(info.filePath)
         console.error('Failed to resume session:', info.filePath)
@@ -153,7 +148,7 @@ export default function Sidebar() {
       const { session, messages: restored, historicalAgents } = result
       // The main process titles a resumed session after the project dir;
       // prefer the richer title from the history entry when there is one.
-      const projectName = project.split('/').filter(Boolean).pop()
+      const projectName = grant.displayPath.split('/').filter(Boolean).pop()
       const title =
         (!session.title || session.title === projectName) && info.title !== 'Untitled'
           ? info.title
@@ -225,10 +220,10 @@ export default function Sidebar() {
   // anything else lands in a bottom "untied to a project" group.
   const projectOrder = useMemo(() => {
     const order: string[] = []
-    if (currentProject) order.push(currentProject)
+    if (currentWorkspace) order.push(currentWorkspace.displayPath)
     for (const p of recentProjects) if (!order.includes(p)) order.push(p)
     return order
-  }, [currentProject, recentProjects])
+  }, [currentWorkspace, recentProjects])
 
   const sessionCwdSet = useMemo(() => {
     const set = new Set<string>()
@@ -495,10 +490,10 @@ export default function Sidebar() {
         <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
           {t('sidebar.project')}
         </div>
-        {currentProject ? (
+        {currentWorkspace ? (
           <div className={`${navRow(true)} cursor-default font-mono text-xs`}>
             <FolderOpen size={13} className="shrink-0 text-cream-faint" />
-            <span className="min-w-0 flex-1 truncate">{currentProject}</span>
+            <span className="min-w-0 flex-1 truncate">{currentWorkspace.displayPath}</span>
             <button
               onClick={handleSelectProject}
               title={t('sidebar.selectProject')}
@@ -522,7 +517,7 @@ export default function Sidebar() {
                   key={path}
                   onClick={() => handleSwitchProject(path)}
                   title={path}
-                  className={`${navRow(path === currentProject)} cursor-pointer`}
+                  className={`${navRow(path === currentWorkspace?.displayPath)} cursor-pointer`}
                 >
                   <FolderOpen size={13} className="shrink-0 text-cream-faint" />
                   <span className="truncate">{name}</span>

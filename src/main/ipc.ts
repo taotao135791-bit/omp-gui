@@ -1,4 +1,5 @@
 import { ipcMain, dialog, shell, app, BrowserWindow, IpcMainInvokeEvent } from 'electron'
+import fs from 'node:fs'
 import path from 'node:path'
 import { IPC_CHANNELS } from '../shared/constants'
 import {
@@ -18,7 +19,8 @@ import {
   SelectImageResult,
   LoginAnswer,
   LoginState,
-  SubagentTranscriptSelector
+  SubagentTranscriptSelector,
+  WorkspaceGrant
 } from '../shared/types'
 import {
   detectCli,
@@ -88,8 +90,10 @@ import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
 import { listOmpModelCatalog } from './omp/settings/OmpModelCatalog'
 import { sanitizeImages } from './imageValidation'
+import { WorkspaceGrantManager } from './workspaceGrant'
 
 const fsGuard = new FsGuard()
+const grantManager = new WorkspaceGrantManager({ fsGuard })
 
 /** Runtime-settings facade, rebuilt whenever the CLI detection is invalidated. */
 let runtimeSettings = new RuntimeSettings()
@@ -184,6 +188,14 @@ const DEFAULT_LEVELS: readonly DefaultThinkingLevel[] = DEFAULT_THINKING_LEVELS
 
 const PERMISSION_MODES: PermissionMode[] = ['full', 'no-bash', 'readonly', 'ask']
 
+/** Resolve a renderer-supplied grant id to a canonical realPath. */
+function requireGrant(id: unknown): { grant: WorkspaceGrant; realPath: string } | null {
+  if (typeof id !== 'string' || !id.trim()) return null
+  const grant = grantManager.get(id)
+  if (!grant) return null
+  return { grant, realPath: grant.realPath }
+}
+
 export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.OMP_DETECT, async (_event: IpcMainInvokeEvent, force?: boolean) => {
     if (force) {
@@ -209,14 +221,14 @@ export function registerIpc() {
     IPC_CHANNELS.OMP_CREATE_SESSION,
     async (
       _event: IpcMainInvokeEvent,
-      cwd: string,
+      grantId: string,
       overrides?: { modelSelector?: unknown; thinkingLevel?: unknown }
     ) => {
-      if (typeof cwd !== 'string' || !cwd.trim()) {
-        throw new Error('createSession requires a non-empty cwd')
+      const resolved = requireGrant(grantId)
+      if (!resolved) {
+        throw new Error('createSession requires a valid WorkspaceGrant id')
       }
-      const resolved = path.resolve(cwd)
-      fsGuard.addRoot(resolved)
+      const { realPath } = resolved
       // Next-session overrides: validated, spawn-arg scoped, one-shot.
       const modelSelector =
         typeof overrides?.modelSelector === 'string' &&
@@ -227,7 +239,7 @@ export function registerIpc() {
       const thinkingLevel = SESSION_LEVELS.includes(overrides?.thinkingLevel as SessionThinkingLevel)
         ? (overrides?.thinkingLevel as SessionThinkingLevel)
         : undefined
-      return createSession(resolved, broadcastSessionEvent, {
+      return createSession(realPath, broadcastSessionEvent, {
         ...(modelSelector ? { modelSelector } : {}),
         ...(thinkingLevel ? { thinkingLevel } : {})
       })
@@ -387,20 +399,20 @@ export function registerIpc() {
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_LIST_SESSION_HISTORY,
-    async (_event: IpcMainInvokeEvent, projectDir: string) => {
-      if (typeof projectDir !== 'string' || !projectDir.trim()) return []
-      return listSessionHistory(path.resolve(projectDir))
+    async (_event: IpcMainInvokeEvent, grantId: string) => {
+      const resolved = requireGrant(grantId)
+      if (!resolved) return []
+      return listSessionHistory(resolved.realPath)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_RESUME_SESSION,
-    async (_event: IpcMainInvokeEvent, projectDir: string, filePath: string) => {
-      if (typeof projectDir !== 'string' || !projectDir.trim()) return null
+    async (_event: IpcMainInvokeEvent, grantId: string, filePath: string) => {
+      const resolved = requireGrant(grantId)
+      if (!resolved) return null
       if (typeof filePath !== 'string' || !filePath.trim()) return null
-      const resolved = path.resolve(projectDir)
-      fsGuard.addRoot(resolved)
-      return resumeSession(resolved, broadcastSessionEvent, filePath)
+      return resumeSession(resolved.realPath, broadcastSessionEvent, filePath)
     }
   )
 
@@ -482,18 +494,20 @@ export function registerIpc() {
 
   ipcMain.handle(
     IPC_CHANNELS.GIT_INFO,
-    async (_event: IpcMainInvokeEvent, projectDir: string) => {
-      if (typeof projectDir !== 'string' || !projectDir.trim()) return null
-      return getGitInfo(projectDir)
+    async (_event: IpcMainInvokeEvent, grantId: string) => {
+      const resolved = requireGrant(grantId)
+      if (!resolved) return null
+      return getGitInfo(resolved.realPath)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.GIT_FILE_DIFF,
-    async (_event: IpcMainInvokeEvent, projectDir: string, filePath: string) => {
-      if (typeof projectDir !== 'string' || !projectDir.trim()) return null
+    async (_event: IpcMainInvokeEvent, grantId: string, filePath: string) => {
+      const resolved = requireGrant(grantId)
+      if (!resolved) return null
       if (typeof filePath !== 'string' || !filePath.trim()) return null
-      return getFileDiff(projectDir, filePath)
+      return getFileDiff(resolved.realPath, filePath)
     }
   )
 
@@ -721,53 +735,95 @@ export function registerIpc() {
     return success
   })
 
-  ipcMain.handle(
-    IPC_CHANNELS.FS_SET_ROOT,
-    async (_event: IpcMainInvokeEvent, root: string) => {
-      // A workspace root must be a real, existing directory. The renderer can
-      // only ADD a root it already holds (a user-selected folder from the
-      // native dialog, or a persisted recent workspace) — it never grants
-      // itself arbitrary filesystem authority. Reject non-directories / junk.
-      if (typeof root !== 'string' || !root.trim()) return false
-      const resolved = path.resolve(root)
-      try {
-        const st = await (await import('node:fs/promises')).stat(resolved)
-        if (!st.isDirectory()) return false
-      } catch {
-        return false
-      }
-      fsGuard.addRoot(resolved)
-      return true
-    }
-  )
-
-  ipcMain.handle(IPC_CHANNELS.FS_LIST_DIR, async (_event, dirPath: string) => {
-    if (!fsGuard.isAllowed(dirPath)) return []
-    const fs = await import('node:fs/promises')
-    try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true })
-      return entries.map((e) => ({
-        name: e.name,
-        isDirectory: e.isDirectory(),
-        path: path.join(dirPath, e.name)
-      }))
-    } catch {
-      return []
-    }
+  // Workspace authority: Main-owned grants. The renderer cannot pass an
+  // arbitrary path and add it to FsGuard. It can only ask Main to (1) show the
+  // native folder dialog, (2) re-authorize a persisted recent path, or (3)
+  // re-activate a grant it already holds.
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_SELECT, async (): Promise<WorkspaceGrant | null> => {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return grantManager.createGrant(result.filePaths[0], 'dialog')
   })
 
   ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_ACTIVATE_RECENT,
+    async (_event, displayPath: string): Promise<WorkspaceGrant | null> => {
+      if (typeof displayPath !== 'string' || !displayPath.trim()) return null
+      return grantManager.activateRecent(displayPath)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_ACTIVATE,
+    async (_event, grantId: string): Promise<WorkspaceGrant | null> => {
+      if (typeof grantId !== 'string' || !grantId.trim()) return null
+      const grant = grantManager.get(grantId)
+      if (!grant) return null
+      // Re-validate the real path still exists and is a directory.
+      try {
+        const st = await fs.promises.stat(grant.realPath)
+        if (!st.isDirectory()) {
+          grantManager.revoke(grantId)
+          return null
+        }
+      } catch {
+        grantManager.revoke(grantId)
+        return null
+      }
+      return grant
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_REVOKE, async (_event, grantId: string): Promise<boolean> => {
+    if (typeof grantId !== 'string' || !grantId.trim()) return false
+    return grantManager.revoke(grantId)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_LIST, async (): Promise<WorkspaceGrant[]> => {
+    return grantManager.list()
+  })
+
+  // Deprecated: renderer self-authorization of filesystem roots.
+  ipcMain.handle(IPC_CHANNELS.FS_SET_ROOT, async () => false)
+
+  ipcMain.handle(
+    IPC_CHANNELS.FS_LIST_DIR,
+    async (_event, grantId: string, relativePath?: string) => {
+      const resolved = requireGrant(grantId)
+      if (!resolved) return []
+      const dirPath = path.resolve(resolved.realPath, typeof relativePath === 'string' ? relativePath : '.')
+      if (!fsGuard.isAllowed(dirPath)) return []
+      const fsp = await import('node:fs/promises')
+      try {
+        const entries = await fsp.readdir(dirPath, { withFileTypes: true })
+        return entries.map((e) => ({
+          name: e.name,
+          isDirectory: e.isDirectory(),
+          path: path.join(typeof relativePath === 'string' ? relativePath : '', e.name).replace(/\\/g, '/')
+        }))
+      } catch {
+        return []
+      }
+    }
+  )
+
+  ipcMain.handle(
     IPC_CHANNELS.FS_LIST_PROJECT_FILES,
-    async (_event, projectDir: string): Promise<string[]> => {
-      if (typeof projectDir !== 'string' || !projectDir.trim()) return []
-      if (!fsGuard.isAllowed(projectDir)) return []
-      return listProjectFiles(path.resolve(projectDir))
+    async (_event, grantId: string): Promise<string[]> => {
+      const resolved = requireGrant(grantId)
+      if (!resolved) return []
+      return listProjectFiles(resolved.realPath)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.FS_READ_FILE,
-    async (_event, filePath: string): Promise<ReadFileResult> => {
+    async (_event, grantId: string, relativePath: string): Promise<ReadFileResult> => {
+      const resolved = requireGrant(grantId)
+      if (!resolved) {
+        return { ok: false, error: 'Access denied: invalid workspace grant.' }
+      }
+      const filePath = path.resolve(resolved.realPath, relativePath)
       if (!fsGuard.isAllowed(filePath)) {
         return { ok: false, error: 'Access denied: path is outside the allowed project folders.' }
       }

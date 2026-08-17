@@ -12,30 +12,30 @@ interface TreeNode {
 }
 
 export default function FileTree() {
-  const { currentProject, selectedFile, setSelectedFile, setActiveRightTab } = useAppStore()
+  const { currentWorkspace, selectedFile, setSelectedFile, setActiveRightTab } = useAppStore()
   const [tree, setTree] = useState<TreeNode[]>([])
   const t = useT()
 
   useEffect(() => {
-    if (!currentProject) {
+    if (!currentWorkspace) {
       setTree([])
       return
     }
-    loadDir(currentProject).then((children) => {
+    loadDir(currentWorkspace.id, '').then((children) => {
       setTree([
         {
-          name: currentProject.split('/').pop() || currentProject,
-          path: currentProject,
+          name: currentWorkspace.displayPath.split('/').pop() || currentWorkspace.displayPath,
+          path: '',
           isDirectory: true,
           children,
           expanded: true
         }
       ])
     })
-  }, [currentProject])
+  }, [currentWorkspace])
 
-  const loadDir = async (dirPath: string): Promise<TreeNode[]> => {
-    const entries = await window.electronAPI.listDir(dirPath)
+  const loadDir = async (grantId: string, relativePath: string): Promise<TreeNode[]> => {
+    const entries = await window.electronAPI.listDir(grantId, relativePath || undefined)
     return entries
       .filter((e) => !e.name.startsWith('.') && e.name !== 'node_modules')
       .sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1))
@@ -49,6 +49,7 @@ export default function FileTree() {
 
   const toggleNode = async (node: TreeNode, parentList: TreeNode[], setParentList: (list: TreeNode[]) => void) => {
     if (!node.isDirectory) {
+      if (!currentWorkspace) return
       setSelectedFile(node.path)
       setActiveRightTab('preview')
       return
@@ -60,7 +61,8 @@ export default function FileTree() {
       return
     }
 
-    const children = await loadDir(node.path)
+    if (!currentWorkspace) return
+    const children = await loadDir(currentWorkspace.id, node.path)
     const updated = parentList.map((n) => (n.path === node.path ? { ...n, expanded: true, children } : n))
     setParentList(updated)
   }
@@ -110,7 +112,7 @@ export default function FileTree() {
     )
   }
 
-  if (!currentProject) {
+  if (!currentWorkspace) {
     return (
       <div className="p-4 text-xs text-cream-faint">{t('panel.selectProject')}</div>
     )

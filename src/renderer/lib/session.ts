@@ -1,7 +1,7 @@
 import { useAppStore } from '../store'
 
 /**
- * Create a chat session for the current project, prompting for a folder
+ * Create a chat session for the current workspace, prompting for a folder
  * when none is selected. Returns the new session id, or null when the
  * user cancelled the folder picker.
  *
@@ -10,17 +10,20 @@ import { useAppStore } from '../store'
  * session and never touch the runtime default.
  */
 export async function createSessionForCurrentProject(): Promise<string | null> {
-  const { currentProject, setCurrentProject, addSession, consumeSessionOverrides } =
-    useAppStore.getState()
-  let project = currentProject
-  if (!project) {
-    project = await window.electronAPI.selectFolder()
-    if (!project) return null
-    setCurrentProject(project)
-    window.electronAPI.setFsRoot(project)
+  const {
+    currentWorkspace,
+    selectWorkspace,
+    addSession,
+    consumeSessionOverrides
+  } = useAppStore.getState()
+  let grant = currentWorkspace
+  if (!grant) {
+    await selectWorkspace()
+    grant = useAppStore.getState().currentWorkspace
+    if (!grant) return null
   }
   const overrides = consumeSessionOverrides()
-  const session = await window.electronAPI.createSession(project, overrides)
+  const session = await window.electronAPI.createSession(grant.id, overrides)
   addSession(session)
   return session.id
 }

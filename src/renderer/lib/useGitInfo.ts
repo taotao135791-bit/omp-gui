@@ -3,13 +3,13 @@ import { GitInfo } from '@shared/types'
 import { useAppStore } from '../store'
 
 /**
- * Working-tree change summary for the current project.
- * Refetches on: project/session switch, current session going working→idle,
+ * Working-tree change summary for the current workspace.
+ * Refetches on: workspace/session switch, current session going working→idle,
  * gitInfoVersion bumps (e.g. after a rollback) and manual refresh().
  * `undefined` = loading, `null` = not a git repository.
  */
 export function useGitInfo(): { info: GitInfo | null | undefined; refresh: () => void } {
-  const currentProject = useAppStore((s) => s.currentProject)
+  const currentWorkspace = useAppStore((s) => s.currentWorkspace)
   const currentSessionId = useAppStore((s) => s.currentSessionId)
   const isBusy = useAppStore((s) => (s.currentSessionId ? Boolean(s.busy[s.currentSessionId]) : false))
   const gitInfoVersion = useAppStore((s) => s.gitInfoVersion)
@@ -24,18 +24,18 @@ export function useGitInfo(): { info: GitInfo | null | undefined; refresh: () =>
   }, [isBusy])
 
   useEffect(() => {
-    if (!currentProject) {
+    if (!currentWorkspace) {
       setInfo(undefined)
       return
     }
     let cancelled = false
-    window.electronAPI.gitInfo(currentProject).then((result) => {
+    window.electronAPI.gitInfo(currentWorkspace.id).then((result) => {
       if (!cancelled) setInfo(result)
     })
     return () => {
       cancelled = true
     }
-  }, [currentProject, currentSessionId, gitInfoVersion, tick])
+  }, [currentWorkspace, currentSessionId, gitInfoVersion, tick])
 
   return { info, refresh: () => setTick((n) => n + 1) }
 }

@@ -34,7 +34,8 @@ import {
   SubagentSnapshot,
   SubagentMessagesResult,
   SubagentTranscriptSelector,
-  HistoricalAgentRecord
+  HistoricalAgentRecord,
+  WorkspaceGrant
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -42,9 +43,9 @@ export interface ElectronAPI {
   /** CLI version + RPC feature surface of the detected CLI. */
   getCapabilities: () => Promise<CliCapabilities>
   listSessions: () => Promise<Session[]>
-  /** Create a session; overrides are one-shot spawn args for this session only. */
+  /** Create a session under a Main-owned workspace grant. */
   createSession: (
-    cwd: string,
+    grantId: string,
     overrides?: { modelSelector?: string; thinkingLevel?: SessionThinkingLevel }
   ) => Promise<Session>
   sendMessage: (
@@ -58,11 +59,25 @@ export interface ElectronAPI {
   onSessionEvent: (callback: (event: SessionEvent) => void) => () => void
   installOmp: () => Promise<boolean>
   onInstallStatus: (callback: (status: InstallStatus) => void) => () => void
+  /** @deprecated Workspace authority is grant-based; this stub returns false. */
   setFsRoot: (root: string) => Promise<boolean>
-  listDir: (dirPath: string) => Promise<{ name: string; isDirectory: boolean; path: string }[]>
-  readFile: (filePath: string) => Promise<ReadFileResult>
-  /** Flat relative-path file list of a project, for the composer's @ menu. */
-  listProjectFiles: (projectDir: string) => Promise<string[]>
+  listDir: (
+    grantId: string,
+    relativePath?: string
+  ) => Promise<{ name: string; isDirectory: boolean; path: string }[]>
+  readFile: (grantId: string, relativePath: string) => Promise<ReadFileResult>
+  /** Flat relative-path file list of a project under a workspace grant. */
+  listProjectFiles: (grantId: string) => Promise<string[]>
+  /** Show the native folder dialog and mint a new WorkspaceGrant. */
+  selectWorkspace: () => Promise<WorkspaceGrant | null>
+  /** Re-authorize a persisted recent path as a fresh WorkspaceGrant. */
+  activateRecentWorkspace: (displayPath: string) => Promise<WorkspaceGrant | null>
+  /** Re-activate an existing grant if its real path is still valid. */
+  activateWorkspace: (grantId: string) => Promise<WorkspaceGrant | null>
+  /** Revoke a workspace grant and drop its FsGuard root. */
+  revokeWorkspaceGrant: (grantId: string) => Promise<boolean>
+  /** List active workspace grants. */
+  listWorkspaceGrants: () => Promise<WorkspaceGrant[]>
   listPackages: () => Promise<PackageInfo[]>
   /** Search the npm registry for community pi packages (keyword pi-package). */
   searchPackages: (query: string, curatedOnly?: boolean) => Promise<CommunityPackageInfo[]>
@@ -97,11 +112,11 @@ export interface ElectronAPI {
   exportHtml: (sessionId: string) => Promise<string | null>
   /** Live RPC get_state snapshot of a session; null when unavailable. */
   getSessionState: (sessionId: string) => Promise<SessionState | null>
-  /** Persisted sessions of a project (pi session files), newest first. */
-  listSessionHistory: (projectDir: string) => Promise<HistorySessionInfo[]>
-  /** Resume a persisted session file; returns the live session + transcript. */
+  /** Persisted sessions of a workspace (pi session files), newest first. */
+  listSessionHistory: (grantId: string) => Promise<HistorySessionInfo[]>
+  /** Resume a persisted session file under a workspace grant. */
   resumeSession: (
-    projectDir: string,
+    grantId: string,
     filePath: string
   ) => Promise<{ session: Session; messages: ChatMessage[]; historicalAgents: HistoricalAgentRecord[] } | null>
   /** Delete a persisted session file (guarded to pi's sessions root). */
@@ -125,9 +140,9 @@ export interface ElectronAPI {
   /** Restore the project to a checkpoint; deletes files created after it. */
   checkpointRestore: (id: string) => Promise<PackageActionResult>
   /** Working-tree change summary for the changes panel; null for non-git dirs. */
-  gitInfo: (projectDir: string) => Promise<GitInfo | null>
+  gitInfo: (grantId: string) => Promise<GitInfo | null>
   /** Unified diff of one file (synthetic new-file diff for untracked files). */
-  gitFileDiff: (projectDir: string, filePath: string) => Promise<string | null>
+  gitFileDiff: (grantId: string, filePath: string) => Promise<string | null>
   /** Toggle loading of machine-local ~/.agents/skills; returns what changed. */
   setMachineSkills: (enabled: boolean) => Promise<{ enabled: boolean; excluded: string[]; available: string[] }>
   /** Read-only: names of machine-local skills present under ~/.agents/skills. */
@@ -188,8 +203,8 @@ const api: ElectronAPI = {
   detectCli: (force?: boolean) => ipcRenderer.invoke(IPC_CHANNELS.OMP_DETECT, force),
   getCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_CAPABILITIES),
   listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_SESSIONS),
-  createSession: (cwd: string, overrides?: { modelSelector?: string; thinkingLevel?: SessionThinkingLevel }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.OMP_CREATE_SESSION, cwd, overrides),
+  createSession: (grantId: string, overrides?: { modelSelector?: string; thinkingLevel?: SessionThinkingLevel }) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_CREATE_SESSION, grantId, overrides),
   sendMessage: (
     sessionId: string,
     text: string,
@@ -214,11 +229,21 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener(IPC_CHANNELS.OMP_INSTALL_STATUS, handler)
     }
   },
-  setFsRoot: (root: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_SET_ROOT, root),
-  listDir: (dirPath: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_DIR, dirPath),
-  readFile: (filePath: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_READ_FILE, filePath),
-  listProjectFiles: (projectDir: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_PROJECT_FILES, projectDir),
+  setFsRoot: (_root: string) => ipcRenderer.invoke(IPC_CHANNELS.FS_SET_ROOT),
+  listDir: (grantId: string, relativePath?: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_DIR, grantId, relativePath),
+  readFile: (grantId: string, relativePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FS_READ_FILE, grantId, relativePath),
+  listProjectFiles: (grantId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_PROJECT_FILES, grantId),
+  selectWorkspace: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_SELECT),
+  activateRecentWorkspace: (displayPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_ACTIVATE_RECENT, displayPath),
+  activateWorkspace: (grantId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_ACTIVATE, grantId),
+  revokeWorkspaceGrant: (grantId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_REVOKE, grantId),
+  listWorkspaceGrants: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST),
   listPackages: () => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_LIST),
   searchPackages: (query: string, curatedOnly?: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SEARCH, query, curatedOnly),
@@ -257,10 +282,10 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.OMP_EXPORT_HTML, sessionId),
   getSessionState: (sessionId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SESSION_STATE, sessionId),
-  listSessionHistory: (projectDir: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_SESSION_HISTORY, projectDir),
-  resumeSession: (projectDir: string, filePath: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.OMP_RESUME_SESSION, projectDir, filePath),
+  listSessionHistory: (grantId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_SESSION_HISTORY, grantId),
+  resumeSession: (grantId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_RESUME_SESSION, grantId, filePath),
   deleteSessionFile: (filePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_DELETE_SESSION_FILE, filePath),
   setSessionName: (sessionId: string, name: string) =>
@@ -274,9 +299,9 @@ const api: ElectronAPI = {
   checkpointList: (sessionId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_LIST, sessionId),
   checkpointRestore: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.CHECKPOINT_RESTORE, id),
-  gitInfo: (projectDir: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_INFO, projectDir),
-  gitFileDiff: (projectDir: string, filePath: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.GIT_FILE_DIFF, projectDir, filePath),
+  gitInfo: (grantId: string) => ipcRenderer.invoke(IPC_CHANNELS.GIT_INFO, grantId),
+  gitFileDiff: (grantId: string, filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GIT_FILE_DIFF, grantId, filePath),
   setMachineSkills: (enabled: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.PI_SET_MACHINE_SKILLS, enabled),
   listMachineSkills: () => ipcRenderer.invoke(IPC_CHANNELS.PI_LIST_MACHINE_SKILLS),

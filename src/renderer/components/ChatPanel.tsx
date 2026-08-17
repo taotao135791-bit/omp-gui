@@ -14,14 +14,14 @@ import Logo from './Logo'
 export default function ChatPanel() {
   const {
     currentSessionId,
-    currentProject,
+    currentWorkspace,
     sessions,
     messages,
     packages,
     cliAvailable,
     busy,
     uiRequests,
-    setCurrentProject
+    selectWorkspace
   } = useAppStore()
   const t = useT()
 
@@ -165,14 +165,10 @@ export default function ChatPanel() {
   }
 
   const handleSelectProject = async () => {
-    const folder = await window.electronAPI.selectFolder()
-    if (folder) {
-      setCurrentProject(folder)
-      window.electronAPI.setFsRoot(folder)
-    }
+    await selectWorkspace()
   }
 
-  const projectName = currentProject ? currentProject.split('/').filter(Boolean).pop() : null
+  const projectName = currentWorkspace ? currentWorkspace.displayPath.split('/').filter(Boolean).pop() : null
   const enabledCount = packages.filter((p) => p.enabled).length
   const showHero = sessionMessages.length === 0
   const showThinking =
@@ -187,7 +183,7 @@ export default function ChatPanel() {
           <>
             <span
               className="flex min-w-0 items-center gap-1.5 text-cream-dim"
-              title={currentProject ?? undefined}
+              title={currentWorkspace?.displayPath ?? undefined}
             >
               <FolderOpen size={12} className="shrink-0" />
               <span className="max-w-[160px] truncate text-[12px] font-medium">{projectName}</span>
@@ -259,7 +255,7 @@ export default function ChatPanel() {
                 {t('chat.hero.title')}
               </h2>
               <div className="rise w-full" style={{ animationDelay: '140ms' }}>
-                {!currentProject && (
+                {!currentWorkspace && (
                   <div className="mb-2 flex justify-center">
                     <button
                       onClick={handleSelectProject}
@@ -306,7 +302,7 @@ export default function ChatPanel() {
         )}
       </div>
 
-      {!currentProject && !showHero && (
+      {!currentWorkspace && !showHero && (
         <div className="flex justify-center pb-1">
           <button
             onClick={handleSelectProject}

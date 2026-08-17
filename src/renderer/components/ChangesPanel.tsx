@@ -29,25 +29,25 @@ export function diffLineClass(line: string): string {
 
 export default function ChangesPanel() {
   const t = useT()
-  const currentProject = useAppStore((s) => s.currentProject)
+  const currentWorkspace = useAppStore((s) => s.currentWorkspace)
   const { info, refresh } = useGitInfo()
   const [diffView, setDiffView] = useState<{ path: string; text: string } | null>(null)
   const [loadingDiff, setLoadingDiff] = useState<string | null>(null)
 
-  useEffect(() => setDiffView(null), [currentProject])
+  useEffect(() => setDiffView(null), [currentWorkspace])
 
   const openDiff = async (filePath: string) => {
-    if (!currentProject || loadingDiff) return
+    if (!currentWorkspace || loadingDiff) return
     setLoadingDiff(filePath)
-    const text = await window.electronAPI.gitFileDiff(currentProject, filePath)
+    const text = await window.electronAPI.gitFileDiff(currentWorkspace.id, filePath)
     setLoadingDiff(null)
     if (text !== null) setDiffView({ path: filePath, text })
   }
 
   const refreshAll = async () => {
     refresh()
-    if (diffView && currentProject) {
-      const text = await window.electronAPI.gitFileDiff(currentProject, diffView.path)
+    if (diffView && currentWorkspace) {
+      const text = await window.electronAPI.gitFileDiff(currentWorkspace.id, diffView.path)
       if (text !== null) setDiffView({ path: diffView.path, text })
     }
   }
@@ -63,7 +63,7 @@ export default function ChangesPanel() {
   )
 
   let body: React.ReactNode
-  if (!currentProject) {
+  if (!currentWorkspace) {
     body = <EmptyState text={t('changes.selectProject')} />
   } else if (info === undefined) {
     body = <EmptyState text={t('panel.loading')} />

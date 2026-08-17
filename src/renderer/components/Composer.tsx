@@ -83,7 +83,7 @@ export default function Composer({
   const composerPrefill = useAppStore((s) => s.composerPrefill)
   const setComposerPrefill = useAppStore((s) => s.setComposerPrefill)
   const currentSessionId = useAppStore((s) => s.currentSessionId)
-  const currentProject = useAppStore((s) => s.currentProject)
+  const currentWorkspace = useAppStore((s) => s.currentWorkspace)
   const queue = useAppStore((s) =>
     currentSessionId ? (s.queuedMessages[currentSessionId] ?? EMPTY_QUEUE) : EMPTY_QUEUE
   )
@@ -127,26 +127,26 @@ export default function Composer({
   }, [slashQuery, commands, onCompact, t])
   const menuOpen = menuItems.length > 0
 
-  // @ file menu: active on a trailing "@token", only with a project selected
+  // @ file menu: active on a trailing "@token", only with a workspace selected
   const at = useMemo(() => {
-    if (!currentProject || atDismissed || slashQuery !== null) return null
+    if (!currentWorkspace || atDismissed || slashQuery !== null) return null
     return atToken(text, caret)
-  }, [text, caret, currentProject, atDismissed, slashQuery])
+  }, [text, caret, currentWorkspace, atDismissed, slashQuery])
   const atOpen = at !== null
 
   // Fetch the flat project file list when the @ menu opens (main caches 30s)
   useEffect(() => {
-    if (!atOpen || !currentProject) return
+    if (!atOpen || !currentWorkspace) return
     if (Date.now() - filesLoadedAt.current < FILE_LIST_TTL_MS) return
     let cancelled = false
     filesLoadedAt.current = Date.now()
-    window.electronAPI.listProjectFiles(currentProject).then((files) => {
+    window.electronAPI.listProjectFiles(currentWorkspace.id).then((files) => {
       if (!cancelled) setProjectFiles(files)
     })
     return () => {
       cancelled = true
     }
-  }, [atOpen, currentProject])
+  }, [atOpen, currentWorkspace])
 
   useEffect(() => {
     setAtMenuIndex(0)
@@ -271,8 +271,8 @@ export default function Composer({
     const filePath = await window.electronAPI.selectFile([{ name: 'All Files', extensions: ['*'] }])
     if (!filePath) return
     const rel =
-      currentProject && filePath.startsWith(`${currentProject}/`)
-        ? filePath.slice(currentProject.length + 1)
+      currentWorkspace && filePath.startsWith(`${currentWorkspace.realPath}/`)
+        ? filePath.slice(currentWorkspace.realPath.length + 1)
         : filePath
     replaceRange(caret, caret, `@${rel} `)
   }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord, WorkspaceGrant } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer, applyHistoricalAgents } from '../lib/execution'
@@ -65,7 +65,8 @@ export type UiRequest = Extract<SessionEvent, { type: 'ui_request' }>
 interface AppState {
   theme: 'dark' | 'light'
   language: Language
-  currentProject: string | null
+  /** Main-owned workspace grant for the current project; UI paths come from grant.displayPath. */
+  currentWorkspace: WorkspaceGrant | null
   sessions: Session[]
   currentSessionId: string | null
   messages: Record<string, MessageLike[]>
@@ -130,7 +131,12 @@ interface AppState {
   loginState: LoginState
   setTheme: (theme: 'dark' | 'light') => void
   setLanguage: (language: Language) => void
-  setCurrentProject: (path: string | null) => void
+  /** Replace the active workspace grant (and sync MRU display paths). */
+  setCurrentWorkspace: (grant: WorkspaceGrant | null) => void
+  /** Activate a persisted recent display path into a grant and select it. */
+  activateRecentWorkspace: (displayPath: string) => Promise<void>
+  /** Show the native folder dialog and select the resulting grant. */
+  selectWorkspace: () => Promise<void>
   setSessions: (sessions: Session[]) => void
   addSession: (session: Session) => void
   setCurrentSessionId: (id: string | null) => void
@@ -190,8 +196,8 @@ interface AppState {
   setRecentProjects: (paths: string[]) => void
   /** Drop one path from the recent-projects list and persist the new list. */
   removeRecentProject: (path: string) => void
-  /** (Re)load the persisted session history of a project; null clears the list. */
-  loadHistorySessions: (projectDir: string | null) => Promise<void>
+  /** (Re)load the persisted session history of the current workspace; null clears the list. */
+  loadHistorySessions: (grantId: string | null) => Promise<void>
   /** Drop one entry from the history list (after its file was deleted). */
   removeHistorySession: (filePath: string) => void
   /** Update one session's display title in place. */
@@ -254,7 +260,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set, get) => ({
   theme: 'light',
   language: 'en',
-  currentProject: null,
+  currentWorkspace: null,
   sessions: [],
   currentSessionId: null,
   messages: {},
@@ -301,15 +307,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'
     window.electronAPI.setStore('language', language)
   },
-  setCurrentProject: (currentProject) =>
+  setCurrentWorkspace: (grant) =>
     set((state) => {
-      if (!currentProject) return { currentProject }
-      // Keep the MRU recent-projects list in sync (dedup, cap 10, persisted).
-      // Persist ONLY once the persisted list has hydrated — writing before then
-      // would clobber the on-disk MRU with a single-entry list (bootstrap race).
+      if (!grant) return { currentWorkspace: null }
+      const displayPath = grant.displayPath
       const recentProjects = [
-        currentProject,
-        ...state.recentProjects.filter((p) => p !== currentProject)
+        displayPath,
+        ...state.recentProjects.filter((p) => p !== displayPath)
       ].slice(0, 10)
       const changed =
         recentProjects.length !== state.recentProjects.length ||
@@ -317,8 +321,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (changed && state.recentProjectsLoaded) {
         window.electronAPI.setStore('recentProjects', recentProjects)
       }
-      return { currentProject, recentProjects }
+      return { currentWorkspace: grant, recentProjects }
     }),
+  activateRecentWorkspace: async (displayPath) => {
+    const grant = await window.electronAPI.activateRecentWorkspace(displayPath)
+    if (grant) {
+      get().setCurrentWorkspace(grant)
+    } else {
+      // Stale recent path: drop it from the list and clear selection.
+      set((state) => ({
+        recentProjects: state.recentProjects.filter((p) => p !== displayPath),
+        currentWorkspace: null
+      }))
+      window.electronAPI.setStore(
+        'recentProjects',
+        get().recentProjects
+      )
+    }
+  },
+  selectWorkspace: async () => {
+    const grant = await window.electronAPI.selectWorkspace()
+    if (grant) get().setCurrentWorkspace(grant)
+  },
   setSessions: (sessions) =>
     set((state) => {
       // Prune pin/archive/unread entries of sessions that no longer exist
@@ -567,14 +591,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       window.electronAPI.setStore('recentProjects', recentProjects)
       return { recentProjects }
     }),
-  loadHistorySessions: async (projectDir) => {
-    if (!projectDir) {
+  loadHistorySessions: async (grantId) => {
+    if (!grantId) {
       set({ historySessions: [] })
       return
     }
-    const list = await window.electronAPI.listSessionHistory(projectDir)
-    // Ignore a stale response when the project was switched meanwhile
-    if (get().currentProject === projectDir) set({ historySessions: list })
+    const list = await window.electronAPI.listSessionHistory(grantId)
+    // Ignore a stale response when the workspace was switched meanwhile
+    if (get().currentWorkspace?.id === grantId) set({ historySessions: list })
   },
   removeHistorySession: (filePath) =>
     set((state) => ({
