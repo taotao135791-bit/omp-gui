@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { makeExecRunner, configGet, configSet, configReset } from '../../src/main/omp/settings/OmpConfigCli'
 import { RuntimeSettings } from '../../src/main/omp/settings/RuntimeSettings'
-import { createIsolatedOmpEnvironment, binaryAvailable, runOmp } from './isolated-runtime'
+import { createIsolatedOmpEnvironment, binaryAvailable, requireBinary, runOmp } from './isolated-runtime'
 
 /**
  * Settings schema fidelity tests against the real current Oh My Pi binary —
@@ -31,7 +31,8 @@ describe('current OMP — settings schema fidelity (isolated)', () => {
   beforeAll(() => {
     bin = process.env.OMP_BIN || 'omp'
     available = binaryAvailable(bin)
-    if (!available) console.warn(`[test:omp] '${bin}' not found — skipping settings schema suite`)
+    if (!available) requireBinary(bin)
+    else console.log(`[test:omp] '${bin}' found — running settings schema suite`)
   })
 
   it('modelRoles is a record and nested keys are not CLI-addressable', () => {

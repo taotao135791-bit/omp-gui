@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { ChildProcess } from 'node:child_process'
 import { OmpSession, OmpProcessLike } from '../../src/main/omp/OmpSession'
 import { SessionEvent } from '../../src/shared/types'
-import { createIsolatedOmpEnvironment, binaryAvailable, IsolatedRuntime } from './isolated-runtime'
+import { createIsolatedOmpEnvironment, binaryAvailable, requireBinary, IsolatedRuntime } from './isolated-runtime'
 
 /**
  * Subagent bridge compatibility — the GUI's own OmpSession driving the real
@@ -68,7 +68,8 @@ describe('current omp — subagent RPC bridge', () => {
   let available = false
   beforeAll(() => {
     available = binaryAvailable(OMP_BIN)
-    if (!available) console.warn(`[test:omp] '${OMP_BIN}' not found — skipping subagent bridge suite`)
+    if (!available) requireBinary(OMP_BIN)
+    else console.log(`[test:omp] '${OMP_BIN}' found — running subagent bridge suite`)
   })
 
   it('set_subagent_subscription to progress is accepted (framing)', async () => {

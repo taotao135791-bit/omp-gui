@@ -28,30 +28,66 @@ The renderer is treated as **not fully trusted**:
 
 ## Workspace authorization
 
-Filesystem reads go through `FsGuard` (`src/main/fsGuard.ts`), a
-realpath-canonicalized root allowlist. Roots originate only from Main-owned
-trusted flows:
+Filesystem authority is a **capability granted by Main**, not a path chosen by
+the renderer.
 
-- the native folder dialog (`dialog.showOpenDialog`),
-- a verified session working directory,
-- a verified recent workspace (re-checked for existence / directory / realpath).
+```
+User / trusted session
+        ↓
+      Main
+        ↓
+  WorkspaceGrant  (id + realPath + displayPath + source)
+        ↓
+     FsGuard
+        ↓
+Git / Files / OMP Session
+```
 
-`FS_SET_ROOT` accepts only real, existing directories; the renderer never grants
-itself arbitrary filesystem authority.
+- `WorkspaceGrant` objects are minted only by Main (`src/main/workspaceGrant.ts`)
+  from trusted sources:
+  - the native folder dialog (`workspace:select`),
+  - a re-validated persisted recent workspace (`workspace:activate-recent`),
+  - a validated existing session cwd (`workspace:activate` with `source: 'session'`),
+  - a trusted runtime cwd.
+- Main canonicalizes the path with `realpath` and registers the canonical root
+  with `FsGuard`.
+- The renderer can only pass a **grant id** to workspace-sensitive IPC handlers.
+  It cannot pass an arbitrary absolute path. If a grant id is unknown/expired,
+  the handler rejects the call.
+- `FS_SET_ROOT` is deprecated and no longer grants authority. `setFsRoot` in the
+  preload API is a stub that always returns `false`.
+
+## Workspace-sensitive IPC
+
+The following IPC handlers require a valid `WorkspaceGrant.id` and resolve the
+real path internally:
+
+- `omp:create-session`, `omp:resume-session`, `omp:list-session-history`
+- `git:info`, `git:file-diff`
+- `fs:list-project-files`
+- `fs:list-dir` and `fs:read-file` (grant id + relative path)
+
+Checkpoints operate on the live session's already-granted `cwd`.
 
 ## Symlink containment
 
 A path that is lexically inside a workspace is not trusted until symlink
 resolution proves its real path is also inside:
 
+- **Workspace roots** (`src/main/workspaceGrant.ts`): the canonical `realPath` is
+  registered with `FsGuard`; a selected symlinked workspace works transparently
+  because authority is tied to its target.
+- **FsGuard reads/writes** (`src/main/fsGuard.ts`): every target is resolved with
+  `realpathSync`; an in-workspace symlink pointing outside is denied.
 - **Git changes** (`src/main/gitinfo.ts`): untracked-file line counts and
   synthetic diffs resolve real paths; an in-workspace symlink pointing outside
   is shown as `symlink → outside workspace`, never read through.
 - **Session history** (`src/main/sessionHistory.ts`): `isSessionFilePath`
   verifies real-path containment, so a `session.jsonl -> /outside/file` symlink
   is never resumed/read.
-- **Package manifests** (`src/main/packages.ts`): `pi.*` resource paths that
-  escape the package dir are dropped.
+- **Package manifests** (`src/main/packages.ts`): `pi.*` resource paths are
+  checked lexically **and** by `realpath`, so a package symlink cannot smuggle
+  resources from outside the package dir.
 
 ## Session storage boundary
 
@@ -59,6 +95,13 @@ OMP owns durable session transcripts under `~/.omp/agent/sessions` (or the
 isolated `PI_CODING_AGENT_DIR` in tests). The GUI reads them read-only for
 history/resume and reconstructs metadata/agents from the active branch only
 (`src/main/sessionMetadata.ts`). A GUI sidecar is not used for execution truth.
+
+Historical agent records are reconstructed from OMP's durable `task` tool
+results. Background/async agents end up in the same `task` result format; the
+reconstruction layer upserts by agent id so a later final result overrides an
+earlier empty/spawn record. Running state is never claimed from durable data
+alone — only live `get_subagents` or lifecycle events can show an agent as
+running.
 
 ## External URL policy
 
@@ -72,10 +115,14 @@ The auto-installer runs remote code, so its boundary is explicit:
 
 - HTTPS-only, host allowlist, redirect-host validation, redirect cap, script
   size cap.
-- The child process receives a **minimal** environment (PATH/HOME/SHELL/… only) —
-  provider keys, `GITHUB_TOKEN`, `AWS_*` etc. are never forwarded.
+- The child process receives a **minimal** environment (PATH/HOME/SHELL/… only)
+  — provider keys, `GITHUB_TOKEN`, `AWS_*` etc. are never forwarded.
 - Failures surface an exit code + a safe stderr summary, never environment
   values.
+- The pinned compatibility gate installs an exact version from the official npm
+  package (`@oh-my-pi/pi-coding-agent@<version>`) and verifies `omp --version`
+  matches before running tests. The canary job tests the latest release but does
+  not block merges.
 
 ## Credential handling
 

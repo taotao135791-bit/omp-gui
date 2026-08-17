@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -258,25 +258,109 @@ describe('setPackageEnabled', () => {
 
 describe('resourceEntries (manifest path traversal)', () => {
   it('keeps valid nested resource paths inside the package dir', () => {
-    const entries = resourceEntries(
-      '/pkg',
-      { pi: { extensions: ['src/ext', 'dist/index.js'] } },
-      'extensions',
-      'extensions'
-    )
-    expect(entries).toContain('/pkg/src/ext')
-    expect(entries).toContain('/pkg/dist/index.js')
+    const base = mkdtempSync(path.join(tmpdir(), 'omp-pkg-traversal-'))
+    try {
+      const pkg = path.join(base, 'pkg')
+      mkdirSync(path.join(pkg, 'src', 'ext'), { recursive: true })
+      mkdirSync(path.join(pkg, 'dist'), { recursive: true })
+      writeFileSync(path.join(pkg, 'dist', 'index.js'), 'export default () => {}')
+      const entries = resourceEntries(
+        pkg,
+        { pi: { extensions: ['src/ext', 'dist/index.js'] } },
+        'extensions',
+        'extensions'
+      )
+      expect(entries).toContain(path.join(pkg, 'src', 'ext'))
+      expect(entries).toContain(path.join(pkg, 'dist', 'index.js'))
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 
   it('rejects manifest resource paths that escape the package dir', () => {
-    const entries = resourceEntries(
-      '/pkg',
-      { pi: { extensions: ['../../secret', '../..', '/etc'] } },
-      'extensions',
-      'extensions'
-    )
-    // Every escaping path is dropped; only the convention remains.
-    expect(entries.some((e) => e.includes('secret') || e.startsWith('/etc'))).toBe(false)
-    expect(entries).toContain('/pkg/extensions')
+    const base = mkdtempSync(path.join(tmpdir(), 'omp-pkg-escape-'))
+    try {
+      const pkg = path.join(base, 'pkg')
+      mkdirSync(path.join(pkg, 'extensions'), { recursive: true })
+      const entries = resourceEntries(
+        pkg,
+        { pi: { extensions: ['../../secret', '../..', '/etc'] } },
+        'extensions',
+        'extensions'
+      )
+      // Every escaping path is dropped; only the convention remains.
+      expect(entries.some((e) => e.includes('secret') || e.startsWith('/etc'))).toBe(false)
+      expect(entries).toContain(path.join(pkg, 'extensions'))
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('resourceEntries realpath containment', () => {
+  it('allows an inside-package symlink', () => {
+    const base = mkdtempSync(path.join(tmpdir(), 'omp-pkg-realpath-'))
+    try {
+      const pkg = path.join(base, 'pkg')
+      const real = path.join(base, 'pkg-real')
+      mkdirSync(real, { recursive: true })
+      mkdirSync(path.join(real, 'extensions'), { recursive: true })
+      writeFileSync(path.join(real, 'extensions', 'index.ts'), 'export default () => {}')
+      symlinkSync(real, pkg)
+
+      const entries = resourceEntries(pkg, { pi: { extensions: ['./extensions/index.ts'] } }, 'extensions', 'extensions')
+      expect(entries).toContain(path.join(pkg, 'extensions', 'index.ts'))
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an outside-package symlink', () => {
+    const base = mkdtempSync(path.join(tmpdir(), 'omp-pkg-escape-'))
+    try {
+      const pkg = path.join(base, 'pkg')
+      const outside = path.join(base, 'outside')
+      mkdirSync(pkg, { recursive: true })
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(path.join(outside, 'secret.ts'), 'secret')
+      symlinkSync(path.join(outside, 'secret.ts'), path.join(pkg, 'extensions'))
+
+      const entries = resourceEntries(pkg, { pi: { extensions: ['./extensions'] } }, 'extensions', 'extensions')
+      expect(entries.some((e) => e.includes('secret'))).toBe(false)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a nested outside symlink', () => {
+    const base = mkdtempSync(path.join(tmpdir(), 'omp-pkg-nested-escape-'))
+    try {
+      const pkg = path.join(base, 'pkg')
+      const outside = path.join(base, 'outside')
+      mkdirSync(pkg, { recursive: true })
+      mkdirSync(path.join(pkg, 'skills'), { recursive: true })
+      mkdirSync(outside, { recursive: true })
+      writeFileSync(path.join(outside, 'SKILL.md'), 'name: leaked\n')
+      symlinkSync(outside, path.join(pkg, 'skills', 'leaked'))
+
+      const entries = resourceEntries(pkg, null, 'skills', 'skills')
+      expect(entries.some((e) => e.includes('leaked'))).toBe(false)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('drops a broken symlink instead of crashing', () => {
+    const base = mkdtempSync(path.join(tmpdir(), 'omp-pkg-broken-'))
+    try {
+      const pkg = path.join(base, 'pkg')
+      mkdirSync(pkg, { recursive: true })
+      symlinkSync(path.join(base, 'missing'), path.join(pkg, 'extensions'))
+
+      const entries = resourceEntries(pkg, { pi: { extensions: ['./extensions'] } }, 'extensions', 'extensions')
+      expect(entries.some((e) => e.includes('extensions'))).toBe(false)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 })

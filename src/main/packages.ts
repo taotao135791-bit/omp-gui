@@ -3,6 +3,7 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync
 } from 'node:fs'
 import { homedir } from 'node:os'
@@ -166,13 +167,29 @@ function safeReaddir(dir: string): string[] {
 export function resourceEntries(dir: string, manifest: PkgManifest | null, key: 'extensions' | 'skills' | 'prompts' | 'themes', convention: string): string[] {
   const entries = new Set<string>()
   const root = path.resolve(dir)
+  let rootReal: string | null = null
+  try {
+    rootReal = realpathSync(root)
+  } catch {
+    // If the package root itself cannot be resolved, fall back to lexical only
+    // (the caller already verified the dir exists).
+    rootReal = root
+  }
   const add = (entry: string) => {
     const cleaned = entry.split(/[*!]/)[0].replace(/\/+$/, '').replace(/^\.(\/|$)/, '')
     if (!cleaned) return
     const resolved = path.resolve(root, cleaned)
-    // Reject manifest resource paths that escape the package dir (path
-    // traversal via `../` — a package must not declare resources outside itself).
+    // Lexical reject first (cheap).
     if (resolved !== root && !resolved.startsWith(root + path.sep)) return
+    // Physical containment: symlinks inside the package must not point outside it.
+    let candidateReal: string | null
+    try {
+      candidateReal = realpathSync(resolved)
+    } catch {
+      // Resource path does not exist or is a broken symlink: treat as missing.
+      return
+    }
+    if (candidateReal !== rootReal && !candidateReal.startsWith(rootReal + path.sep)) return
     entries.add(path.normalize(resolved))
   }
   add(convention)

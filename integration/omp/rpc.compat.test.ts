@@ -9,6 +9,7 @@ import { makeExecRunner, configGet } from '../../src/main/omp/settings/OmpConfig
 import {
   createIsolatedOmpEnvironment,
   binaryAvailable,
+  requireBinary,
   IsolatedRuntime
 } from './isolated-runtime'
 
@@ -98,7 +99,8 @@ describe('current Oh My Pi (omp) — RPC v2 profile', () => {
   let available = false
   beforeAll(() => {
     available = binaryAvailable(OMP_BIN)
-    if (!available) console.warn(`[test:omp] '${OMP_BIN}' not found — skipping current-profile suite`)
+    if (!available) requireBinary(OMP_BIN)
+    else console.log(`[test:omp] '${OMP_BIN}' found — running current-profile suite`)
   })
 
   it('bootstraps: ready → negotiate → v2, then get_state answers (isolated)', async () => {
@@ -242,7 +244,8 @@ describe('legacy Pi (pi ≤ 0.84) — RPC v1 profile', () => {
   let available = false
   beforeAll(() => {
     available = binaryAvailable(PI_BIN)
-    if (!available) console.warn(`[test:omp] '${PI_BIN}' not found — skipping legacy suite`)
+    if (!available) requireBinary(PI_BIN)
+    else console.log(`[test:omp] '${PI_BIN}' found — running legacy suite`)
   })
 
   it('no ready frame: first real frame settles the legacy v1 profile', async () => {

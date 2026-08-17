@@ -113,6 +113,20 @@ export function binaryAvailable(bin: string): boolean {
   }
 }
 
+/**
+ * Fail fast when `OMP_REQUIRED=1` is set and the binary is absent. This turns
+ * the optional local smoke test into a hard release-compatibility gate in CI.
+ */
+export function requireBinary(bin: string): void {
+  if (!binaryAvailable(bin)) {
+    const message = `Required OMP binary '${bin}' not found (OMP_REQUIRED=1)`
+    if (process.env.OMP_REQUIRED === '1') {
+      throw new Error(message)
+    }
+    console.warn(`[test:omp] ${message.split('(')[0].trim()} — skipping suite`)
+  }
+}
+
 /** Assert that the isolated env did not touch the real user agent dir. */
 export function realAgentDirAbsent(iso: IsolatedRuntime): void {
   // The real agent dir is the process's own HOME/.omp/agent; the isolated
