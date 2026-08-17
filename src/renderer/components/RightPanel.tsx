@@ -19,14 +19,22 @@ export default function RightPanel() {
   const t = useT()
 
   useEffect(() => {
-    if (selectedFile && currentWorkspace && activeRightTab === 'preview') {
-      window.electronAPI.readFile(currentWorkspace.id, selectedFile).then((result) => {
-        setPreviewContent(
-          result.ok
-            ? result.content
-            : translate(useAppStore.getState().language, 'panel.cannotPreview', { error: result.error })
-        )
-      })
+    if (!selectedFile || !currentWorkspace || activeRightTab !== 'preview') return
+    // Clear the previous file's content up front (loading state), and ignore a
+    // late response for a file/workspace the user has already navigated away
+    // from — otherwise rapid clicks render file A's content under B's name.
+    let cancelled = false
+    setPreviewContent(null)
+    window.electronAPI.readFile(currentWorkspace.id, selectedFile).then((result) => {
+      if (cancelled) return
+      setPreviewContent(
+        result.ok
+          ? result.content
+          : translate(useAppStore.getState().language, 'panel.cannotPreview', { error: result.error })
+      )
+    })
+    return () => {
+      cancelled = true
     }
   }, [selectedFile, currentWorkspace, activeRightTab, setPreviewContent])
 

@@ -8,6 +8,7 @@ const en = {
   // Sidebar
   'sidebar.newChat': 'New Chat',
   'sidebar.cliMissing': 'omp/pi CLI not found. Install it to use chat.',
+  'sidebar.cliInstall': 'Install / re-run setup',
   'sidebar.selectProject': 'Select project folder',
   'sidebar.sessions': 'Sessions',
   'sidebar.noSessions': 'No sessions yet. Start a new chat.',
@@ -56,6 +57,9 @@ const en = {
   'chat.jumpToBottom': 'Jump to latest',
   'chat.compacting': 'Compacting context…',
   'chat.selectProject': 'Select project',
+  'chat.sendFailed': "Couldn't send — the session is not running.",
+  'chat.sessionDead': 'Session ended — start a new chat.',
+  'chat.createFailed': "Couldn't start a session — try selecting the project again.",
 
   // Composer
   'composer.placeholder': 'Ask anything — @ files, / commands, Enter to send',
@@ -69,6 +73,8 @@ const en = {
   'composer.attachImage': 'Attach image',
   'composer.removeImage': 'Remove image',
   'composer.imageTooLarge': 'Image is over 10 MB',
+  'composer.imageNotImage': 'Not an image file',
+  'composer.imageReadFailed': "Couldn't read that image",
   'composer.maxImages': 'Up to 4 images',
   'composer.noFiles': 'No matching files',
   'composer.atTitle': 'Files',
@@ -86,6 +92,8 @@ const en = {
   'composer.modelNextSession': 'Model for the next session',
   'composer.modelAuto': 'Auto',
   'composer.noModels': 'No API keys yet — add one in Settings',
+  'composer.modelFailed': "Couldn't switch model",
+  'composer.thinkingFailed': "Couldn't switch thinking level",
   'composer.disclaimer': 'Oh My Pi can make mistakes. Review important code before running it.',
   'composer.slashTitle': 'Commands',
   'composer.slashBuiltin': 'built-in',
@@ -106,6 +114,7 @@ const en = {
   'msg.edit': 'Edit',
   'msg.steer': 'Steer',
   'msg.thinking': 'Thinking',
+  'msg.sendFailed': 'Not delivered',
 
   // Turn progress row (live) and summary (finished)
   'turn.doing': '{verb}',
@@ -209,6 +218,7 @@ const en = {
   'settings.updateRetry': 'Retry',
   'settings.updateOpenPage': 'Open download page',
   'settings.updateDevMode': 'Updates are not checked in dev mode',
+  'settings.updateNone': 'Already up to date',
   'settings.ompNotDetected': 'Not detected',
   'settings.ompProtocol': 'RPC protocol',
   'settings.ompProtocolSupported': 'runtime supports',
@@ -218,34 +228,14 @@ const en = {
   'settings.notifications': 'Notifications',
   'settings.notifyCompletion': 'Completion notifications',
   'settings.notifyCompletionNote': 'Send a system notification when an agent turn finishes while the window is in the background.',
+  'settings.notifyPreviews': 'Notification previews',
+  'settings.notifyPreviewsNote': 'Include the start of the agent reply in the notification. Off by default, so reply content never reaches the OS notification center.',
   'settings.cliSettingsFile': 'CLI settings file',
   'settings.showInFinder': 'Reveal in Finder',
+  'settings.cliInstall': 'Install / re-run setup',
 
-  // Authentication (runtime-native)
-  'settings.auth': 'Authentication',
-  'settings.authNote': 'Credentials live in Oh My Pi itself; the GUI only displays what the runtime reports.',
+  // Authentication (runtime-native): provider status label used by the model picker.
   'settings.authConnected': 'Connected',
-  'settings.authNotConnected': 'Not connected',
-  'settings.authConnect': 'Connect',
-  'settings.authSignOut': 'Sign out',
-  'settings.authRefresh': 'Refresh',
-  'settings.authLoading': 'Loading providers…',
-  'settings.authEmpty': 'No providers reported by Oh My Pi.',
-  'settings.authUnsupported': 'This Oh My Pi version does not report providers.',
-  'settings.authRuntimeDown': 'Oh My Pi is not running — start a chat or install it first.',
-  'settings.authLegacyPath': 'Legacy Pi manages credentials in its own auth.json — see the API key section above.',
-  'settings.authLoginStarting': 'Starting login…',
-  'settings.authLoginBrowser': 'Complete the sign-in in your browser…',
-  'settings.authGetKey': 'Get API key',
-  'settings.authPasteKeyHint': 'Paste your API key below.',
-  'settings.authLoginInput': 'The runtime asks:',
-  'settings.authLoginSubmit': 'Submit',
-  'settings.authLoginVerifying': 'Verifying…',
-  'settings.authLoginCancel': 'Cancel login',
-  'settings.authLoginFailed': "Couldn't connect this provider.",
-  'settings.authLoginConnected': 'Connected',
-  'settings.authSignOutConfirm': 'Sign out {name}? The credential is removed from Oh My Pi.',
-  'settings.authEnvNote': 'Also set as an environment variable — Oh My Pi may stay connected after sign-out.',
   'settings.models': 'Models',
   'settings.modelCatalogEmpty': 'No models available — connect a provider first.',
   'settings.modelNoteCurrent': 'The default applies to new chats; the composer picker switches the current chat.',
@@ -272,7 +262,10 @@ const en = {
   'tool.input': 'Input',
   'tool.output': 'Output',
   'tool.lines': '{count} lines',
+  'tool.hiddenLines': '… {count} lines hidden …',
+  'tool.hiddenChars': '… {count} characters hidden …',
   'tool.showFullOutput': 'Show full output ({lines} lines)',
+  'tool.showFullOutputChars': 'Show full output ({chars} characters)',
   'tool.collapse': 'Collapse',
 
   // Code block
@@ -290,6 +283,7 @@ const en = {
   'panel.selectFile': 'Select a file from the file tree to preview.',
   'panel.loading': 'Loading…',
   'panel.cannotPreview': 'Cannot preview: {error}',
+  'panel.emptyOrInaccessible': 'Empty — or this folder is not accessible.',
 
   // Changes tab
   'changes.selectProject': 'Select a project to see changes.',
@@ -297,6 +291,7 @@ const en = {
   'changes.empty': 'Working tree clean.',
   'changes.refresh': 'Refresh',
   'changes.back': 'Back to list',
+  'changes.diffFailed': "Couldn't load the diff.",
 
   // Plugins page
   'plugins.title': 'Plugins',
@@ -354,6 +349,7 @@ const en = {
   'uiDialog.allow': 'Allow',
   'uiDialog.deny': 'Deny',
   'uiDialog.noOptions': 'No options provided.',
+  'uiDialog.timeout': 'Auto-cancel in {count}s',
 
   // Setup wizard
   'setup.detecting': 'Detecting environment…',
@@ -371,7 +367,8 @@ const en = {
   'setup.terminalCommand': 'Terminal command',
   'setup.copy': 'Copy',
   'setup.copied': 'Copied',
-  'setup.installed': "I've installed it"
+  'setup.installed': "I've installed it",
+  'setup.stillMissing': 'Still not detected — check that omp is on your PATH, or use auto-install above.'
 } as const
 
 export type I18nKey = keyof typeof en
@@ -381,6 +378,7 @@ const zh: Record<I18nKey, string> = {
 
   'sidebar.newChat': '新建对话',
   'sidebar.cliMissing': '未找到 omp/pi CLI，安装后才能使用对话功能。',
+  'sidebar.cliInstall': '安装 / 重新运行安装向导',
   'sidebar.selectProject': '选择项目文件夹',
   'sidebar.sessions': '会话',
   'sidebar.noSessions': '还没有会话，点击新建对话开始。',
@@ -426,6 +424,9 @@ const zh: Record<I18nKey, string> = {
   'chat.jumpToBottom': '回到最新消息',
   'chat.compacting': '正在压缩上下文…',
   'chat.selectProject': '选择项目',
+  'chat.sendFailed': '发送失败：会话已断开',
+  'chat.sessionDead': '会话已结束，请新建对话',
+  'chat.createFailed': '无法创建会话，请重新选择项目',
 
   'composer.placeholder': '想问什么？@ 引用文件 · / 命令 · Enter 发送',
   'composer.placeholderDisabled': '安装 omp/pi CLI 后开始对话…',
@@ -438,6 +439,8 @@ const zh: Record<I18nKey, string> = {
   'composer.attachImage': '添加图片',
   'composer.removeImage': '移除图片',
   'composer.imageTooLarge': '图片超过 10 MB',
+  'composer.imageNotImage': '不是图片文件',
+  'composer.imageReadFailed': '图片读取失败',
   'composer.maxImages': '最多 4 张图片',
   'composer.noFiles': '没有匹配的文件',
   'composer.atTitle': '引用文件',
@@ -455,6 +458,8 @@ const zh: Record<I18nKey, string> = {
   'composer.modelNextSession': '下一个对话的模型',
   'composer.modelAuto': '自动',
   'composer.noModels': '还没有 API 密钥，去设置里添加',
+  'composer.modelFailed': '切换模型失败',
+  'composer.thinkingFailed': '切换思考级别失败',
   'composer.disclaimer': 'Oh My Pi 可能会犯错，重要代码运行前请人工检查。',
   'composer.slashTitle': '命令',
   'composer.slashBuiltin': '内置',
@@ -475,6 +480,7 @@ const zh: Record<I18nKey, string> = {
   'msg.edit': '编辑',
   'msg.steer': '转向',
   'msg.thinking': '思考',
+  'msg.sendFailed': '未送达',
 
   'turn.doing': '正在{verb}',
   'turn.verb.read': '读取',
@@ -575,6 +581,7 @@ const zh: Record<I18nKey, string> = {
   'settings.updateRetry': '重试',
   'settings.updateOpenPage': '打开下载页',
   'settings.updateDevMode': '开发模式不检查更新',
+  'settings.updateNone': '已是最新版本',
   'settings.ompNotDetected': '未检测到',
   'settings.ompProtocol': 'RPC 协议',
   'settings.ompProtocolSupported': '运行时支持',
@@ -584,34 +591,14 @@ const zh: Record<I18nKey, string> = {
   'settings.notifications': '通知',
   'settings.notifyCompletion': '完成通知',
   'settings.notifyCompletionNote': 'Agent 回合结束且窗口不在前台时，发送系统通知。',
+  'settings.notifyPreviews': '通知预览',
+  'settings.notifyPreviewsNote': '在通知中显示 agent 回复的开头。默认关闭，避免回复内容出现在系统通知中心。',
   'settings.cliSettingsFile': 'CLI 设置文件',
   'settings.showInFinder': '在 Finder 中显示',
+  'settings.cliInstall': '安装 / 重新运行安装向导',
 
-  // Authentication (runtime-native)
-  'settings.auth': '认证',
-  'settings.authNote': '凭证由 Oh My Pi 自己保存；界面只显示运行时报告的真实状态。',
+  // Authentication (runtime-native)：模型选择器使用的 Provider 状态标签。
   'settings.authConnected': '已连接',
-  'settings.authNotConnected': '未连接',
-  'settings.authConnect': '连接',
-  'settings.authSignOut': '退出登录',
-  'settings.authRefresh': '刷新',
-  'settings.authLoading': '正在加载 Provider…',
-  'settings.authEmpty': 'Oh My Pi 没有报告任何 Provider。',
-  'settings.authUnsupported': '此 Oh My Pi 版本不支持 Provider 查询。',
-  'settings.authRuntimeDown': 'Oh My Pi 未在运行 — 先开始一个对话或完成安装。',
-  'settings.authLegacyPath': 'Legacy Pi 的凭证保存在它自己的 auth.json — 见上方 API Key 区域。',
-  'settings.authLoginStarting': '正在启动登录…',
-  'settings.authLoginBrowser': '请在浏览器中完成登录…',
-  'settings.authGetKey': '获取 API Key',
-  'settings.authPasteKeyHint': '在下方粘贴你的 API Key。',
-  'settings.authLoginInput': '运行时请求输入：',
-  'settings.authLoginSubmit': '提交',
-  'settings.authLoginVerifying': '正在验证…',
-  'settings.authLoginCancel': '取消登录',
-  'settings.authLoginFailed': '无法连接此 Provider。',
-  'settings.authLoginConnected': '已连接',
-  'settings.authSignOutConfirm': '退出 {name}？凭证将从 Oh My Pi 中移除。',
-  'settings.authEnvNote': '此 Provider 同时设置了环境变量 — 退出登录后 Oh My Pi 可能仍保持连接。',
   'settings.modelUnavailable': '不可用',
   'settings.modelUnavailableNote': '当前运行时仍引用此模型。',
   'settings.thinkingUnsupported': '当前默认模型不支持',
@@ -636,7 +623,10 @@ const zh: Record<I18nKey, string> = {
   'tool.input': '输入',
   'tool.output': '输出',
   'tool.lines': '{count} 行',
+  'tool.hiddenLines': '… 隐藏了 {count} 行 …',
+  'tool.hiddenChars': '… 隐藏了 {count} 个字符 …',
   'tool.showFullOutput': '显示完整输出（{lines} 行）',
+  'tool.showFullOutputChars': '显示完整输出（{chars} 个字符）',
   'tool.collapse': '收起',
 
   'code.copy': '复制',
@@ -652,12 +642,14 @@ const zh: Record<I18nKey, string> = {
   'panel.selectFile': '从文件树中选择文件进行预览。',
   'panel.loading': '加载中…',
   'panel.cannotPreview': '无法预览：{error}',
+  'panel.emptyOrInaccessible': '空文件夹 — 或无法访问该文件夹。',
 
   'changes.selectProject': '选择项目后可查看变更。',
   'changes.notGit': '变更视图仅支持 git 仓库。',
   'changes.empty': '工作区干净，没有变更。',
   'changes.refresh': '刷新',
   'changes.back': '返回列表',
+  'changes.diffFailed': '无法加载 diff。',
 
   'plugins.title': '插件',
   'plugins.subtitle': '安装、管理和使用 pi 插件包。',
@@ -713,6 +705,7 @@ const zh: Record<I18nKey, string> = {
   'uiDialog.allow': '允许',
   'uiDialog.deny': '拒绝',
   'uiDialog.noOptions': '插件没有提供可选项。',
+  'uiDialog.timeout': '{count} 秒后自动取消',
 
   'setup.detecting': '正在检测环境…',
   'setup.ready.title': 'Oh My Pi 已就绪',
@@ -729,7 +722,8 @@ const zh: Record<I18nKey, string> = {
   'setup.terminalCommand': '终端命令',
   'setup.copy': '复制',
   'setup.copied': '已复制',
-  'setup.installed': '我已安装完成'
+  'setup.installed': '我已安装完成',
+  'setup.stillMissing': '仍未检测到 omp — 请确认它已加入 PATH，或使用上方的自动安装。'
 }
 
 export const dictionaries: Record<Language, Record<I18nKey, string>> = { en, zh }

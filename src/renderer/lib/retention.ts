@@ -64,16 +64,6 @@ export function headTailLines(text: string, headLines: number, tailLines: number
   }
 }
 
-/** Format the hidden-line notice shown between head and tail. */
-export function formatHiddenLines(hidden: number): string {
-  return `… ${hidden.toLocaleString()} lines hidden …`
-}
-
-/** Format the hidden-char notice shown between head and tail. */
-export function formatHiddenChars(hidden: number): string {
-  return `… ${hidden.toLocaleString()} characters hidden …`
-}
-
 /** A UTF-16 high surrogate (first half of an emoji / astral codepoint). */
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff

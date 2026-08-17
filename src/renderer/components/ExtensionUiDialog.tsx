@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { MessageCircleQuestion, X } from 'lucide-react'
 import { ExtensionUiAnswer } from '@shared/types'
 import { UiRequest, useAppStore } from '../store'
@@ -8,6 +8,10 @@ import { useT } from '../i18n'
  * Modal dialog for pi extension UI requests (select / confirm / input / editor).
  * Extensions pause mid-turn until the answer goes back over the session stdin;
  * cancelling returns `{ cancelled: true }`, which pi treats as a dismissed dialog.
+ *
+ * A request may carry a timeout (ms). The runtime resolves the dialog with its
+ * default at the deadline WITHOUT notifying the client, so the dialog runs its
+ * own countdown and cancels itself — otherwise it would sit there stale.
  */
 export default function ExtensionUiDialog({
   sessionId,
@@ -20,23 +24,53 @@ export default function ExtensionUiDialog({
   const resolveUiRequest = useAppStore((s) => s.resolveUiRequest)
   const [text, setText] = useState(request.method === 'editor' ? request.prefill ?? '' : '')
   const [sending, setSending] = useState(false)
+  const [remaining, setRemaining] = useState<number | null>(
+    request.timeout !== undefined ? Math.ceil(request.timeout / 1000) : null
+  )
 
   useEffect(() => {
     setText(request.method === 'editor' ? request.prefill ?? '' : '')
     setSending(false)
-  }, [request.id, request.method, request.prefill])
+    setRemaining(request.timeout !== undefined ? Math.ceil(request.timeout / 1000) : null)
+  }, [request.id, request.method, request.prefill, request.timeout])
 
-  const answer = async (a: ExtensionUiAnswer) => {
-    if (sending) return
-    setSending(true)
-    try {
-      await window.electronAPI.respondUi(sessionId, request.id, a)
-    } finally {
-      // Resolved locally even if the write failed — the session is likely dead
-      // and the store clears leftovers on closed/error anyway.
-      resolveUiRequest(sessionId, request.id)
+  const answer = useCallback(
+    async (a: ExtensionUiAnswer) => {
+      if (sending) return
+      setSending(true)
+      try {
+        await window.electronAPI.respondUi(sessionId, request.id, a)
+      } finally {
+        // Resolved locally even if the write failed — the session is likely dead
+        // and the store clears leftovers on closed/error anyway.
+        resolveUiRequest(sessionId, request.id)
+      }
+    },
+    [sending, sessionId, request.id, resolveUiRequest]
+  )
+
+  // Countdown to the runtime's deadline: auto-cancel when it hits zero.
+  useEffect(() => {
+    if (remaining === null) return
+    if (remaining <= 0) {
+      void answer({ cancelled: true })
+      return
     }
-  }
+    const timer = setTimeout(() => setRemaining((r) => (r === null ? null : r - 1)), 1000)
+    return () => clearTimeout(timer)
+  }, [remaining, answer])
+
+  // Escape cancels the dialog (same as the X / Cancel button).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        void answer({ cancelled: true })
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [answer])
 
   const isTextual = request.method === 'input' || request.method === 'editor'
 
@@ -51,7 +85,10 @@ export default function ExtensionUiDialog({
             <h3 className="truncate text-[14px] font-semibold text-cream">
               {request.title || t('uiDialog.untitled')}
             </h3>
-            <p className="mt-0.5 text-[11px] text-cream-faint">{t('uiDialog.subtitle')}</p>
+            <p className="mt-0.5 text-[11px] text-cream-faint">
+              {t('uiDialog.subtitle')}
+              {remaining !== null && ` · ${t('uiDialog.timeout', { count: remaining })}`}
+            </p>
           </div>
           <button
             onClick={() => answer({ cancelled: true })}

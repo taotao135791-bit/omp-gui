@@ -156,6 +156,13 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
             )}
             {message.content}
           </div>
+          {message.failed && (
+            <div className="mt-1 flex justify-end">
+              <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-px text-[10px] font-medium text-red-500">
+                {t('msg.sendFailed')}
+              </span>
+            </div>
+          )}
           {/* hover action bar: per-turn model/thinking tag, copy, edit-and-resend */}
           <div className="mt-1 flex items-center justify-end gap-1 opacity-0 transition-all group-hover:opacity-100">
             {tagLabel && (

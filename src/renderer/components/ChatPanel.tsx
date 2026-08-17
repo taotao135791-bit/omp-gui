@@ -2,7 +2,7 @@ import { useRef, useEffect, useState } from 'react'
 import { FolderOpen, Download, Loader2, ChevronRight, ChevronDown } from 'lucide-react'
 import { PromptImage, SlashCommand } from '@shared/types'
 import { useAppStore } from '../store'
-import { useT } from '../i18n'
+import { I18nKey, useT } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import MessageList from './MessageList'
@@ -32,7 +32,9 @@ export default function ChatPanel() {
     currentSessionId ? Boolean(s.compacting[currentSessionId]) : false
   )
   const pendingUi = currentSessionId ? (uiRequests[currentSessionId] || [])[0] : undefined
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const sessionError = useAppStore((s) =>
+    currentSessionId ? s.sessionErrors[currentSessionId] : undefined
+  )
   const scrollRef = useRef<HTMLDivElement>(null)
   // Only auto-scroll while the user is pinned to the bottom; scrolling up
   // during streaming must not yank the view back down on every delta.
@@ -44,6 +46,8 @@ export default function ChatPanel() {
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
   const [exporting, setExporting] = useState(false)
   const [exportFailed, setExportFailed] = useState(false)
+  // Session-less send failure (create threw — e.g. a stale workspace grant)
+  const [sendError, setSendError] = useState<I18nKey | null>(null)
 
   // Slash commands come from the live session (extensions/prompts/skills)
   useEffect(() => {
@@ -94,33 +98,64 @@ export default function ChatPanel() {
     }, 500)
   }
 
-  const handleSend = async (text: string, images?: PromptImage[]) => {
-    if (!text.trim() || cliAvailable === false) return
-    const sessionId = currentSessionId ?? (await createSessionForCurrentProject())
-    if (!sessionId) return
-    // Snapshot the session's REAL state at dispatch time — the historical
-    // turn keeps the model/thinking it actually ran under, never the
-    // session's later current state.
-    const snap = await captureSessionSnapshot(sessionId)
-    useAppStore.getState().addMessage(sessionId, {
-      id: crypto.randomUUID(),
+  const handleSend = async (text: string, images?: PromptImage[]): Promise<boolean> => {
+    const trimmed = text.trim()
+    if (!trimmed || cliAvailable === false) return false
+    let sessionId = currentSessionId
+    if (!sessionId) {
+      // Session creation throws on an invalid grant — fail loudly and let the
+      // composer restore the draft instead of losing it to a rejection.
+      try {
+        sessionId = await createSessionForCurrentProject()
+      } catch (err) {
+        console.error('Session creation failed:', err)
+        setSendError('chat.createFailed')
+        setTimeout(() => setSendError(null), 3000)
+        return false
+      }
+    }
+    if (!sessionId) return false
+    const store = useAppStore.getState()
+    store.setSessionError(sessionId, null)
+    // The user bubble lands immediately; the runtime snapshot below (a
+    // get_state RPC with an 8s timeout on a hung session) resolves
+    // concurrently and tags the message whenever it comes back.
+    const snapshot = captureSessionSnapshot(sessionId)
+    const messageId = crypto.randomUUID()
+    store.addMessage(sessionId, {
+      id: messageId,
       role: 'user',
       kind: 'prompt',
-      content: text.trim(),
-      images: images?.map(({ data, mimeType }) => ({ data, mimeType })),
-      runtimeModel: snap.modelSelector,
-      runtimeThinking: snap.thinkingLevel
+      content: trimmed,
+      images: images?.map(({ data, mimeType }) => ({ data, mimeType }))
     })
+    // Snapshot the worktree BEFORE the prompt can make its first edit, so the
+    // checkpoint really is the "before" state of this turn.
+    const list = useAppStore.getState().messages[sessionId] || []
+    await store.createCheckpointForMessage(sessionId, list.length - 1, trimmed)
     // Optimistic: show the working state until agent_end / error lands
-    useAppStore.getState().setBusy(sessionId, true)
-    const sent = await window.electronAPI.sendMessage(sessionId, text.trim(), images)
-    if (sent) {
-      // Snapshot the worktree so this turn can be rolled back later.
-      const list = useAppStore.getState().messages[sessionId] || []
-      void useAppStore.getState().createCheckpointForMessage(sessionId, list.length - 1, text.trim())
-      // First user message of an untitled session becomes its name
-      void useAppStore.getState().maybeNameSession(sessionId, text.trim())
+    store.setBusy(sessionId, true)
+    const sent = await window.electronAPI.sendMessage(sessionId, trimmed, images)
+    if (!sent) {
+      // The session's process is gone: never leave "Running" on and never
+      // drain the parked queue into the void — flag the failure instead.
+      store.setBusy(sessionId, false)
+      store.clearQueuedMessages(sessionId)
+      store.setSessionError(sessionId, 'chat.sendFailed')
+      store.updateMessage(sessionId, messageId, { failed: true })
+      return false
     }
+    // Tag the turn with the ACTUAL dispatch-time model/thinking — the
+    // historical turn keeps what it ran under, never later session state.
+    void snapshot.then((snap) => {
+      useAppStore.getState().updateMessage(sessionId, messageId, {
+        runtimeModel: snap.modelSelector,
+        runtimeThinking: snap.thinkingLevel
+      })
+    })
+    // First user message of an untitled session becomes its name
+    void store.maybeNameSession(sessionId, trimmed)
+    return true
   }
 
   const handleExport = async () => {
@@ -151,6 +186,9 @@ export default function ChatPanel() {
       store.resolveUiRequest(sid, req.id)
     }
     await window.electronAPI.abortSession(sid)
+    // Stop means stop: the abort's idle event drains the queue, which would
+    // auto-fire the next parked prompt right after the user said stop.
+    store.clearQueuedMessages(sid)
   }
 
   const handleCompact = async () => {
@@ -229,6 +267,16 @@ export default function ChatPanel() {
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
               <span className="font-medium text-amber-500">{t('chat.running')}</span>
             </>
+          ) : sessionError ? (
+            <>
+              <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+              <span className="font-medium text-red-500">{t(sessionError)}</span>
+            </>
+          ) : sendError ? (
+            <>
+              <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+              <span className="font-medium text-red-500">{t(sendError)}</span>
+            </>
           ) : (
             <>
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
@@ -289,7 +337,6 @@ export default function ChatPanel() {
             )}
           </div>
         )}
-        <div ref={bottomRef} />
         </div>
         {showJump && (
           <button

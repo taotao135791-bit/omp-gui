@@ -69,11 +69,11 @@ export default function LegacyPiSettings() {
   useEffect(() => {
     window.electronAPI.listCatalogModels().then(setCatalog)
     window.electronAPI.getStore('machineSkills').then((v) => {
-      const enabled = v ?? false
-      setMachineSkillsState(enabled)
-      // Idempotent re-sync doubles as the machine-skill count probe.
-      window.electronAPI.setMachineSkills(enabled).then((r) => setMachineSkillCount(r.available.length))
+      setMachineSkillsState(v ?? false)
     })
+    // Read-only probe for the count — a setMachineSkills() call here would
+    // rewrite ~/.pi/agent/settings.json on every view even when nothing changed.
+    window.electronAPI.listMachineSkills().then((names) => setMachineSkillCount(names.length))
   }, [])
 
   const seg = (active: boolean) =>

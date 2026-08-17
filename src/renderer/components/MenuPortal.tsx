@@ -8,7 +8,8 @@ import { createPortal } from 'react-dom'
  * which made them invisible and unclickable — the portal escapes that.
  *
  * The trigger passes its own ref; the anchor rect is captured on open.
- * `onClose` fires on any pointerdown outside both trigger and menu.
+ * `onClose` fires on any pointerdown outside both trigger and menu, or on
+ * Escape.
  */
 export default function MenuPortal({
   open,
@@ -38,8 +39,15 @@ export default function MenuPortal({
       if (triggerRef.current?.contains(target)) return
       onClose()
     }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
     window.addEventListener('pointerdown', onPointerDown)
-    return () => window.removeEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
   }, [open, onClose, triggerRef])
 
   if (!open || !anchor) return null

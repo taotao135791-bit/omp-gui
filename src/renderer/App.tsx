@@ -28,6 +28,9 @@ function App() {
     window.electronAPI.getStore('language').then((language) => {
       setLanguage(language)
     })
+    window.electronAPI.getStore('permissionMode').then((mode) => {
+      useAppStore.getState().setPermissionMode(mode)
+    })
     window.electronAPI.getStore('setupComplete').then((complete) => {
       setSetupComplete(complete)
     })
@@ -88,6 +91,8 @@ function App() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey && !e.shiftKey && !e.ctrlKey && e.key.toLowerCase() === 'n') {
         e.preventDefault()
+        // Same guard as the sidebar button: no CLI, no session (SetupWizard).
+        if (useAppStore.getState().cliAvailable === false) return
         createSessionForCurrentProject().then((id) => {
           if (id) navigate('/')
         })

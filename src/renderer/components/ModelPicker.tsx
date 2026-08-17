@@ -44,12 +44,20 @@ export default function ModelPicker({ sessionId }: ModelPickerProps) {
   } = useAppStore()
   const [open, setOpen] = useState(false)
   const [sessionModel, setSessionModel] = useState<{ provider: string; id: string; name: string } | null>(null)
+  const [failed, setFailed] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const navigate = useNavigate()
   const t = useT()
   const modelVersion = useAppStore((s) => (sessionId ? (s.sessionModelVersion[sessionId] ?? 0) : 0))
 
   const isCurrent = runtimeOverview?.profile === 'current'
+
+  // Transient pick-failure hint on the pill (dead session / rejected switch)
+  useEffect(() => {
+    if (!failed) return
+    const timer = setTimeout(() => setFailed(false), 2500)
+    return () => clearTimeout(timer)
+  }, [failed])
 
   useEffect(() => {
     if (isCurrent) {
@@ -114,7 +122,10 @@ export default function ModelPicker({ sessionId }: ModelPickerProps) {
     if (sessionId) {
       if (!selector) return // a live session has no "auto" to return to
       const slash = selector.indexOf('/')
-      await setCurrentSessionModel(selector.slice(0, slash), selector.slice(slash + 1))
+      const ok = await setCurrentSessionModel(selector.slice(0, slash), selector.slice(slash + 1))
+      // Nothing is optimistic here (the label rides get_state), so a rejected
+      // switch only needs the transient failure hint.
+      if (!ok) setFailed(true)
       return
     }
     // No session: next-session override ('' clears it back to the default).
@@ -136,7 +147,9 @@ export default function ModelPicker({ sessionId }: ModelPickerProps) {
         title={sessionId ? t('composer.model') : t('composer.modelNextSession')}
       >
         <Cpu size={12} />
-        <span className="max-w-36 truncate">{label}</span>
+        <span className={`max-w-36 truncate ${failed ? 'text-red-500' : ''}`}>
+          {failed ? t('composer.modelFailed') : label}
+        </span>
         <ChevronUp size={11} className={`transition ${open ? 'rotate-180' : ''}`} />
       </button>
 

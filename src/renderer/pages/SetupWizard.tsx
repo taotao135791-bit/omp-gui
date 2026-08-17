@@ -16,6 +16,7 @@ export default function SetupWizard() {
 
   const manualCommand = 'curl -fsSL https://omp.sh/install | sh'
   const [copied, setCopied] = useState(false)
+  const [manualFailed, setManualFailed] = useState(false)
 
   useEffect(() => {
     window.electronAPI.detectCli().then((info) => {
@@ -51,7 +52,11 @@ export default function SetupWizard() {
     const info = await window.electronAPI.detectCli()
     setCliAvailable(info.available)
     if (info.available) {
+      setManualFailed(false)
       setSetupComplete(true)
+    } else {
+      // The CLI still isn't on PATH — say so, or the button looks dead.
+      setManualFailed(true)
     }
   }
 
@@ -179,6 +184,12 @@ export default function SetupWizard() {
               {t('setup.installed')}
               <ArrowRight size={14} />
             </button>
+            {manualFailed && (
+              <div className="flex items-start gap-1.5 text-xs leading-5 text-red-500">
+                <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                {t('setup.stillMissing')}
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -33,22 +33,33 @@ export default function ChangesPanel() {
   const { info, refresh } = useGitInfo()
   const [diffView, setDiffView] = useState<{ path: string; text: string } | null>(null)
   const [loadingDiff, setLoadingDiff] = useState<string | null>(null)
+  const [diffFailed, setDiffFailed] = useState<string | null>(null)
 
-  useEffect(() => setDiffView(null), [currentWorkspace])
+  useEffect(() => {
+    setDiffView(null)
+    setDiffFailed(null)
+  }, [currentWorkspace])
 
   const openDiff = async (filePath: string) => {
     if (!currentWorkspace || loadingDiff) return
+    setDiffFailed(null)
     setLoadingDiff(filePath)
     const text = await window.electronAPI.gitFileDiff(currentWorkspace.id, filePath)
     setLoadingDiff(null)
-    if (text !== null) setDiffView({ path: filePath, text })
+    // '' means the file's changes vanished since the list was built — stay on
+    // the list; null means the diff could not be produced at all.
+    if (text) setDiffView({ path: filePath, text })
+    else if (text === null) setDiffFailed(filePath)
   }
 
   const refreshAll = async () => {
     refresh()
     if (diffView && currentWorkspace) {
       const text = await window.electronAPI.gitFileDiff(currentWorkspace.id, diffView.path)
-      if (text !== null) setDiffView({ path: diffView.path, text })
+      // An empty diff means the change is gone — drop back to the file list
+      // instead of rendering a blank diff page.
+      if (text) setDiffView({ path: diffView.path, text })
+      else setDiffView(null)
     }
   }
 
@@ -118,6 +129,11 @@ export default function ChangesPanel() {
           {refreshButton}
         </div>
         <div className="flex-1 overflow-y-auto py-1">
+          {diffFailed && (
+            <div className="px-3 pb-1 text-[11px] leading-4 text-red-500">
+              {t('changes.diffFailed')}
+            </div>
+          )}
           {info.files.map((file) => (
             <button
               key={file.path}

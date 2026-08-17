@@ -15,7 +15,6 @@ import { readFileSync } from 'node:fs'
 const CURRENT_SRC = 'src/renderer/components/CurrentOmpSettings.tsx'
 const LEGACY_SRC = 'src/renderer/components/LegacyPiSettings.tsx'
 const CURRENT_SECTION_SRC = [
-  'src/renderer/components/AuthSection.tsx',
   'src/renderer/components/RuntimeModelSection.tsx'
 ]
 

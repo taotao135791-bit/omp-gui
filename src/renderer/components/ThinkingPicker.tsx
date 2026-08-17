@@ -56,6 +56,7 @@ export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
   const [level, setLevel] = useState<string | undefined>(undefined)
   const [loaded, setLoaded] = useState(false)
   const [open, setOpen] = useState(false)
+  const [failed, setFailed] = useState(false)
   const [sessionSelector, setSessionSelector] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const t = useT()
@@ -69,6 +70,13 @@ export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
   const modelVersion = useAppStore((s) => (sessionId ? (s.sessionModelVersion[sessionId] ?? 0) : 0))
 
   const isCurrent = overview?.profile === 'current'
+
+  // Transient pick-failure hint on the pill (dead session / rejected switch)
+  useEffect(() => {
+    if (!failed) return
+    const timer = setTimeout(() => setFailed(false), 2500)
+    return () => clearTimeout(timer)
+  }, [failed])
 
   // The session's model — the capability filter for the offered levels.
   useEffect(() => {
@@ -129,8 +137,14 @@ export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
   const pick = async (next: SessionThinkingLevel) => {
     setOpen(false)
     if (sessionId) {
-      // Session scope only; display follows the runtime-resolved event.
-      await setCurrentSessionThinking(next)
+      // Session scope only; display follows the runtime-resolved event. The
+      // legacy path has no event, so it applies the level locally — but only
+      // when the switch actually landed (never leave a lie on the pill).
+      const ok = await setCurrentSessionThinking(next)
+      if (!ok) {
+        setFailed(true)
+        return
+      }
       if (!isCurrent) setLevel(next)
       return
     }
@@ -147,8 +161,10 @@ export default function ThinkingPicker({ sessionId }: ThinkingPickerProps) {
         title={t('composer.thinking')}
       >
         <Brain size={12} />
-        <span>
-          {t('composer.thinking')} · {loaded ? levelLabel(level, t) : '—'}
+        <span className={failed ? 'text-red-500' : ''}>
+          {failed
+            ? t('composer.thinkingFailed')
+            : `${t('composer.thinking')} · ${loaded ? levelLabel(level, t) : '—'}`}
         </span>
         <ChevronUp size={11} className={`transition ${open ? 'rotate-180' : ''}`} />
       </button>

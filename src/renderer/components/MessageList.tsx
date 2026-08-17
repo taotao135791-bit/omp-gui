@@ -65,7 +65,9 @@ export default function MessageList({ messages, sessionId = null }: MessageListP
         <div key={message.id} className={gapBefore(prev, false)}>
           <ToolGroup
             run={run}
-            streaming={streaming}
+            // Only the live turn's groups follow the stream; historical
+            // groups keep the user's manual expand/collapse.
+            streaming={streaming && inCurrentTurn}
             activity={streaming && isLastRun && inCurrentTurn ? activity : undefined}
             summary={!streaming && isTurnsLastGroup ? summary : undefined}
           />

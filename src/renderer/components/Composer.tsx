@@ -18,7 +18,8 @@ import PermissionPicker from './PermissionPicker'
 import UsageMonitor from './UsageMonitor'
 
 interface ComposerProps {
-  onSend: (text: string, images?: PromptImage[]) => void
+  /** Delivers the composed text; resolves false when delivery failed and the draft is restored. */
+  onSend: (text: string, images?: PromptImage[]) => void | boolean | Promise<void | boolean>
   onStop?: () => void
   busy?: boolean
   disabled?: boolean
@@ -45,6 +46,13 @@ const MAX_FILE_ITEMS = 20
 const FILE_LIST_TTL_MS = 30_000
 
 const EMPTY_QUEUE: QueuedMessage[] = []
+
+const IMAGE_ERROR_KEYS = {
+  tooLarge: 'composer.imageTooLarge',
+  max: 'composer.maxImages',
+  notImage: 'composer.imageNotImage',
+  readFailed: 'composer.imageReadFailed'
+} as const
 
 /**
  * The `@token` ending at the caret: `@` must start the input or follow
@@ -75,7 +83,7 @@ export default function Composer({
   const [atMenuIndex, setAtMenuIndex] = useState(0)
   const [atDismissed, setAtDismissed] = useState(false)
   const [images, setImages] = useState<PendingImage[]>([])
-  const [imageError, setImageError] = useState<'tooLarge' | 'max' | null>(null)
+  const [imageError, setImageError] = useState<keyof typeof IMAGE_ERROR_KEYS | null>(null)
   const [projectFiles, setProjectFiles] = useState<string[]>([])
   const filesLoadedAt = useRef(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -260,7 +268,7 @@ export default function Composer({
     const res = await window.electronAPI.selectImage()
     if (!res) return
     if (!res.ok) {
-      if (res.error === 'tooLarge') setImageError('tooLarge')
+      setImageError(res.error)
       return
     }
     addImage(res.data, res.mimeType)
@@ -295,7 +303,18 @@ export default function Composer({
         images: imgs
       })
     } else {
-      onSend(trimmed, imgs)
+      // The send is async: clear optimistically, but roll the draft back when
+      // delivery failed (dead session, invalid grant) so it is never lost.
+      const staged = images
+      const restore = (ok: void | boolean) => {
+        if (ok !== false) return
+        setText((cur) => (cur.trim() ? cur : trimmed))
+        setImages((cur) => (cur.length ? cur : staged))
+        setCaret(trimmed.length)
+      }
+      const result = onSend(trimmed, imgs)
+      if (result instanceof Promise) void result.then(restore)
+      else restore(result)
     }
     setText('')
     setCaret(0)
@@ -523,7 +542,7 @@ export default function Composer({
           )}
           {imageError && (
             <div className="px-2.5 pb-1 text-[11px] text-red-500">
-              {t(imageError === 'tooLarge' ? 'composer.imageTooLarge' : 'composer.maxImages')}
+              {t(IMAGE_ERROR_KEYS[imageError])}
             </div>
           )}
           <textarea

@@ -81,7 +81,7 @@ export function LiveTurnRow({ activity }: { activity: TurnActivity }) {
 interface ToolGroupProps {
   /** Consecutive tool-call messages collapsed into one group. */
   run: MessageLike[]
-  /** Session is streaming: groups stay expanded, the live row shows. */
+  /** This group's turn is streaming: it stays expanded, the live row shows. */
   streaming: boolean
   /** Live counters — passed only to the current turn's last group. */
   activity?: TurnActivity

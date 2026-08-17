@@ -202,7 +202,8 @@ export default function PackagesPage() {
       if (!pkg) return
       if (zone === 'chassis') handleToggle(pkg, true)
       else if (zone === 'rack') handleToggle(pkg, false)
-      else handleRemove(pkg)
+      // Same destructive op as the card button — same two-stage confirm.
+      else void handleRemoveClick(pkg)
     }
   })
 
@@ -219,6 +220,21 @@ export default function PackagesPage() {
           : 'border-line-strong'
     return `${base} transition ${state}`
   }
+
+  // The action log also renders next to the rack: a toggle failure triggered
+  // from a part card (e.g. enable/disable unsupported on the current omp
+  // profile) must be visible from the rack, not only up in the Install box.
+  const logBlock = log && log.text ? (
+    <pre
+      className={`mt-3 max-h-36 overflow-y-auto rounded-lg border px-3 py-2 font-mono text-[11px] leading-5 whitespace-pre-wrap ${
+        log.ok
+          ? 'border-line bg-ink-900 text-cream-dim'
+          : 'border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-300'
+      }`}
+    >
+      {log.text}
+    </pre>
+  ) : null
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
@@ -283,17 +299,7 @@ export default function PackagesPage() {
                 {pending?.kind === 'install' ? t('plugins.installing') : t('plugins.install')}
               </button>
             </div>
-            {log && log.text && (
-              <pre
-                className={`mt-3 max-h-36 overflow-y-auto rounded-lg border px-3 py-2 font-mono text-[11px] leading-5 whitespace-pre-wrap ${
-                  log.ok
-                    ? 'border-line bg-ink-900 text-cream-dim'
-                    : 'border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-300'
-                }`}
-              >
-                {log.text}
-              </pre>
-            )}
+            {logBlock}
           </section>
 
           {/* How to assemble */}
@@ -383,6 +389,7 @@ export default function PackagesPage() {
                 ))}
               </div>
             )}
+            {logBlock}
           </section>
 
           {/* Discover — curated picks, community search, build-your-own */}

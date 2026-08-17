@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { headTailLines, headTailChars, isLargeText, formatHiddenLines, formatHiddenChars } from './retention'
+import { headTailLines, headTailChars, isLargeText } from './retention'
 
 describe('headTailLines', () => {
   it('returns the whole text when it fits the budget', () => {
@@ -25,10 +25,6 @@ describe('headTailLines', () => {
     expect(result.truncated).toBe(true)
     expect(result.head).toBe('你好世界')
     expect(result.tail).toBe('第四行')
-  })
-
-  it('formats the hidden-line notice', () => {
-    expect(formatHiddenLines(42381)).toBe('… 42,381 lines hidden …')
   })
 })
 
@@ -58,10 +54,6 @@ describe('headTailChars', () => {
     // The head must end on a complete codepoint (even number of code units).
     expect(result.head.length % 2).toBe(0)
     expect(result.tail.length % 2).toBe(0)
-  })
-
-  it('formats the hidden-char notice', () => {
-    expect(formatHiddenChars(42)).toBe('… 42 characters hidden …')
   })
 })
 

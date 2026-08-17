@@ -1,8 +1,9 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord, WorkspaceGrant } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PermissionMode, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord, WorkspaceGrant } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer, applyHistoricalAgents } from '../lib/execution'
+import type { I18nKey } from '../i18n'
 
 export interface MessageLike {
   id: string
@@ -34,6 +35,8 @@ export interface MessageLike {
   runtimeModel?: string
   /** Per-turn runtime snapshot: session thinking level at dispatch. */
   runtimeThinking?: string
+  /** User prompt that could not be delivered (dead session); renders a badge. */
+  failed?: boolean
 }
 
 /** Verb buckets / turn-progress shapes now live in `../lib/execution` (single source). */
@@ -65,6 +68,8 @@ export type UiRequest = Extract<SessionEvent, { type: 'ui_request' }>
 interface AppState {
   theme: 'dark' | 'light'
   language: Language
+  /** Default permission mode for new sessions (persisted in electron-store). */
+  permissionMode: PermissionMode
   /** Main-owned workspace grant for the current project; UI paths come from grant.displayPath. */
   currentWorkspace: WorkspaceGrant | null
   sessions: Session[]
@@ -99,6 +104,8 @@ interface AppState {
   busy: Record<string, boolean>
   /** sessionId -> messages queued while the session is busy (FIFO) */
   queuedMessages: Record<string, QueuedMessage[]>
+  /** sessionId -> user-visible failure banner key (dead session / send failure). */
+  sessionErrors: Record<string, I18nKey | undefined>
   /** sessionId -> whether context compaction is running */
   compacting: Record<string, boolean>
   /** sessionId -> latest known token/context usage */
@@ -117,6 +124,8 @@ interface AppState {
   recentProjectsLoaded: boolean
   /** Persisted session files of the current project (pi history), newest first. */
   historySessions: HistorySessionInfo[]
+  /** True while the history list is being (re)loaded; entries may be stale. */
+  historyLoading: boolean
   /** Runtime-reported settings overview (profile/capabilities/providers/defaults). */
   runtimeOverview: RuntimeOverview | null
   /** Runtime model catalog (current profile; legacy rides `models`). */
@@ -131,9 +140,11 @@ interface AppState {
   loginState: LoginState
   setTheme: (theme: 'dark' | 'light') => void
   setLanguage: (language: Language) => void
-  /** Replace the active workspace grant (and sync MRU display paths). */
+  /** Set the default permission mode for new sessions and persist it. */
+  setPermissionMode: (mode: PermissionMode) => void
+  /** Replace the active workspace grant (and sync the MRU real paths). */
   setCurrentWorkspace: (grant: WorkspaceGrant | null) => void
-  /** Activate a persisted recent display path into a grant and select it. */
+  /** Activate a persisted recent path (real or display spelling) into a grant. */
   activateRecentWorkspace: (displayPath: string) => Promise<void>
   /** Show the native folder dialog and select the resulting grant. */
   selectWorkspace: () => Promise<void>
@@ -147,6 +158,8 @@ interface AppState {
   /** Record a steer interaction inside the ACTIVE turn's trajectory. */
   recordSteer: (sessionId: string, text: string) => void
   addMessage: (sessionId: string, message: MessageLike) => void
+  /** Patch one message in place (failed flag, late runtime-snapshot tags). */
+  updateMessage: (sessionId: string, messageId: string, patch: Partial<MessageLike>) => void
   /** Replace a session's whole transcript (history resume backfill). */
   setMessages: (sessionId: string, messages: MessageLike[]) => void
   appendMessageContent: (sessionId: string, content: string) => void
@@ -171,6 +184,8 @@ interface AppState {
   createCheckpointForMessage: (sessionId: string, msgIndex: number, text: string) => Promise<void>
   setCliAvailable: (available: boolean) => void
   setBusy: (sessionId: string, busy: boolean) => void
+  /** Set/clear a session's user-visible failure banner (i18n key). */
+  setSessionError: (sessionId: string, key: I18nKey | null) => void
   /** Append a message to the session's queue. */
   enqueueQueuedMessage: (sessionId: string, message: QueuedMessage) => void
   /** Remove one queued message by id. */
@@ -260,6 +275,7 @@ interface AppState {
 export const useAppStore = create<AppState>((set, get) => ({
   theme: 'light',
   language: 'en',
+  permissionMode: 'ask',
   currentWorkspace: null,
   sessions: [],
   currentSessionId: null,
@@ -280,6 +296,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   modelConfig: null,
   busy: {},
   queuedMessages: {},
+  sessionErrors: {},
   compacting: {},
   stats: {},
   pinnedSessionIds: [],
@@ -289,6 +306,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   recentProjects: [],
   recentProjectsLoaded: false,
   historySessions: [],
+  historyLoading: false,
   runtimeOverview: null,
   runtimeModels: [],
   runtimeModelCatalog: [],
@@ -301,19 +319,31 @@ export const useAppStore = create<AppState>((set, get) => ({
   setTheme: (theme) => {
     set({ theme })
     document.documentElement.classList.toggle('dark', theme === 'dark')
+    window.electronAPI.setStore('theme', theme)
   },
   setLanguage: (language) => {
     set({ language })
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'
     window.electronAPI.setStore('language', language)
   },
+  setPermissionMode: (permissionMode) => {
+    set({ permissionMode })
+    window.electronAPI.setStore('permissionMode', permissionMode)
+  },
   setCurrentWorkspace: (grant) =>
     set((state) => {
-      if (!grant) return { currentWorkspace: null }
-      const displayPath = grant.displayPath
+      // A workspace switch invalidates the persisted-history list immediately —
+      // the Sidebar's async reload refills it; until then no stale entry from
+      // the previous project may render (a click would resume it under the
+      // NEW grant).
+      if (!grant) return { currentWorkspace: null, historySessions: [] }
+      // The MRU stores the grant's canonical realPath — that is what Main
+      // persists for sessions (session.cwd), so display-spelling variants of
+      // the same folder can't produce duplicate entries or orphan groups.
+      const realPath = grant.realPath
       const recentProjects = [
-        displayPath,
-        ...state.recentProjects.filter((p) => p !== displayPath)
+        realPath,
+        ...state.recentProjects.filter((p) => p !== realPath)
       ].slice(0, 10)
       const changed =
         recentProjects.length !== state.recentProjects.length ||
@@ -321,18 +351,31 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (changed && state.recentProjectsLoaded) {
         window.electronAPI.setStore('recentProjects', recentProjects)
       }
-      return { currentWorkspace: grant, recentProjects }
+      const workspaceChanged = state.currentWorkspace?.id !== grant.id
+      return {
+        currentWorkspace: grant,
+        recentProjects,
+        ...(workspaceChanged ? { historySessions: [] } : {})
+      }
     }),
   activateRecentWorkspace: async (displayPath) => {
     const grant = await window.electronAPI.activateRecentWorkspace(displayPath)
     if (grant) {
       get().setCurrentWorkspace(grant)
     } else {
-      // Stale recent path: drop it from the list and clear selection.
-      set((state) => ({
-        recentProjects: state.recentProjects.filter((p) => p !== displayPath),
-        currentWorkspace: null
-      }))
+      // Stale recent path: drop it from the list. Only clear the current
+      // workspace when the failed activation WAS the active workspace —
+      // otherwise a dead MRU entry must not clobber a live selection.
+      set((state) => {
+        const active = state.currentWorkspace
+        const isCurrent =
+          active !== null &&
+          (active.displayPath === displayPath || active.realPath === displayPath)
+        return {
+          recentProjects: state.recentProjects.filter((p) => p !== displayPath),
+          ...(isCurrent ? { currentWorkspace: null } : {})
+        }
+      })
       window.electronAPI.setStore(
         'recentProjects',
         get().recentProjects
@@ -426,6 +469,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       [sessionId]: [...(state.messages[sessionId] || []), message]
     }
   })),
+  updateMessage: (sessionId, messageId, patch) =>
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [sessionId]: (state.messages[sessionId] || []).map((m) =>
+          m.id === messageId ? { ...m, ...patch } : m
+        )
+      }
+    })),
   setMessages: (sessionId, messages) =>
     set((state) => ({ messages: { ...state.messages, [sessionId]: messages } })),
   appendMessageContent: (sessionId, content) => set((state) => {
@@ -530,6 +582,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setCliAvailable: (cliAvailable) => set({ cliAvailable }),
   setBusy: (sessionId, busy) =>
     set((state) => ({ busy: { ...state.busy, [sessionId]: busy } })),
+  setSessionError: (sessionId, key) =>
+    set((state) => ({ sessionErrors: { ...state.sessionErrors, [sessionId]: key ?? undefined } })),
   enqueueQueuedMessage: (sessionId, message) =>
     set((state) => ({
       queuedMessages: {
@@ -593,12 +647,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
   loadHistorySessions: async (grantId) => {
     if (!grantId) {
-      set({ historySessions: [] })
+      set({ historySessions: [], historyLoading: false })
       return
     }
+    set({ historyLoading: true })
     const list = await window.electronAPI.listSessionHistory(grantId)
-    // Ignore a stale response when the workspace was switched meanwhile
-    if (get().currentWorkspace?.id === grantId) set({ historySessions: list })
+    // Ignore a stale response when the workspace was switched meanwhile; the
+    // newer load owns the flag then.
+    if (get().currentWorkspace?.id === grantId) {
+      set({ historySessions: list, historyLoading: false })
+    }
   },
   removeHistorySession: (filePath) =>
     set((state) => ({
@@ -794,8 +852,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           // is tagged with the model/thinking it really runs under — even if
           // the user hot-switched the session model while it was queued.
           void captureSessionSnapshot(event.sessionId).then((snap) => {
+            const bubbleId = crypto.randomUUID()
             get().addMessage(event.sessionId, {
-              id: crypto.randomUUID(),
+              id: bubbleId,
               role: 'user',
               kind: 'prompt',
               content: next.text,
@@ -811,6 +870,13 @@ export const useAppStore = create<AppState>((set, get) => ({
                   const list = get().messages[event.sessionId] || []
                   void get().createCheckpointForMessage(event.sessionId, list.length - 1, next.text)
                   void get().maybeNameSession(event.sessionId, next.text)
+                } else {
+                  // The session died underneath the queue: stop draining into
+                  // the void — drop the rest, release busy, flag the failure.
+                  set((state) => ({ busy: { ...state.busy, [event.sessionId]: false } }))
+                  get().clearQueuedMessages(event.sessionId)
+                  get().setSessionError(event.sessionId, 'chat.sendFailed')
+                  get().updateMessage(event.sessionId, bubbleId, { failed: true })
                 }
               })
           })
@@ -861,7 +927,28 @@ export const useAppStore = create<AppState>((set, get) => ({
         content: `Error: ${event.message}`
       })
       // A dead session can't answer dialogs — drop them
-      set((state) => ({ uiRequests: { ...state.uiRequests, [event.sessionId]: [] } }))
+      set((state) => ({
+        uiRequests: { ...state.uiRequests, [event.sessionId]: [] },
+        // A turn-ending failure (recoverable !== true) may arrive with no
+        // following idle — e.g. an optimistically-busy prompt that never
+        // reached agent_start — so release busy here or the session sticks
+        // on "Running" forever. Recoverable errors never touch the turn.
+        ...(event.recoverable !== true
+          ? { busy: { ...state.busy, [event.sessionId]: false } }
+          : {}),
+        // recoverable === false means the process is gone: mark the session
+        // dead in the sidebar and flag it in the chat header.
+        ...(event.recoverable === false
+          ? {
+              sessions: state.sessions.map((s) =>
+                s.id === event.sessionId ? { ...s, status: 'error' as const } : s
+              )
+            }
+          : {})
+      }))
+      if (event.recoverable === false) {
+        get().setSessionError(event.sessionId, 'chat.sessionDead')
+      }
     } else if (event.type === 'closed') {
       set((state) => ({
         busy: { ...state.busy, [event.sessionId]: false },

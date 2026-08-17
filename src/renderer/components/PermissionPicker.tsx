@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Check, ChevronUp, Shield } from 'lucide-react'
 import { PermissionMode } from '@shared/types'
 import { useAppStore } from '../store'
@@ -6,10 +6,11 @@ import { I18nKey, useT } from '../i18n'
 import MenuPortal from './MenuPortal'
 
 /**
- * Permission-mode pill in the composer toolbar. ask/full flip the live
- * session's approval config on the spot (the extension re-reads it per tool
- * call); no-bash/readonly are spawn-time --exclude-tools, so they're flagged
- * as new-session-only.
+ * Permission-mode pill in the composer toolbar. Every pick persists the
+ * default for FUTURE sessions; on top of that, ask/full hot-swap the live
+ * session's approval config on the spot (the legacy extension re-reads it per
+ * tool call). no-bash/readonly are spawn-time --exclude-tools / --tools — they
+ * can only apply to the next session, so they never touch a running one.
  */
 const MODES: { value: PermissionMode; labelKey: I18nKey; noteKey?: I18nKey }[] = [
   { value: 'ask', labelKey: 'settings.permissions.ask' },
@@ -19,23 +20,24 @@ const MODES: { value: PermissionMode; labelKey: I18nKey; noteKey?: I18nKey }[] =
 ]
 
 export default function PermissionPicker() {
-  const [mode, setMode] = useState<PermissionMode | null>(null)
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const t = useT()
   const currentSessionId = useAppStore((s) => s.currentSessionId)
-
-  useEffect(() => {
-    window.electronAPI.getStore('permissionMode').then((v) => setMode(v ?? 'ask'))
-  }, [])
+  // The zustand copy keeps the pill in sync with the Settings page.
+  const mode = useAppStore((s) => s.permissionMode)
+  const setPermissionMode = useAppStore((s) => s.setPermissionMode)
+  const isCurrent = useAppStore((s) => s.runtimeOverview?.profile === 'current')
 
   const pick = async (next: PermissionMode) => {
     setOpen(false)
-    setMode(next)
     // Default for future sessions…
-    await window.electronAPI.setStore('permissionMode', next)
-    // …plus a hot-swap of the live session's approval config, when possible
-    if (currentSessionId) {
+    setPermissionMode(next)
+    // …plus a hot-swap of the live session's approval config, when possible:
+    // legacy profile only (current omp maps modes to spawn-time
+    // --tools/--approval-mode) and only ask/full — writing the no-bash/
+    // readonly approval config would turn a restricted session into yolo.
+    if (currentSessionId && !isCurrent && (next === 'ask' || next === 'full')) {
       await window.electronAPI.updateApprovalConfig(currentSessionId, next)
     }
   }
@@ -51,7 +53,7 @@ export default function PermissionPicker() {
         title={t('composer.permissions')}
       >
         <Shield size={12} />
-        <span>{current ? t(current.labelKey) : '—'}</span>
+        <span>{t(current?.labelKey ?? 'settings.permissions.ask')}</span>
         <ChevronUp size={11} className={`transition ${open ? 'rotate-180' : ''}`} />
       </button>
 

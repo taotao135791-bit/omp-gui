@@ -1,12 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
-import {
-  headTailLines,
-  headTailChars,
-  isLargeText,
-  formatHiddenLines,
-  formatHiddenChars
-} from '../../lib/retention'
+import { headTailLines, headTailChars, isLargeText } from '../../lib/retention'
 import { useT } from '../../i18n'
 
 const HEAD_LINES = 100
@@ -44,9 +38,10 @@ export default function RetainedOutput({ text, className = '' }: RetainedOutputP
   const retained = lineCount > LINE_THRESHOLD
     ? headTailLines(text, HEAD_LINES, TAIL_LINES)
     : headTailChars(text, HEAD_CHARS, TAIL_CHARS)
-  const notice = retained.hiddenUnit === 'lines'
-    ? formatHiddenLines(retained.hidden)
-    : formatHiddenChars(retained.hidden)
+  const notice =
+    retained.hiddenUnit === 'lines'
+      ? t('tool.hiddenLines', { count: retained.hidden.toLocaleString() })
+      : t('tool.hiddenChars', { count: retained.hidden.toLocaleString() })
 
   return (
     <div>
@@ -72,7 +67,10 @@ export default function RetainedOutput({ text, className = '' }: RetainedOutputP
           </>
         ) : (
           <>
-            <ChevronDown size={12} /> {t('tool.showFullOutput', { lines: lineCount })}
+            <ChevronDown size={12} />{' '}
+            {retained.hiddenUnit === 'lines'
+              ? t('tool.showFullOutput', { lines: lineCount })
+              : t('tool.showFullOutputChars', { chars: text.length.toLocaleString() })}
           </>
         )}
       </button>

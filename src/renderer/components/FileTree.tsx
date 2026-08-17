@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronRight, ChevronDown, Folder, File } from 'lucide-react'
+import { ChevronRight, ChevronDown, Folder, File, Loader2 } from 'lucide-react'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 
@@ -9,11 +9,13 @@ interface TreeNode {
   isDirectory: boolean
   children?: TreeNode[]
   expanded: boolean
+  loading?: boolean
 }
 
 export default function FileTree() {
   const { currentWorkspace, selectedFile, setSelectedFile, setActiveRightTab } = useAppStore()
   const [tree, setTree] = useState<TreeNode[]>([])
+  const [loading, setLoading] = useState(false)
   const t = useT()
 
   useEffect(() => {
@@ -21,7 +23,11 @@ export default function FileTree() {
       setTree([])
       return
     }
+    let cancelled = false
+    setTree([])
+    setLoading(true)
     loadDir(currentWorkspace.id, '').then((children) => {
+      if (cancelled) return
       setTree([
         {
           name: currentWorkspace.displayPath.split('/').pop() || currentWorkspace.displayPath,
@@ -31,7 +37,11 @@ export default function FileTree() {
           expanded: true
         }
       ])
+      setLoading(false)
     })
+    return () => {
+      cancelled = true
+    }
   }, [currentWorkspace])
 
   const loadDir = async (grantId: string, relativePath: string): Promise<TreeNode[]> => {
@@ -62,8 +72,11 @@ export default function FileTree() {
     }
 
     if (!currentWorkspace) return
+    setParentList(parentList.map((n) => (n.path === node.path ? { ...n, loading: true } : n)))
     const children = await loadDir(currentWorkspace.id, node.path)
-    const updated = parentList.map((n) => (n.path === node.path ? { ...n, expanded: true, children } : n))
+    const updated = parentList.map((n) =>
+      n.path === node.path ? { ...n, expanded: true, children, loading: false } : n
+    )
     setParentList(updated)
   }
 
@@ -95,7 +108,18 @@ export default function FileTree() {
             <File size={13} className="text-cream-faint" />
           )}
           <span className="truncate">{node.name}</span>
+          {node.loading && (
+            <Loader2 size={11} className="ml-auto shrink-0 animate-spin text-cream-faint" />
+          )}
         </div>
+        {node.isDirectory && node.expanded && node.children && node.children.length === 0 && (
+          <div
+            className="flex h-6 items-center text-[11px] text-cream-faint"
+            style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
+          >
+            {t('panel.emptyOrInaccessible')}
+          </div>
+        )}
         {node.isDirectory && node.expanded && node.children && (
           <div>
             {node.children.map((child) =>
@@ -120,7 +144,14 @@ export default function FileTree() {
 
   return (
     <div className="px-1.5 py-2">
-      {tree.map((node) => renderNode(node, tree, setTree))}
+      {loading ? (
+        <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-cream-faint">
+          <Loader2 size={11} className="animate-spin" />
+          {t('panel.loading')}
+        </div>
+      ) : (
+        tree.map((node) => renderNode(node, tree, setTree))
+      )}
     </div>
   )
 }

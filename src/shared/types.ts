@@ -739,6 +739,8 @@ export interface GitInfo {
 export type UpdaterStatus =
   | { status: 'idle' }
   | { status: 'checking' }
+  /** A check completed and found nothing newer. */
+  | { status: 'none' }
   | { status: 'available'; version: string }
   | { status: 'downloading' }
   | { status: 'progress'; percent: number }

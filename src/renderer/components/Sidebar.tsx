@@ -47,6 +47,7 @@ export default function Sidebar() {
     unreadSessionIds,
     uiRequests,
     historySessions,
+    historyLoading,
     recentProjects,
     selectWorkspace,
     activateRecentWorkspace,
@@ -62,7 +63,8 @@ export default function Sidebar() {
     loadHistorySessions,
     removeHistorySession,
     setRecentProjects,
-    removeRecentProject
+    removeRecentProject,
+    setSetupComplete
   } = useAppStore()
 
   const [searchOpen, setSearchOpen] = useState(false)
@@ -111,7 +113,8 @@ export default function Sidebar() {
 
   // Switching workspaces reloads the session history via the currentWorkspace effect
   const handleSwitchProject = (path: string) => {
-    if (path === currentWorkspace?.displayPath) return
+    // recentProjects entries are canonical real paths — compare like with like.
+    if (path === currentWorkspace?.realPath) return
     void activateRecentWorkspace(path)
   }
 
@@ -126,7 +129,9 @@ export default function Sidebar() {
   }
 
   const handleResumeHistory = async (info: HistorySessionInfo) => {
-    if (resumingPath) return
+    // While the list is reloading for a new workspace its entries may still
+    // belong to the previous project — resuming one would use the new grant.
+    if (resumingPath || historyLoading) return
     // A history session belongs to a workspace. When none is selected, derive it
     // from the session itself so clicking always opens the chat (never a
     // no-op that just stays on the home page).
@@ -217,10 +222,11 @@ export default function Sidebar() {
 
   // ---- group live sessions by their project (session.cwd) --------------
   // Known projects are the ones in recentProjects plus the current project;
-  // anything else lands in a bottom "untied to a project" group.
+  // anything else lands in a bottom "untied to a project" group. All entries
+  // are canonical real paths because session.cwd is one too.
   const projectOrder = useMemo(() => {
     const order: string[] = []
-    if (currentWorkspace) order.push(currentWorkspace.displayPath)
+    if (currentWorkspace) order.push(currentWorkspace.realPath)
     for (const p of recentProjects) if (!order.includes(p)) order.push(p)
     return order
   }, [currentWorkspace, recentProjects])
@@ -293,6 +299,8 @@ export default function Sidebar() {
     // A background session waiting on an approval/plugin dialog needs the
     // user — outranks the plain working dot.
     const waiting = !active && (uiRequests[session.id] || []).length > 0
+    // The process is gone (spawn failure / crash) — outranks everything.
+    const dead = session.status === 'error'
     const pinned = pinnedSet.has(session.id)
     const archived = archivedSet.has(session.id)
     return (
@@ -308,19 +316,25 @@ export default function Sidebar() {
       >
         <span
           className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-            waiting
-              ? 'animate-pulse bg-red-400'
-              : running
-                ? 'animate-pulse bg-amber-400'
-                : unread
-                  ? 'bg-accent'
-                  : active
-                    ? 'bg-cream-faint'
-                    : 'bg-line-strong'
+            dead
+              ? 'bg-red-500'
+              : waiting
+                ? 'animate-pulse bg-red-400'
+                : running
+                  ? 'animate-pulse bg-amber-400'
+                  : unread
+                    ? 'bg-accent'
+                    : active
+                      ? 'bg-cream-faint'
+                      : 'bg-line-strong'
           }`}
         />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-medium leading-5 text-cream">
+          <div
+            className={`truncate text-[13px] font-medium leading-5 ${
+              dead ? 'text-cream-faint line-through' : 'text-cream'
+            }`}
+          >
             {session.title}
           </div>
           <div className="truncate text-[11px] leading-4 text-cream-faint">
@@ -482,7 +496,15 @@ export default function Sidebar() {
       {cliAvailable === false && (
         <div className="mx-2.5 mt-2.5 flex items-start gap-2 rounded-lg border border-yellow-500/25 bg-yellow-500/10 p-2.5 text-xs leading-5 text-yellow-700 dark:text-yellow-200/90">
           <AlertCircle size={13} className="mt-0.5 shrink-0" />
-          <span>{t('sidebar.cliMissing')}</span>
+          <div>
+            <span>{t('sidebar.cliMissing')}</span>
+            <button
+              onClick={() => setSetupComplete(false)}
+              className="mt-1 block font-medium underline underline-offset-2 transition-colors hover:text-yellow-900 dark:hover:text-yellow-100"
+            >
+              {t('sidebar.cliInstall')}
+            </button>
+          </div>
         </div>
       )}
 
@@ -517,7 +539,7 @@ export default function Sidebar() {
                   key={path}
                   onClick={() => handleSwitchProject(path)}
                   title={path}
-                  className={`${navRow(path === currentWorkspace?.displayPath)} cursor-pointer`}
+                  className={`${navRow(path === currentWorkspace?.realPath)} cursor-pointer`}
                 >
                   <FolderOpen size={13} className="shrink-0 text-cream-faint" />
                   <span className="truncate">{name}</span>

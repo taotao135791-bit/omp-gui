@@ -40,7 +40,7 @@ export function initUpdater(): void {
   autoUpdater.on('update-available', (info) =>
     setStatus({ status: 'available', version: info.version })
   )
-  autoUpdater.on('update-not-available', () => setStatus({ status: 'idle' }))
+  autoUpdater.on('update-not-available', () => setStatus({ status: 'none' }))
   autoUpdater.on('download-progress', (progress) =>
     setStatus({ status: 'progress', percent: Math.round(progress.percent * 10) / 10 })
   )

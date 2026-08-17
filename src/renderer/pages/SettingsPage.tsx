@@ -52,15 +52,15 @@ const PERMISSION_MODES: { value: PermissionMode; label: I18nKey; note: I18nKey }
 ]
 
 export default function SettingsPage() {
-  const { theme, language, setTheme, setLanguage } = useAppStore()
+  const { theme, language, setTheme, setLanguage, permissionMode, setPermissionMode } = useAppStore()
   const t = useT()
   const [cli, setCli] = useState<CliInfo | null>(null)
   const [caps, setCaps] = useState<CliCapabilities | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [cleared, setCleared] = useState(false)
   const [version, setVersion] = useState('')
-  const [permissionMode, setPermissionModeState] = useState<PermissionMode>('ask')
   const [notifications, setNotificationsState] = useState(true)
+  const [notifyPreviews, setNotifyPreviewsState] = useState(false)
   const [updater, setUpdater] = useState<UpdaterStatus>({ status: 'idle' })
 
   // Runtime profile decides which settings surface applies: current (omp
@@ -72,8 +72,11 @@ export default function SettingsPage() {
   const isCurrent = profile === 'current'
   const isLegacy = profile === 'legacy'
   // Widened from the literal type `1` so a future protocol bump can render
-  // the unsupported state instead of being narrowed away by TS.
-  const ompProtocol: number | null = caps ? caps.protocol : null
+  // the unsupported state instead of being narrowed away by TS. Only treated
+  // as factual when the CLI is actually detected — getCapabilities() defaults
+  // the protocol to 1 before any handshake, which would otherwise read as
+  // "RPC protocol v1 · Supported" right above a "Not detected" row.
+  const ompProtocol: number | null = cli?.available && caps ? caps.protocol : null
 
   useEffect(() => {
     window.electronAPI.detectCli().then(setCli)
@@ -85,14 +88,21 @@ export default function SettingsPage() {
       .loadRuntimeOverview(true)
       .catch(() => setOverviewError(true))
     useAppStore.getState().loadRuntimeModels()
-    window.electronAPI.getStore('permissionMode').then((v) => setPermissionModeState(v ?? 'ask'))
     window.electronAPI.getStore('notifications').then((v) => setNotificationsState(v ?? true))
+    window.electronAPI.getStore('notificationPreviews').then((v) => setNotifyPreviewsState(v ?? false))
   }, [])
 
   useEffect(() => {
     window.electronAPI.updaterGetStatus().then(setUpdater)
     return window.electronAPI.onUpdaterStatus(setUpdater)
   }, [])
+
+  // "Already up to date" is transient — fall back to the bare check button.
+  useEffect(() => {
+    if (updater.status !== 'none') return
+    const timer = setTimeout(() => setUpdater({ status: 'idle' }), 5000)
+    return () => clearTimeout(timer)
+  }, [updater.status])
 
   const redetect = async () => {
     setDetecting(true)
@@ -102,6 +112,13 @@ export default function SettingsPage() {
     // About rows don't show a stale version after a CLI install/upgrade.
     window.electronAPI.getCapabilities().then(setCaps)
     useAppStore.getState().setCliAvailable(info.available)
+    // The runtime profile may have changed with the CLI — refresh the top
+    // section too, not just this card.
+    useAppStore
+      .getState()
+      .loadRuntimeOverview(true)
+      .catch(() => setOverviewError(true))
+    useAppStore.getState().loadRuntimeModels()
     setDetecting(false)
   }
 
@@ -112,14 +129,18 @@ export default function SettingsPage() {
     setTimeout(() => setCleared(false), 1500)
   }
 
-  const changePermissionMode = async (value: PermissionMode) => {
-    setPermissionModeState(value)
-    await window.electronAPI.setStore('permissionMode', value)
+  const changePermissionMode = (value: PermissionMode) => {
+    setPermissionMode(value)
   }
 
   const changeNotifications = async (value: boolean) => {
     setNotificationsState(value)
     await window.electronAPI.setStore('notifications', value)
+  }
+
+  const changeNotifyPreviews = async (value: boolean) => {
+    setNotifyPreviewsState(value)
+    await window.electronAPI.setStore('notificationPreviews', value)
   }
 
   const checkUpdates = async () => {
@@ -234,6 +255,17 @@ export default function SettingsPage() {
               </div>
             </Row>
             <Note>{t('settings.notifyCompletionNote')}</Note>
+            <Row label={t('settings.notifyPreviews')}>
+              <div className="flex rounded-full border border-line bg-ink-800 p-0.5">
+                <button onClick={() => changeNotifyPreviews(true)} className={seg(notifyPreviews)}>
+                  {t('settings.on')}
+                </button>
+                <button onClick={() => changeNotifyPreviews(false)} className={seg(!notifyPreviews)}>
+                  {t('settings.off')}
+                </button>
+              </div>
+            </Row>
+            <Note>{t('settings.notifyPreviewsNote')}</Note>
           </Section>
 
           <Section title="Oh My Pi CLI">
@@ -262,6 +294,16 @@ export default function SettingsPage() {
                 {detecting ? t('settings.detecting') : t('settings.redetect')}
               </button>
             </Row>
+            {cli?.available === false && (
+              <Row label={t('settings.cliInstall')}>
+                <button
+                  onClick={() => useAppStore.getState().setSetupComplete(false)}
+                  className={buttonCls}
+                >
+                  {t('settings.cliInstall')}
+                </button>
+              </Row>
+            )}
             <Row label={t('settings.cliSettingsFile')}>
               <button onClick={() => window.electronAPI.showCliSettings()} className={buttonCls}>
                 <FolderCog size={11} />
@@ -297,11 +339,16 @@ export default function SettingsPage() {
             </Row>
             <Row label={t('settings.update')}>
               <div className="flex items-center gap-2">
-                {updater.status === 'idle' && (
-                  <button onClick={checkUpdates} className={buttonCls}>
-                    <RefreshCw size={11} />
-                    {t('settings.checkUpdate')}
-                  </button>
+                {(updater.status === 'idle' || updater.status === 'none') && (
+                  <>
+                    <button onClick={checkUpdates} className={buttonCls}>
+                      <RefreshCw size={11} />
+                      {t('settings.checkUpdate')}
+                    </button>
+                    {updater.status === 'none' && (
+                      <span className="text-xs text-cream-faint">{t('settings.updateNone')}</span>
+                    )}
+                  </>
                 )}
                 {updater.status === 'checking' && (
                   <span className="flex items-center gap-1.5 text-xs text-cream-dim">
