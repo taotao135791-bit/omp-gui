@@ -4,6 +4,7 @@ import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer, applyHistoricalAgents } from '../lib/execution'
 import { SessionRecord, removeHistoryRecord, removeLiveSessionRecords, replaceHistoricalSessionRecords, updateSessionRecordFile, updateSessionRecordTitle, upsertLiveSessionRecord } from '../lib/sessionRegistry'
+import { clearComposerDraft, ComposerDrafts, pruneComposerDrafts, SessionComposerDraft, setComposerDraft } from '../lib/composerDraft'
 import type { I18nKey } from '../i18n'
 
 export interface MessageLike {
@@ -121,6 +122,8 @@ interface AppState {
   unreadSessionIds: Record<string, boolean>
   /** One-shot composer prefill (e.g. "build your own plugin" from the packages page). */
   composerPrefill: string | null
+  /** Unsent composer text/images keyed by their owning runtime session. */
+  composerDrafts: ComposerDrafts
   /** Sidebar: recent project folders, MRU first (persisted in electron-store). */
   recentProjects: string[]
   /** True once the persisted recent-projects list has been hydrated. */
@@ -214,6 +217,8 @@ interface AppState {
   markSessionUnread: (sessionId: string) => void
   clearSessionUnread: (sessionId: string) => void
   setComposerPrefill: (text: string | null) => void
+  setComposerDraft: (sessionId: string, draft: SessionComposerDraft) => void
+  clearComposerDraft: (sessionId: string) => void
   /** Replace the recent-projects list (startup load; does not persist). */
   setRecentProjects: (paths: string[]) => void
   /** Replace Main-issued recent workspace descriptors (startup load). */
@@ -313,6 +318,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   archivedSessionIds: [],
   unreadSessionIds: {},
   composerPrefill: null,
+  composerDrafts: {},
   recentProjects: [],
   recentProjectsLoaded: false,
   recentWorkspaces: [],
@@ -406,12 +412,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       const unreadSessionIds = Object.fromEntries(
         Object.entries(state.unreadSessionIds).filter(([id]) => ids.has(id))
       )
+      const composerDrafts = pruneComposerDrafts(state.composerDrafts, ids)
       return {
         sessions,
         sessionRecords: removeLiveSessionRecords(state.sessionRecords, ids),
         pinnedSessionIds,
         archivedSessionIds,
-        unreadSessionIds
+        unreadSessionIds,
+        composerDrafts
       }
     }),
   registerSessions: (sessions) => {
@@ -674,6 +682,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearSessionUnread: (sessionId) =>
     set((state) => ({ unreadSessionIds: { ...state.unreadSessionIds, [sessionId]: false } })),
   setComposerPrefill: (composerPrefill) => set({ composerPrefill }),
+  setComposerDraft: (sessionId, draft) =>
+    set((state) => ({
+      composerDrafts: setComposerDraft(state.composerDrafts, sessionId, draft)
+    })),
+  clearComposerDraft: (sessionId) =>
+    set((state) => ({ composerDrafts: clearComposerDraft(state.composerDrafts, sessionId) })),
   setRecentProjects: (recentProjects) => set({ recentProjects, recentProjectsLoaded: true }),
   setRecentWorkspaces: (recentWorkspaces) =>
     set({

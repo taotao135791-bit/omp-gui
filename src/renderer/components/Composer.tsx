@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { PromptImage, SlashCommand } from '@shared/types'
 import { QueuedMessage, useAppStore } from '../store'
+import { SessionComposerDraft } from '../lib/composerDraft'
 import { useT } from '../i18n'
 import ModelPicker from './ModelPicker'
 import ThinkingPicker from './ThinkingPicker'
@@ -59,6 +60,19 @@ const IMAGE_ERROR_KEYS = {
   readFailed: 'composer.imageReadFailed'
 } as const
 
+function toPromptImages(images: PendingImage[]): PromptImage[] {
+  return images.map(({ data, mimeType }) => ({ type: 'image' as const, data, mimeType }))
+}
+
+function fromPromptImages(images: PromptImage[]): PendingImage[] {
+  return images.map((image) => ({
+    id: crypto.randomUUID(),
+    data: image.data,
+    mimeType: image.mimeType,
+    previewUrl: `data:${image.mimeType};base64,${image.data}`
+  }))
+}
+
 /**
  * The `@token` ending at the caret: `@` must start the input or follow
  * whitespace, and the token itself must contain no whitespace.
@@ -90,6 +104,7 @@ export default function Composer({
   const [atMenuIndex, setAtMenuIndex] = useState(0)
   const [atDismissed, setAtDismissed] = useState(false)
   const [images, setImages] = useState<PendingImage[]>([])
+  const [loadedSessionId, setLoadedSessionId] = useState<string | null | undefined>(undefined)
   const [imageError, setImageError] = useState<keyof typeof IMAGE_ERROR_KEYS | null>(null)
   const [projectFiles, setProjectFiles] = useState<string[]>([])
   const filesLoadedAt = useRef(0)
@@ -99,16 +114,62 @@ export default function Composer({
   const setComposerPrefill = useAppStore((s) => s.setComposerPrefill)
   const currentSessionId = useAppStore((s) => s.currentSessionId)
   const currentWorkspace = useAppStore((s) => s.currentWorkspace)
+  const setComposerDraft = useAppStore((s) => s.setComposerDraft)
+  const clearComposerDraft = useAppStore((s) => s.clearComposerDraft)
   const queue = useAppStore((s) =>
     currentSessionId ? (s.queuedMessages[currentSessionId] ?? EMPTY_QUEUE) : EMPTY_QUEUE
   )
   const enqueueQueuedMessage = useAppStore((s) => s.enqueueQueuedMessage)
   const removeQueuedMessage = useAppStore((s) => s.removeQueuedMessage)
 
+  const writeDraft = (sessionId: string | null, nextText: string, nextImages: PendingImage[]) => {
+    if (!sessionId) return
+    const draft: SessionComposerDraft = { text: nextText, images: toPromptImages(nextImages) }
+    setComposerDraft(sessionId, draft)
+  }
+
+  const commitDraft = (nextText: string, nextImages = images) => {
+    setText(nextText)
+    setImages(nextImages)
+    writeDraft(currentSessionId, nextText, nextImages)
+  }
+
+  const clearLocalDraft = () => {
+    setText('')
+    setCaret(0)
+    setImages([])
+    setImageError(null)
+    setMenuDismissed(false)
+    setAtDismissed(false)
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
+  }
+
+  // The Composer stays mounted while the selected transcript changes. Hydrate
+  // the editing surface from the newly selected session and reset transient UI.
+  useEffect(() => {
+    textareaRef.current?.blur()
+    const draft = currentSessionId ? useAppStore.getState().composerDrafts[currentSessionId] : undefined
+    setText(draft?.text ?? '')
+    setImages(draft ? fromPromptImages(draft.images) : [])
+    setCaret(draft?.text.length ?? 0)
+    setMenuIndex(0)
+    setMenuDismissed(false)
+    setAtMenuIndex(0)
+    setAtDismissed(false)
+    setImageError(null)
+    setLoadedSessionId(currentSessionId)
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (!el) return
+      el.style.height = 'auto'
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+    })
+  }, [currentSessionId])
+
   // One-shot prefill requested by another page (e.g. "build your own plugin")
   useEffect(() => {
     if (composerPrefill == null) return
-    setText(composerPrefill)
+    commitDraft(composerPrefill)
     setCaret(composerPrefill.length)
     setComposerPrefill(null)
     requestAnimationFrame(() => {
@@ -200,7 +261,7 @@ export default function Composer({
   const replaceRange = (start: number, end: number, insert: string) => {
     const next = text.slice(0, start) + insert + text.slice(end)
     const pos = start + insert.length
-    setText(next)
+    commitDraft(next)
     setCaret(pos)
     requestAnimationFrame(() => {
       const el = textareaRef.current
@@ -214,13 +275,13 @@ export default function Composer({
 
   const pickCommand = (item: MenuItem) => {
     if (item.builtin) {
-      setText('')
+      commitDraft('')
       setCaret(0)
       onCompact?.()
       return
     }
     const next = `/${item.name} `
-    setText(next)
+    commitDraft(next)
     setCaret(next.length)
     setMenuDismissed(false)
     setMenuIndex(0)
@@ -238,19 +299,21 @@ export default function Composer({
   }
 
   const addImage = (data: string, mimeType: string) => {
-    setImages((prev) =>
-      prev.length >= MAX_IMAGES
-        ? prev
-        : [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              data,
-              mimeType,
-              previewUrl: `data:${mimeType};base64,${data}`
-            }
-          ]
-    )
+    const sessionIdAtAction = currentSessionId
+    setImages((prev) => {
+      if (prev.length >= MAX_IMAGES) return prev
+      const next = [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          data,
+          mimeType,
+          previewUrl: `data:${mimeType};base64,${data}`
+        }
+      ]
+      writeDraft(sessionIdAtAction, text, next)
+      return useAppStore.getState().currentSessionId === sessionIdAtAction ? next : prev
+    })
   }
 
   const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -297,8 +360,10 @@ export default function Composer({
 
   // 📎: pick any file and reference it as @path at the caret
   const handleAttachFile = async () => {
+    const sessionIdAtAction = currentSessionId
     const filePath = await window.electronAPI.selectFile([{ name: 'All Files', extensions: ['*'] }])
     if (!filePath) return
+    if (useAppStore.getState().currentSessionId !== sessionIdAtAction) return
     const rel =
       currentWorkspace && filePath.startsWith(`${currentWorkspace.realPath}/`)
         ? filePath.slice(currentWorkspace.realPath.length + 1)
@@ -314,6 +379,7 @@ export default function Composer({
   const handleSend = () => {
     const trimmed = text.trim()
     if (!trimmed || disabled) return
+    const sessionIdAtSend = currentSessionId
     const imgs = stagedImages()
     if (busy) {
       // Mid-turn: park the message; the store drains the queue on idle.
@@ -329,22 +395,32 @@ export default function Composer({
       const staged = images
       const restore = (ok: void | boolean) => {
         if (ok !== false) return
+        const restoreSessionId = sessionIdAtSend ?? useAppStore.getState().currentSessionId
+        if (restoreSessionId) {
+          setComposerDraft(restoreSessionId, { text: trimmed, images: toPromptImages(staged) })
+        }
+        if (
+          (sessionIdAtSend && useAppStore.getState().currentSessionId !== sessionIdAtSend) ||
+          (!sessionIdAtSend && restoreSessionId !== useAppStore.getState().currentSessionId)
+        ) {
+          return
+        }
         setText((cur) => (cur.trim() ? cur : trimmed))
         setImages((cur) => (cur.length ? cur : staged))
         setCaret(trimmed.length)
       }
+      if (sessionIdAtSend) clearComposerDraft(sessionIdAtSend)
+      if (!sessionIdAtSend || useAppStore.getState().currentSessionId === sessionIdAtSend) {
+        clearLocalDraft()
+      }
       const result = onSend(trimmed, imgs)
       if (result instanceof Promise) void result.then(restore)
       else restore(result)
+      return
     }
-    setText('')
-    setCaret(0)
-    setImages([])
-    setImageError(null)
-    setMenuDismissed(false)
-    setAtDismissed(false)
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
+    if (sessionIdAtSend) clearComposerDraft(sessionIdAtSend)
+    if (!sessionIdAtSend || useAppStore.getState().currentSessionId === sessionIdAtSend) {
+      clearLocalDraft()
     }
   }
 
@@ -551,7 +627,13 @@ export default function Composer({
                 >
                   <img src={img.previewUrl} alt="" className="h-full w-full object-cover" />
                   <button
-                    onClick={() => setImages((prev) => prev.filter((p) => p.id !== img.id))}
+                    onClick={() =>
+                      setImages((prev) => {
+                        const next = prev.filter((p) => p.id !== img.id)
+                        writeDraft(currentSessionId, text, next)
+                        return next
+                      })
+                    }
                     title={t('composer.removeImage')}
                     className="absolute right-0.5 top-0.5 rounded-full bg-ink-950/85 p-0.5 text-cream-faint transition-colors hover:text-cream"
                   >
@@ -568,9 +650,11 @@ export default function Composer({
           )}
           <textarea
             ref={textareaRef}
-            value={text}
+            value={loadedSessionId === currentSessionId ? text : ''}
             onChange={(e) => {
-              setText(e.target.value)
+              const nextText = e.target.value
+              setText(nextText)
+              writeDraft(currentSessionId, nextText, images)
               setCaret(e.target.selectionStart)
               setMenuDismissed(false)
               setAtDismissed(false)
