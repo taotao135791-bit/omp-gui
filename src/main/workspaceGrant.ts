@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { WorkspaceGrant } from '../shared/types'
+import crypto from 'node:crypto'
+import { RecentWorkspaceDescriptor, WorkspaceGrant } from '../shared/types'
 import { FsGuard } from './fsGuard'
 
 /**
@@ -20,6 +21,87 @@ export type GrantSource = WorkspaceGrant['source']
 
 export interface GrantManagerOptions {
   fsGuard: FsGuard
+}
+
+export interface RecentWorkspaceRegistryOptions {
+  readPaths: () => string[]
+  writePaths: (paths: string[]) => void
+}
+
+function recentWorkspaceId(realPath: string): string {
+  return `recent-${crypto.createHash('sha256').update(realPath).digest('hex').slice(0, 24)}`
+}
+
+function workspaceName(displayPath: string): string | undefined {
+  const name = path.basename(displayPath)
+  return name && name !== path.parse(displayPath).root ? name : undefined
+}
+
+/** Main-owned registry that turns persisted paths into opaque, revalidated ids. */
+export class RecentWorkspaceRegistry {
+  constructor(
+    private readonly grants: WorkspaceGrantManager,
+    private readonly opts: RecentWorkspaceRegistryOptions
+  ) {}
+
+  async list(): Promise<RecentWorkspaceDescriptor[]> {
+    const descriptors: RecentWorkspaceDescriptor[] = []
+    const canonicalPaths: string[] = []
+    const seen = new Set<string>()
+
+    for (const persistedPath of this.opts.readPaths()) {
+      if (typeof persistedPath !== 'string' || !persistedPath.trim()) continue
+      const realPath = await this.validateDirectory(persistedPath)
+      if (!realPath || seen.has(realPath)) continue
+      seen.add(realPath)
+      canonicalPaths.push(realPath)
+      descriptors.push({
+        id: recentWorkspaceId(realPath),
+        displayPath: realPath,
+        name: workspaceName(realPath)
+      })
+    }
+
+    // Persist only the current canonical paths. A deleted or replaced entry is
+    // never treated as a durable capability or left stale in the registry.
+    const current = this.opts.readPaths()
+    if (current.length !== canonicalPaths.length || current.some((value, i) => value !== canonicalPaths[i])) {
+      this.opts.writePaths(canonicalPaths)
+    }
+    return descriptors
+  }
+
+  async activate(id: unknown): Promise<WorkspaceGrant | null> {
+    if (typeof id !== 'string' || !id.trim()) return null
+    const descriptor = (await this.list()).find((entry) => entry.id === id)
+    if (!descriptor) return null
+    // The registry is re-read and canonicalized above on every activation. The
+    // grant therefore follows the current target, not a cached old realpath.
+    return this.grants.createGrant(descriptor.displayPath, 'recent-project')
+  }
+
+  async clear(): Promise<void> {
+    this.opts.writePaths([])
+  }
+
+  async remove(displayPath: unknown): Promise<boolean> {
+    if (typeof displayPath !== 'string' || !displayPath.trim()) return false
+    const descriptors = await this.list()
+    if (!descriptors.some((entry) => entry.displayPath === displayPath)) return false
+    this.opts.writePaths(descriptors.filter((entry) => entry.displayPath !== displayPath).map((entry) => entry.displayPath))
+    return true
+  }
+
+  private async validateDirectory(candidate: string): Promise<string | null> {
+    try {
+      const normalized = path.resolve(candidate)
+      const stat = await fs.promises.stat(normalized)
+      if (!stat.isDirectory()) return null
+      return await fs.promises.realpath(normalized)
+    } catch {
+      return null
+    }
+  }
 }
 
 export class WorkspaceGrantManager {
@@ -64,11 +146,6 @@ export class WorkspaceGrantManager {
     this.grants.set(grant.id, grant)
     this.fsGuard.addRoot(realPath)
     return grant
-  }
-
-  /** Validate a persisted recent path and mint a fresh grant for it. */
-  async activateRecent(displayPath: string): Promise<WorkspaceGrant | null> {
-    return this.createGrant(displayPath, 'recent-project')
   }
 
   /** Re-create a grant from an existing session's durable cwd (used on resume). */

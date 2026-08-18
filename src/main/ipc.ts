@@ -20,7 +20,8 @@ import {
   LoginAnswer,
   LoginState,
   SubagentTranscriptSelector,
-  WorkspaceGrant
+  WorkspaceGrant,
+  RecentWorkspaceDescriptor
 } from '../shared/types'
 import {
   detectCli,
@@ -58,7 +59,7 @@ import {
 } from './packages'
 import { getModelConfig, setModelConfig, setApiKey, clearApiKey, syncMachineSkills, listMachineSkillNames } from './piSettings'
 import { listAvailableModels, listCatalogModels, invalidateModelCache } from './piModels'
-import { getStore, setStore } from './store'
+import { getStore, rememberRecentProject, setStore } from './store'
 import { installOmp } from './installer'
 import { searchCommunityPackages } from './community'
 import { FsGuard } from './fsGuard'
@@ -90,10 +91,14 @@ import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
 import { listOmpModelCatalog } from './omp/settings/OmpModelCatalog'
 import { sanitizeImages } from './imageValidation'
-import { WorkspaceGrantManager } from './workspaceGrant'
+import { RecentWorkspaceRegistry, WorkspaceGrantManager } from './workspaceGrant'
 
 const fsGuard = new FsGuard()
 const grantManager = new WorkspaceGrantManager({ fsGuard })
+const recentWorkspaceRegistry = new RecentWorkspaceRegistry(grantManager, {
+  readPaths: () => getStore('recentProjects'),
+  writePaths: (paths) => setStore('recentProjects', paths)
+})
 
 /** Runtime-settings facade, rebuilt whenever the CLI detection is invalidated. */
 let runtimeSettings = new RuntimeSettings()
@@ -742,16 +747,31 @@ export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_SELECT, async (): Promise<WorkspaceGrant | null> => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     if (result.canceled || !result.filePaths[0]) return null
-    return grantManager.createGrant(result.filePaths[0], 'dialog')
+    const grant = await grantManager.createGrant(result.filePaths[0], 'dialog')
+    if (grant) rememberRecentProject(grant.realPath)
+    return grant
   })
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_ACTIVATE_RECENT,
-    async (_event, displayPath: string): Promise<WorkspaceGrant | null> => {
-      if (typeof displayPath !== 'string' || !displayPath.trim()) return null
-      return grantManager.activateRecent(displayPath)
+    async (_event, recentId: string): Promise<WorkspaceGrant | null> => {
+      return recentWorkspaceRegistry.activate(recentId)
     }
   )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WORKSPACE_LIST_RECENT,
+    async (): Promise<RecentWorkspaceDescriptor[]> => recentWorkspaceRegistry.list()
+  )
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_CLEAR_RECENT, async (): Promise<boolean> => {
+    await recentWorkspaceRegistry.clear()
+    return true
+  })
+
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_REMOVE_RECENT, async (_event, displayPath: unknown): Promise<boolean> => {
+    return recentWorkspaceRegistry.remove(displayPath)
+  })
 
   ipcMain.handle(
     IPC_CHANNELS.WORKSPACE_ACTIVATE,
@@ -898,6 +918,7 @@ export function registerIpc() {
   })
 
   ipcMain.handle(IPC_CHANNELS.STORE_SET, async (_event, key: keyof AppSettings, value: unknown) => {
+    if (key === 'recentProjects') return false
     setStore(key, value as never)
     // Transitional: the settings UI still writes the legacy toolAccess tier;
     // mirror it into permissionMode until the renderer exposes 'ask' itself.

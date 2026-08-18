@@ -123,7 +123,7 @@ export default function SettingsPage() {
   }
 
   const clearRecent = async () => {
-    await window.electronAPI.setStore('recentProjects', [])
+    await window.electronAPI.clearRecentWorkspaces()
     useAppStore.getState().setRecentProjects([])
     setCleared(true)
     setTimeout(() => setCleared(false), 1500)

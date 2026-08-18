@@ -52,3 +52,23 @@ export function getStore<K extends keyof AppSettings>(key: K): AppSettings[K] {
 export function setStore<K extends keyof AppSettings>(key: K, value: AppSettings[K]): void {
   store.set(key, value)
 }
+
+/** Persist a canonical workspace path. Only Main calls this helper. */
+export function rememberRecentProject(realPath: string): void {
+  const recent = getStore('recentProjects')
+  if (recent.includes(realPath)) return
+  setStore('recentProjects', [realPath, ...recent].slice(0, 10))
+}
+
+/** Remove a recent workspace by its canonical path. Only Main calls this helper. */
+export function removeRecentProject(realPath: string): void {
+  setStore(
+    'recentProjects',
+    getStore('recentProjects').filter((entry) => entry !== realPath)
+  )
+}
+
+/** Clear the Main-owned recent workspace registry. */
+export function clearRecentProjects(): void {
+  setStore('recentProjects', [])
+}

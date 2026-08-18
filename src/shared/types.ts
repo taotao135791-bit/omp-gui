@@ -168,6 +168,13 @@ export interface WorkspaceGrant {
   createdAt: number
 }
 
+/** Main-owned recent workspace entry. The id is opaque to the renderer. */
+export interface RecentWorkspaceDescriptor {
+  id: string
+  displayPath: string
+  name?: string
+}
+
 /**
  * A normalized outcome of one RPC command round-trip, so capability probing can
  * distinguish "the command exists but this invocation failed" from "the command

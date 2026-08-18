@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { WorkspaceGrantManager } from '../workspaceGrant'
+import { RecentWorkspaceRegistry, WorkspaceGrantManager } from '../workspaceGrant'
 import { FsGuard } from '../fsGuard'
 
 describe('WorkspaceGrantManager', () => {
@@ -40,14 +40,9 @@ describe('WorkspaceGrantManager', () => {
     expect(grant).toBeNull()
   })
 
-  it('rejects an arbitrary absolute path the renderer might try to self-escalate to', async () => {
+  it('allows Main to mint a grant for a validated dialog path', async () => {
     const outside = path.join(base, 'outside')
     fs.mkdirSync(outside)
-    // Renderer cannot create a grant directly; it would have to ask Main.
-    // Main validates, so an arbitrary path outside any trusted flow is still
-    // rejected if it does not exist / is not a directory. Here it exists and
-    // is a directory, but the key property is the renderer CANNOT mint it:
-    // createGrant is a Main-only API.
     const grant = await manager.createGrant(outside, 'dialog')
     expect(grant).not.toBeNull()
     // The real path is canonical.
@@ -85,20 +80,66 @@ describe('WorkspaceGrantManager', () => {
     expect(manager['fsGuard'].isAllowed(path.join(dir, 'file.txt'))).toBe(false)
   })
 
-  it('activateRecent validates and re-authorizes a persisted recent path', async () => {
+  it('activates a persisted recent path only through an opaque Main-issued id', async () => {
     const dir = path.join(base, 'recent')
     fs.mkdirSync(dir)
-    const grant = await manager.activateRecent(dir)
+    let persisted = [dir]
+    const registry = new RecentWorkspaceRegistry(manager, {
+      readPaths: () => persisted,
+      writePaths: (paths) => {
+        persisted = paths
+      }
+    })
+    const [descriptor] = await registry.list()
+    const grant = await registry.activate(descriptor.id)
     expect(grant).not.toBeNull()
     expect(grant?.source).toBe('recent-project')
+    expect(grant?.realPath).toBe(fs.realpathSync(dir))
+    await expect(registry.activate(dir)).resolves.toBeNull()
   })
 
-  it('activateRecent returns null for a deleted recent path', async () => {
+  it('drops deleted recent paths before activation', async () => {
     const dir = path.join(base, 'deleted')
     fs.mkdirSync(dir)
-    fs.rmdirSync(dir)
-    const grant = await manager.activateRecent(dir)
-    expect(grant).toBeNull()
+    let persisted = [dir]
+    const registry = new RecentWorkspaceRegistry(manager, {
+      readPaths: () => persisted,
+      writePaths: (paths) => {
+        persisted = paths
+      }
+    })
+    const [descriptor] = await registry.list()
+    fs.rmSync(dir, { recursive: true, force: true })
+    await expect(registry.list()).resolves.toEqual([])
+    await expect(registry.activate(descriptor.id)).resolves.toBeNull()
+    expect(persisted).toEqual([])
+  })
+
+  it('re-canonicalizes a replaced recent path before minting a grant', async () => {
+    const original = path.join(base, 'original')
+    const replacement = path.join(base, 'replacement')
+    const link = path.join(base, 'recent-link')
+    fs.mkdirSync(original)
+    fs.mkdirSync(replacement)
+    fs.symlinkSync(original, link)
+    let persisted = [link]
+    const registry = new RecentWorkspaceRegistry(manager, {
+      readPaths: () => persisted,
+      writePaths: (paths) => {
+        persisted = paths
+      }
+    })
+
+    const [before] = await registry.list()
+    expect(before.displayPath).toBe(fs.realpathSync(original))
+    fs.rmSync(original, { recursive: true, force: true })
+    fs.symlinkSync(replacement, original)
+
+    const [after] = await registry.list()
+    expect(after.id).not.toBe(before.id)
+    expect(await registry.activate(before.id)).toBeNull()
+    const grant = await registry.activate(after.id)
+    expect(grant?.realPath).toBe(fs.realpathSync(replacement))
   })
 
   it('activateSessionPath creates a session-source grant', async () => {

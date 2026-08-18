@@ -49,6 +49,7 @@ export default function Sidebar() {
     historySessions,
     historyLoading,
     recentProjects,
+    recentWorkspaces,
     selectWorkspace,
     activateRecentWorkspace,
     setCurrentSessionId,
@@ -63,6 +64,7 @@ export default function Sidebar() {
     loadHistorySessions,
     removeHistorySession,
     setRecentProjects,
+    setRecentWorkspaces,
     removeRecentProject,
     setSetupComplete
   } = useAppStore()
@@ -86,12 +88,12 @@ export default function Sidebar() {
   const hydratedRecent = useRef(false)
 
   useEffect(() => {
-    window.electronAPI.getStore('recentProjects').then((projects) => {
-      setRecentProjects(projects)
+    window.electronAPI.listRecentWorkspaces().then((workspaces) => {
+      setRecentWorkspaces(workspaces)
       if (hydratedRecent.current) return
       hydratedRecent.current = true
-      if (projects.length > 0 && !useAppStore.getState().currentWorkspace) {
-        void activateRecentWorkspace(projects[0])
+      if (workspaces.length > 0 && !useAppStore.getState().currentWorkspace) {
+        void activateRecentWorkspace(workspaces[0].id)
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -113,9 +115,10 @@ export default function Sidebar() {
 
   // Switching workspaces reloads the session history via the currentWorkspace effect
   const handleSwitchProject = (path: string) => {
-    // recentProjects entries are canonical real paths — compare like with like.
+    const workspace = recentWorkspaces.find((entry) => entry.displayPath === path)
+    if (!workspace) return
     if (path === currentWorkspace?.realPath) return
-    void activateRecentWorkspace(path)
+    void activateRecentWorkspace(workspace.id)
   }
 
   const handleDeleteSession = (id: string) => {
@@ -137,7 +140,9 @@ export default function Sidebar() {
     // no-op that just stays on the home page).
     let grant = currentWorkspace
     if (!grant) {
-      await activateRecentWorkspace(info.cwd)
+      const workspace = recentWorkspaces.find((entry) => entry.displayPath === info.cwd)
+      if (!workspace) return
+      await activateRecentWorkspace(workspace.id)
       grant = useAppStore.getState().currentWorkspace
       if (!grant) return
     }

@@ -20,7 +20,7 @@ import {
   RpcOutcome,
   HistoricalAgentRecord
 } from '../../shared/types'
-import { getStore, setStore } from '../store'
+import { getStore, rememberRecentProject } from '../store'
 import { AgentMessage, mapAgentMessages } from '../messageMapping'
 import { reconstructSessionMetadata, reconstructHistoricalAgents } from '../sessionMetadata'
 import { isSessionFilePath } from '../sessionHistory'
@@ -167,10 +167,7 @@ export function createSession(
     })
   )
 
-  const recent = getStore('recentProjects')
-  if (!recent.includes(cwd)) {
-    setStore('recentProjects', [cwd, ...recent].slice(0, 10))
-  }
+  rememberRecentProject(cwd)
 
   return session
 }

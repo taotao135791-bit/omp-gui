@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PermissionMode, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord, WorkspaceGrant } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PermissionMode, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord, WorkspaceGrant, RecentWorkspaceDescriptor } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer, applyHistoricalAgents } from '../lib/execution'
@@ -122,6 +122,8 @@ interface AppState {
   recentProjects: string[]
   /** True once the persisted recent-projects list has been hydrated. */
   recentProjectsLoaded: boolean
+  /** Main-issued descriptors used to activate recent workspaces by opaque id. */
+  recentWorkspaces: RecentWorkspaceDescriptor[]
   /** Persisted session files of the current project (pi history), newest first. */
   historySessions: HistorySessionInfo[]
   /** True while the history list is being (re)loaded; entries may be stale. */
@@ -144,8 +146,8 @@ interface AppState {
   setPermissionMode: (mode: PermissionMode) => void
   /** Replace the active workspace grant (and sync the MRU real paths). */
   setCurrentWorkspace: (grant: WorkspaceGrant | null) => void
-  /** Activate a persisted recent path (real or display spelling) into a grant. */
-  activateRecentWorkspace: (displayPath: string) => Promise<void>
+  /** Activate a Main-listed recent workspace by opaque id. */
+  activateRecentWorkspace: (recentId: string) => Promise<void>
   /** Show the native folder dialog and select the resulting grant. */
   selectWorkspace: () => Promise<void>
   setSessions: (sessions: Session[]) => void
@@ -209,6 +211,8 @@ interface AppState {
   setComposerPrefill: (text: string | null) => void
   /** Replace the recent-projects list (startup load; does not persist). */
   setRecentProjects: (paths: string[]) => void
+  /** Replace Main-issued recent workspace descriptors (startup load). */
+  setRecentWorkspaces: (workspaces: RecentWorkspaceDescriptor[]) => void
   /** Drop one path from the recent-projects list and persist the new list. */
   removeRecentProject: (path: string) => void
   /** (Re)load the persisted session history of the current workspace; null clears the list. */
@@ -305,6 +309,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   composerPrefill: null,
   recentProjects: [],
   recentProjectsLoaded: false,
+  recentWorkspaces: [],
   historySessions: [],
   historyLoading: false,
   runtimeOverview: null,
@@ -345,12 +350,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         realPath,
         ...state.recentProjects.filter((p) => p !== realPath)
       ].slice(0, 10)
-      const changed =
-        recentProjects.length !== state.recentProjects.length ||
-        recentProjects.some((p, i) => p !== state.recentProjects[i])
-      if (changed && state.recentProjectsLoaded) {
-        window.electronAPI.setStore('recentProjects', recentProjects)
-      }
       const workspaceChanged = state.currentWorkspace?.id !== grant.id
       return {
         currentWorkspace: grant,
@@ -358,33 +357,31 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(workspaceChanged ? { historySessions: [] } : {})
       }
     }),
-  activateRecentWorkspace: async (displayPath) => {
-    const grant = await window.electronAPI.activateRecentWorkspace(displayPath)
+  activateRecentWorkspace: async (recentId) => {
+    const grant = await window.electronAPI.activateRecentWorkspace(recentId)
     if (grant) {
       get().setCurrentWorkspace(grant)
     } else {
-      // Stale recent path: drop it from the list. Only clear the current
-      // workspace when the failed activation WAS the active workspace —
-      // otherwise a dead MRU entry must not clobber a live selection.
+      // Main revalidates and prunes stale entries. Refresh the descriptor list
+      // instead of attempting to remove a renderer-supplied path locally.
+      const workspaces = await window.electronAPI.listRecentWorkspaces()
       set((state) => {
         const active = state.currentWorkspace
-        const isCurrent =
-          active !== null &&
-          (active.displayPath === displayPath || active.realPath === displayPath)
+        const isCurrent = active !== null && !workspaces.some((entry) => entry.displayPath === active.realPath)
         return {
-          recentProjects: state.recentProjects.filter((p) => p !== displayPath),
+          recentWorkspaces: workspaces,
+          recentProjects: workspaces.map((entry) => entry.displayPath),
           ...(isCurrent ? { currentWorkspace: null } : {})
         }
       })
-      window.electronAPI.setStore(
-        'recentProjects',
-        get().recentProjects
-      )
     }
   },
   selectWorkspace: async () => {
     const grant = await window.electronAPI.selectWorkspace()
-    if (grant) get().setCurrentWorkspace(grant)
+    if (grant) {
+      get().setCurrentWorkspace(grant)
+      get().setRecentWorkspaces(await window.electronAPI.listRecentWorkspaces())
+    }
   },
   setSessions: (sessions) =>
     set((state) => {
@@ -639,12 +636,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ unreadSessionIds: { ...state.unreadSessionIds, [sessionId]: false } })),
   setComposerPrefill: (composerPrefill) => set({ composerPrefill }),
   setRecentProjects: (recentProjects) => set({ recentProjects, recentProjectsLoaded: true }),
-  removeRecentProject: (path) =>
-    set((state) => {
-      const recentProjects = state.recentProjects.filter((p) => p !== path)
-      window.electronAPI.setStore('recentProjects', recentProjects)
-      return { recentProjects }
+  setRecentWorkspaces: (recentWorkspaces) =>
+    set({
+      recentWorkspaces,
+      recentProjects: recentWorkspaces.map((entry) => entry.displayPath),
+      recentProjectsLoaded: true
     }),
+  removeRecentProject: (displayPath) => {
+    void window.electronAPI.removeRecentWorkspace(displayPath)
+    set((state) => ({
+      recentWorkspaces: state.recentWorkspaces.filter((entry) => entry.displayPath !== displayPath),
+      recentProjects: state.recentProjects.filter((entry) => entry !== displayPath)
+    }))
+  },
   loadHistorySessions: async (grantId) => {
     if (!grantId) {
       set({ historySessions: [], historyLoading: false })

@@ -35,7 +35,8 @@ import {
   SubagentMessagesResult,
   SubagentTranscriptSelector,
   HistoricalAgentRecord,
-  WorkspaceGrant
+  WorkspaceGrant,
+  RecentWorkspaceDescriptor
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -70,8 +71,14 @@ export interface ElectronAPI {
   listProjectFiles: (grantId: string) => Promise<string[]>
   /** Show the native folder dialog and mint a new WorkspaceGrant. */
   selectWorkspace: () => Promise<WorkspaceGrant | null>
-  /** Re-authorize a persisted recent path as a fresh WorkspaceGrant. */
-  activateRecentWorkspace: (displayPath: string) => Promise<WorkspaceGrant | null>
+  /** Re-authorize a Main-listed recent workspace by its opaque id. */
+  activateRecentWorkspace: (recentId: string) => Promise<WorkspaceGrant | null>
+  /** List currently valid recent workspaces from Main's registry. */
+  listRecentWorkspaces: () => Promise<RecentWorkspaceDescriptor[]>
+  /** Clear Main's recent workspace registry. */
+  clearRecentWorkspaces: () => Promise<boolean>
+  /** Remove one Main-listed recent workspace from the registry. */
+  removeRecentWorkspace: (displayPath: string) => Promise<boolean>
   /** Re-activate an existing grant if its real path is still valid. */
   activateWorkspace: (grantId: string) => Promise<WorkspaceGrant | null>
   /** Revoke a workspace grant and drop its FsGuard root. */
@@ -237,8 +244,12 @@ const api: ElectronAPI = {
   listProjectFiles: (grantId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.FS_LIST_PROJECT_FILES, grantId),
   selectWorkspace: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_SELECT),
-  activateRecentWorkspace: (displayPath: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_ACTIVATE_RECENT, displayPath),
+  activateRecentWorkspace: (recentId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_ACTIVATE_RECENT, recentId),
+  listRecentWorkspaces: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST_RECENT),
+  clearRecentWorkspaces: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CLEAR_RECENT),
+  removeRecentWorkspace: (displayPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_REMOVE_RECENT, displayPath),
   activateWorkspace: (grantId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_ACTIVATE, grantId),
   revokeWorkspaceGrant: (grantId: string) =>
