@@ -1,4 +1,4 @@
-import { ReactNode } from 'react'
+import { ReactNode, useMemo } from 'react'
 import MessageItem from './MessageItem'
 import { ToolGroup } from './TurnRow'
 import { MessageLike, useAppStore } from '../store'
@@ -24,14 +24,13 @@ export default function MessageList({ messages, sessionId = null }: MessageListP
   const streaming = useAppStore((s) => (sessionId ? Boolean(s.busy[sessionId]) : false))
   // Live progress / frozen summary derive from the single execution projection
   // — never from a second per-turn counter store.
-  const activity = useAppStore((s) => {
-    const projection = sessionId ? s.executions[sessionId] : undefined
-    return projection ? turnActivityFor(projection) : undefined
-  })
-  const summary = useAppStore((s) => {
-    const projection = sessionId ? s.executions[sessionId] : undefined
-    return projection ? turnSummaryFor(projection) : undefined
-  })
+  // Select the stable projection reference first. Calling the projection
+  // helpers inside a Zustand selector creates a fresh object on every store
+  // read; React 18 treats that as an unstable external-store snapshot and can
+  // enter update-depth #185 once a live response starts rendering.
+  const projection = useAppStore((s) => (sessionId ? s.executions[sessionId] : undefined))
+  const activity = useMemo(() => (projection ? turnActivityFor(projection) : undefined), [projection])
+  const summary = useMemo(() => (projection ? turnSummaryFor(projection) : undefined), [projection])
 
   // Turn boundary marker: groups after the last user message belong to the
   // current (or just-finished) turn and get the live row / frozen summary.

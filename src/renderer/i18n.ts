@@ -60,6 +60,9 @@ const en = {
   'chat.sendFailed': "Couldn't send — the session is not running.",
   'chat.sessionDead': 'Session ended — start a new chat.',
   'chat.createFailed': "Couldn't start a session — try selecting the project again.",
+  'chat.stopping': 'Stopping…',
+  'chat.stopFailed': "Couldn't stop — try again.",
+  'chat.queueCleared': 'Stopped; {count} queued message(s) cleared.',
 
   // Composer
   'composer.placeholder': 'Ask anything — @ files, / commands, Enter to send',
@@ -144,6 +147,7 @@ const en = {
   'export.button': 'Export session as HTML',
   'export.exporting': 'Exporting…',
   'export.failed': 'Export failed',
+  'export.success': 'Exported successfully',
 
   // Settings page
   'settings.title': 'Settings',
@@ -427,6 +431,9 @@ const zh: Record<I18nKey, string> = {
   'chat.sendFailed': '发送失败：会话已断开',
   'chat.sessionDead': '会话已结束，请新建对话',
   'chat.createFailed': '无法创建会话，请重新选择项目',
+  'chat.stopping': '正在停止…',
+  'chat.stopFailed': '停止失败，请重试',
+  'chat.queueCleared': '已停止，已清除 {count} 条排队消息',
 
   'composer.placeholder': '想问什么？@ 引用文件 · / 命令 · Enter 发送',
   'composer.placeholderDisabled': '安装 omp/pi CLI 后开始对话…',
@@ -507,6 +514,7 @@ const zh: Record<I18nKey, string> = {
   'export.button': '导出会话为 HTML',
   'export.exporting': '导出中…',
   'export.failed': '导出失败',
+  'export.success': '导出成功',
 
   // Settings page
   'settings.title': '设置',

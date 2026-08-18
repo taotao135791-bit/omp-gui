@@ -1,5 +1,6 @@
 import { open, readdir, stat, unlink } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { HistorySessionInfo } from '../shared/types'
 import { defaultPiAgentDir } from './piSettings'
@@ -37,6 +38,61 @@ export function sessionDirFor(projectDir: string, agentDir: string = defaultPiAg
   }
   const dirName = `--${resolved.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`
   return path.join(sessionsRoot(agentDir), dirName)
+}
+
+/**
+ * OMP 17 stores sessions using a home-relative slug on macOS/Linux:
+ *   /Users/me/project → -project
+ *   /tmp/project      → -tmp-project
+ *
+ * Older pi/OMP builds used the `--<absolute-path>--` form implemented by
+ * sessionDirFor(). Keep that function as the legacy-compatible helper used by
+ * existing callers/tests, but discover both layouts when reading history.
+ */
+export function currentSessionDirFor(
+  projectDir: string,
+  agentDir: string = defaultPiAgentDir()
+): string {
+  let resolved: string
+  try {
+    resolved = realpathSync(projectDir)
+  } catch {
+    resolved = path.resolve(projectDir)
+  }
+
+  // macOS reports /private/tmp and /tmp as the same real directory. OMP
+  // normalizes that alias before deriving its slug; mirror it here so a GUI
+  // workspace grant and the runtime's durable directory agree.
+  if (process.platform === 'darwin' && resolved.startsWith('/private/')) {
+    const withoutPrivate = resolved.slice('/private'.length)
+    try {
+      if (realpathSync(resolved) === realpathSync(withoutPrivate)) resolved = withoutPrivate
+    } catch {
+      // Keep the validated realpath when the alias cannot be checked.
+    }
+  }
+
+  const home = (() => {
+    try {
+      return realpathSync(homedir())
+    } catch {
+      return path.resolve(homedir())
+    }
+  })()
+  const relative = path.relative(home, resolved)
+  const slug =
+    relative && !relative.startsWith('..') && !path.isAbsolute(relative)
+      ? relative
+      : resolved.replace(/^[/\\]/, '')
+  return path.join(sessionsRoot(agentDir), `-${slug.replace(/[/\\:]/g, '-')}`)
+}
+
+/** All known OMP/pi session directory layouts, newest layout first. */
+export function sessionDirCandidatesFor(
+  projectDir: string,
+  agentDir: string = defaultPiAgentDir()
+): string[] {
+  return Array.from(new Set([currentSessionDirFor(projectDir, agentDir), sessionDirFor(projectDir, agentDir)]))
 }
 
 /**
@@ -170,18 +226,23 @@ export async function listSessionHistory(
   projectDir: string,
   agentDir?: string
 ): Promise<HistorySessionInfo[]> {
-  const dir = sessionDirFor(projectDir, agentDir)
-  let names: string[]
-  try {
-    names = await readdir(dir)
-  } catch {
-    return []
-  }
   const out: HistorySessionInfo[] = []
-  for (const name of names) {
-    if (!name.endsWith('.jsonl')) continue
-    const info = await parseSessionFile(path.join(dir, name))
-    if (info) out.push(info)
+  const seenFiles = new Set<string>()
+  for (const dir of sessionDirCandidatesFor(projectDir, agentDir)) {
+    let names: string[]
+    try {
+      names = await readdir(dir)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (!name.endsWith('.jsonl')) continue
+      const filePath = path.join(dir, name)
+      if (seenFiles.has(filePath)) continue
+      seenFiles.add(filePath)
+      const info = await parseSessionFile(filePath)
+      if (info) out.push(info)
+    }
   }
   out.sort((a, b) => b.timestamp - a.timestamp)
   return out

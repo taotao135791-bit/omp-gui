@@ -7,7 +7,8 @@ import {
   Zap,
   X,
   File,
-  ListPlus
+  ListPlus,
+  Loader2
 } from 'lucide-react'
 import { PromptImage, SlashCommand } from '@shared/types'
 import { QueuedMessage, useAppStore } from '../store'
@@ -23,6 +24,10 @@ interface ComposerProps {
   onStop?: () => void
   busy?: boolean
   disabled?: boolean
+  /** Changes whenever the active session changes; used to focus a ready chat. */
+  focusKey?: string | null
+  /** Abort was requested and the runtime has not confirmed terminal state yet. */
+  stopping?: boolean
   /** Slash commands available in the live session (from get_commands). */
   commands?: SlashCommand[]
   /** Built-in /compact action, shown first in the slash menu. */
@@ -73,6 +78,8 @@ export default function Composer({
   onStop,
   busy,
   disabled,
+  focusKey,
+  stopping = false,
   commands = [],
   onCompact
 }: ComposerProps) {
@@ -113,6 +120,20 @@ export default function Composer({
       el.style.height = `${Math.min(el.scrollHeight, 160)}px`
     })
   }, [composerPrefill, setComposerPrefill])
+
+  // New Chat and A↔B switching both land on a ready composer. Focus after the
+  // session id is committed, so the click that created/switched the session
+  // cannot leave keyboard input on the Sidebar button.
+  useEffect(() => {
+    if (!focusKey || disabled) return
+    const frame = requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(el.value.length, el.value.length)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [focusKey, disabled])
 
   // Transient image-error hint
   useEffect(() => {
@@ -606,10 +627,12 @@ export default function Composer({
                 </button>
                 <button
                   onClick={onStop}
-                  title={t('composer.stop')}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-cream text-ink-950 shadow-card transition-all duration-150 hover:opacity-85 active:scale-95"
+                  disabled={stopping}
+                  title={stopping ? t('chat.stopping') : t('composer.stop')}
+                  aria-label={stopping ? t('chat.stopping') : t('composer.stop')}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-cream text-ink-950 shadow-card transition-all duration-150 hover:opacity-85 active:scale-95 disabled:cursor-wait disabled:opacity-70"
                 >
-                  <Square size={11} fill="currentColor" />
+                  {stopping ? <Loader2 size={13} className="animate-spin" /> : <Square size={11} fill="currentColor" />}
                 </button>
               </div>
             ) : (

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { Component, type ErrorInfo, type ReactNode, useEffect } from 'react'
 import { Routes, Route, useNavigate } from 'react-router-dom'
 import { useAppStore } from './store'
 import { useT } from './i18n'
@@ -9,6 +9,45 @@ import PackagesPage from './pages/PackagesPage'
 import SettingsPage from './pages/SettingsPage'
 import SetupWizard from './pages/SetupWizard'
 
+interface RendererErrorBoundaryProps {
+  children: ReactNode
+}
+
+interface RendererErrorBoundaryState {
+  error: Error | null
+}
+
+/** Keep a renderer exception from turning the whole desktop window blank. */
+class RendererErrorBoundary extends Component<
+  RendererErrorBoundaryProps,
+  RendererErrorBoundaryState
+> {
+  state: RendererErrorBoundaryState = { error: null }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[renderer-error]', error, info.componentStack)
+    this.setState({ error })
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-3 bg-ink-950 px-6 text-center text-cream">
+          <p className="text-sm font-medium">OMP GUI encountered a rendering error.</p>
+          <p className="max-w-xl text-xs text-cream-faint">{this.state.error.message}</p>
+          <button
+            className="rounded-md bg-cream px-3 py-1.5 text-xs text-ink-950"
+            onClick={() => window.location.reload()}
+          >
+            Reload window
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 function App() {
   const {
     setupComplete,
@@ -16,7 +55,8 @@ function App() {
     setLanguage,
     setCliAvailable,
     setSetupComplete,
-    applySessionEvent
+    applySessionEvent,
+    registerSessions
   } = useAppStore()
   const t = useT()
   const navigate = useNavigate()
@@ -50,8 +90,17 @@ function App() {
       useAppStore.getState().setArchivedSessionIds(ids ?? [])
     })
 
+    const syncLiveSessions = () => {
+      void window.electronAPI.listSessions().then(registerSessions)
+    }
+    // Main is authoritative for the in-memory live registry. This also
+    // covers a renderer reload and closes the race where a connected event
+    // arrives before the create-session response is committed locally.
+    syncLiveSessions()
+
     const unsubscribe = window.electronAPI.onSessionEvent((event) => {
       applySessionEvent(event)
+      if (event.type === 'connected') syncLiveSessions()
     })
 
     // Native login flow state (Settings → Authentication)
@@ -84,7 +133,7 @@ function App() {
       unsubscribeNotify()
       unsubscribeLogin()
     }
-  }, [setTheme, setLanguage, setCliAvailable, setSetupComplete, applySessionEvent, navigate])
+  }, [setTheme, setLanguage, setCliAvailable, setSetupComplete, applySessionEvent, registerSessions, navigate])
 
   // ⌘N starts a new chat from anywhere
   useEffect(() => {
@@ -116,13 +165,15 @@ function App() {
   }
 
   return (
-    <Layout>
-      <Routes>
-        <Route path="/" element={<ChatPage />} />
-        <Route path="/plugins" element={<PackagesPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-      </Routes>
-    </Layout>
+    <RendererErrorBoundary>
+      <Layout>
+        <Routes>
+          <Route path="/" element={<ChatPage />} />
+          <Route path="/plugins" element={<PackagesPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+        </Routes>
+      </Layout>
+    </RendererErrorBoundary>
   )
 }
 

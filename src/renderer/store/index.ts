@@ -3,6 +3,7 @@ import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, 
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer, applyHistoricalAgents } from '../lib/execution'
+import { SessionRecord, removeHistoryRecord, removeLiveSessionRecords, replaceHistoricalSessionRecords, updateSessionRecordFile, updateSessionRecordTitle, upsertLiveSessionRecord } from '../lib/sessionRegistry'
 import type { I18nKey } from '../i18n'
 
 export interface MessageLike {
@@ -112,6 +113,8 @@ interface AppState {
   stats: Record<string, SessionStats>
   /** Sidebar: pinned sessions, listed first (persisted in electron-store). */
   pinnedSessionIds: string[]
+  /** Unified live + historical session projection used by Sidebar. */
+  sessionRecords: SessionRecord[]
   /** Sidebar: archived sessions, folded into the archive group (persisted). */
   archivedSessionIds: string[]
   /** sessionId -> finished a turn while not selected; cleared on select. In-memory only. */
@@ -151,7 +154,9 @@ interface AppState {
   /** Show the native folder dialog and select the resulting grant. */
   selectWorkspace: () => Promise<void>
   setSessions: (sessions: Session[]) => void
-  addSession: (session: Session) => void
+  /** Merge Main's live registry without clobbering a session created concurrently. */
+  registerSessions: (sessions: Session[]) => void
+  addSession: (session: Session, select?: boolean) => void
   setCurrentSessionId: (id: string | null) => void
   /** Hydrate the subagent roster for a session from `get_subagents` (live merge). */
   hydrateSubagents: (sessionId: string) => Promise<void>
@@ -304,6 +309,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   compacting: {},
   stats: {},
   pinnedSessionIds: [],
+  sessionRecords: [],
   archivedSessionIds: [],
   unreadSessionIds: {},
   composerPrefill: null,
@@ -341,7 +347,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // the Sidebar's async reload refills it; until then no stale entry from
       // the previous project may render (a click would resume it under the
       // NEW grant).
-      if (!grant) return { currentWorkspace: null, historySessions: [] }
+      if (!grant) return { currentWorkspace: null, currentSessionId: null, historySessions: [] }
       // The MRU stores the grant's canonical realPath — that is what Main
       // persists for sessions (session.cwd), so display-spelling variants of
       // the same folder can't produce duplicate entries or orphan groups.
@@ -350,11 +356,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         realPath,
         ...state.recentProjects.filter((p) => p !== realPath)
       ].slice(0, 10)
-      const workspaceChanged = state.currentWorkspace?.id !== grant.id
+      // Grant ids are ephemeral. Workspace scope follows canonical realPath,
+      // so re-activating the same project does not discard its current chat.
+      const workspaceChanged = state.currentWorkspace?.realPath !== realPath
       return {
         currentWorkspace: grant,
         recentProjects,
-        ...(workspaceChanged ? { historySessions: [] } : {})
+        ...(workspaceChanged ? { currentSessionId: null, historySessions: [] } : {})
       }
     }),
   activateRecentWorkspace: async (recentId) => {
@@ -398,13 +406,39 @@ export const useAppStore = create<AppState>((set, get) => ({
       const unreadSessionIds = Object.fromEntries(
         Object.entries(state.unreadSessionIds).filter(([id]) => ids.has(id))
       )
-      return { sessions, pinnedSessionIds, archivedSessionIds, unreadSessionIds }
+      return {
+        sessions,
+        sessionRecords: removeLiveSessionRecords(state.sessionRecords, ids),
+        pinnedSessionIds,
+        archivedSessionIds,
+        unreadSessionIds
+      }
     }),
-  addSession: (session) => {
-    set((state) => ({
-      sessions: [session, ...state.sessions],
-      currentSessionId: session.id
-    }))
+  registerSessions: (sessions) => {
+    for (const session of sessions) get().addSession(session, false)
+  },
+  addSession: (session, select = true) => {
+    let changed = false
+    set((state) => {
+      const previous = state.sessions.find((item) => item.id === session.id)
+      const same =
+        previous &&
+        previous.cwd === session.cwd &&
+        previous.title === session.title &&
+        previous.createdAt === session.createdAt &&
+        previous.status === session.status &&
+        previous.resumeFrom === session.resumeFrom &&
+        previous.sessionFile === session.sessionFile
+      const nextCurrentSessionId = select ? session.id : state.currentSessionId
+      if (same && nextCurrentSessionId === state.currentSessionId) return state
+      changed = true
+      return {
+        sessions: [session, ...state.sessions.filter((item) => item.id !== session.id)],
+        sessionRecords: upsertLiveSessionRecord(state.sessionRecords, session),
+        currentSessionId: nextCurrentSessionId
+      }
+    })
+    if (!changed) return
     // Backfill the on-disk session file so the history list can dedup it
     // (resumed sessions already carry resumeFrom).
     if (!session.resumeFrom && !session.sessionFile) {
@@ -416,9 +450,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     void get().hydrateSubagents(session.id)
   },
   setSessionFile: (sessionId, sessionFile) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, sessionFile } : s))
-    })),
+    set((state) => {
+      const current = state.sessions.find((session) => session.id === sessionId)
+      if (!current || current.sessionFile === sessionFile) return state
+      return {
+        sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, sessionFile } : s)),
+        sessionRecords: updateSessionRecordFile(state.sessionRecords, sessionId, sessionFile)
+      }
+    }),
   setCurrentSessionId: (currentSessionId) => {
     // Re-attaching to a session re-hydrates its roster (reconcile any agents
     // that spawned while the user was elsewhere).
@@ -659,17 +698,30 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Ignore a stale response when the workspace was switched meanwhile; the
     // newer load owns the flag then.
     if (get().currentWorkspace?.id === grantId) {
-      set({ historySessions: list, historyLoading: false })
+      const workspaceRealPath = get().currentWorkspace?.realPath
+      set((state) => ({
+        historySessions: list,
+        sessionRecords: workspaceRealPath
+          ? replaceHistoricalSessionRecords(state.sessionRecords, workspaceRealPath, list)
+          : state.sessionRecords,
+        historyLoading: false
+      }))
     }
   },
   removeHistorySession: (filePath) =>
     set((state) => ({
-      historySessions: state.historySessions.filter((h) => h.filePath !== filePath)
+      historySessions: state.historySessions.filter((h) => h.filePath !== filePath),
+      sessionRecords: removeHistoryRecord(state.sessionRecords, filePath)
     })),
   setSessionTitle: (sessionId, title) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, title } : s))
-    })),
+    set((state) => {
+      const current = state.sessions.find((session) => session.id === sessionId)
+      if (!current || current.title === title) return state
+      return {
+        sessions: state.sessions.map((s) => (s.id === sessionId ? { ...s, title } : s)),
+        sessionRecords: updateSessionRecordTitle(state.sessionRecords, sessionId, title)
+      }
+    }),
   maybeNameSession: async (sessionId, text) => {
     const state = get()
     const session = state.sessions.find((s) => s.id === sessionId)

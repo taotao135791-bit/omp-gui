@@ -46,8 +46,31 @@ export default function ChatPanel() {
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
   const [exporting, setExporting] = useState(false)
   const [exportFailed, setExportFailed] = useState(false)
+  const [exportSuccessPath, setExportSuccessPath] = useState<string | null>(null)
+  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null)
+  const stopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Session-less send failure (create threw — e.g. a stale workspace grant)
   const [sendError, setSendError] = useState<I18nKey | null>(null)
+
+  const isStopping = currentSessionId !== null && stoppingSessionId === currentSessionId
+
+  // A terminal runtime event confirms Stop. Until then the local state gives
+  // immediate feedback and prevents a second abort click.
+  useEffect(() => {
+    if (!stoppingSessionId || busy[stoppingSessionId]) return
+    setStoppingSessionId(null)
+    if (stopTimerRef.current) {
+      clearTimeout(stopTimerRef.current)
+      stopTimerRef.current = null
+    }
+  }, [busy, stoppingSessionId])
+
+  useEffect(
+    () => () => {
+      if (stopTimerRef.current) clearTimeout(stopTimerRef.current)
+    },
+    []
+  )
 
   // Slash commands come from the live session (extensions/prompts/skills)
   useEffect(() => {
@@ -162,9 +185,12 @@ export default function ChatPanel() {
     if (!currentSessionId || exporting) return
     setExporting(true)
     setExportFailed(false)
+    setExportSuccessPath(null)
     try {
       const saved = await window.electronAPI.exportHtml(currentSessionId)
       if (!saved) throw new Error('exportHtml returned null')
+      setExportSuccessPath(saved)
+      setTimeout(() => setExportSuccessPath((current) => (current === saved ? null : current)), 3500)
     } catch (err) {
       console.error('Session export failed:', err)
       setExportFailed(true)
@@ -176,19 +202,43 @@ export default function ChatPanel() {
 
   const handleStop = async () => {
     const sid = currentSessionId
-    if (!sid) return
+    if (!sid || stoppingSessionId === sid) return
     const store = useAppStore.getState()
+    const queuedCount = (store.queuedMessages[sid] || []).length
+    setStoppingSessionId(sid)
+    // Stop means stop: clear parked work before the terminal idle event can
+    // drain it, and tell the user what happened.
+    store.clearQueuedMessages(sid)
+    if (queuedCount > 0) {
+      store.addMessage(sid, {
+        id: crypto.randomUUID(),
+        role: 'system',
+        variant: 'info',
+        content: t('chat.queueCleared', { count: queuedCount })
+      })
+    }
     // Cancel pending dialogs first: an unanswered select/confirm holds the
     // turn open, and aborting underneath it wedges the session as busy
     // forever (no agent_end ever arrives).
-    for (const req of store.uiRequests[sid] || []) {
-      await window.electronAPI.respondUi(sid, req.id, { cancelled: true })
-      store.resolveUiRequest(sid, req.id)
+    try {
+      for (const req of store.uiRequests[sid] || []) {
+        await window.electronAPI.respondUi(sid, req.id, { cancelled: true })
+        store.resolveUiRequest(sid, req.id)
+      }
+      const accepted = await window.electronAPI.abortSession(sid)
+      if (!accepted) throw new Error('abortSession rejected')
+      stopTimerRef.current = setTimeout(() => {
+        const current = useAppStore.getState()
+        if (current.busy[sid]) {
+          setStoppingSessionId(null)
+          current.setSessionError(sid, 'chat.stopFailed')
+        }
+      }, 8000)
+    } catch (err) {
+      console.error('Session stop failed:', err)
+      setStoppingSessionId(null)
+      store.setSessionError(sid, 'chat.stopFailed')
     }
-    await window.electronAPI.abortSession(sid)
-    // Stop means stop: the abort's idle event drains the queue, which would
-    // auto-fire the next parked prompt right after the user said stop.
-    store.clearQueuedMessages(sid)
   }
 
   const handleCompact = async () => {
@@ -243,10 +293,16 @@ export default function ChatPanel() {
                   ? t('export.exporting')
                   : exportFailed
                     ? t('export.failed')
+                    : exportSuccessPath
+                      ? t('export.success')
                     : t('export.button')
               }
               className={`app-no-drag rounded-md p-1.5 transition hover:bg-overlay disabled:opacity-60 ${
-                exportFailed ? 'text-red-500' : 'text-cream-dim hover:text-cream'
+                exportFailed
+                  ? 'text-red-500'
+                  : exportSuccessPath
+                    ? 'text-emerald-500'
+                    : 'text-cream-dim hover:text-cream'
               }`}
             >
               {exporting ? (
@@ -256,13 +312,23 @@ export default function ChatPanel() {
               )}
             </button>
           )}
+          {exportSuccessPath && (
+            <span className="max-w-[180px] truncate font-medium text-emerald-500" title={exportSuccessPath}>
+              {t('export.success')}
+            </span>
+          )}
           {isCompacting && (
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
               <span className="font-medium text-accent">{t('chat.compacting')}</span>
             </span>
           )}
-          {isBusy ? (
+          {isStopping ? (
+            <>
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+              <span className="font-medium text-amber-500">{t('chat.stopping')}</span>
+            </>
+          ) : isBusy ? (
             <>
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
               <span className="font-medium text-amber-500">{t('chat.running')}</span>
@@ -318,6 +384,8 @@ export default function ChatPanel() {
                   onSend={handleSend}
                   onStop={handleStop}
                   busy={isBusy}
+                  stopping={isStopping}
+                  focusKey={currentSessionId}
                   disabled={cliAvailable === false}
                   commands={slashCommands}
                   onCompact={currentSessionId ? handleCompact : undefined}
@@ -366,6 +434,8 @@ export default function ChatPanel() {
           onSend={handleSend}
           onStop={handleStop}
           busy={isBusy}
+          stopping={isStopping}
+          focusKey={currentSessionId}
           disabled={cliAvailable === false}
           commands={slashCommands}
           onCompact={currentSessionId ? handleCompact : undefined}

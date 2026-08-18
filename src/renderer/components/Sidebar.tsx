@@ -25,6 +25,7 @@ import { HistorySessionInfo } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
+import { recordsForWorkspace } from '../lib/sessionRegistry'
 import { formatRelativeTime } from '../lib/time'
 import Logo from './Logo'
 
@@ -37,6 +38,7 @@ export default function Sidebar() {
     sessions,
     currentSessionId,
     cliAvailable,
+    sessionRecords,
     rightPanelOpen,
     language,
     theme,
@@ -46,7 +48,6 @@ export default function Sidebar() {
     archivedSessionIds,
     unreadSessionIds,
     uiRequests,
-    historySessions,
     historyLoading,
     recentProjects,
     recentWorkspaces,
@@ -200,16 +201,33 @@ export default function Sidebar() {
   const pinnedSet = useMemo(() => new Set(pinnedSessionIds), [pinnedSessionIds])
   const archivedSet = useMemo(() => new Set(archivedSessionIds), [archivedSessionIds])
 
+  const scopedRecords = useMemo(
+    () => recordsForWorkspace(sessionRecords, currentWorkspace?.realPath ?? null),
+    [sessionRecords, currentWorkspace?.realPath]
+  )
+
+  // Sidebar rows are projected from the unified registry, then joined to the
+  // live session map for runtime-only fields (busy, queue, approval state).
+  // A historical record therefore upgrades in place when it is resumed.
+  const scopedLiveSessions = useMemo(() => {
+    const liveIds = new Set(
+      scopedRecords
+        .filter((record) => record.isLive && record.runtimeSessionId)
+        .map((record) => record.runtimeSessionId as string)
+    )
+    return sessions.filter((session) => liveIds.has(session.id))
+  }, [scopedRecords, sessions])
+
   const filteredSessions = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return sessions
-    return sessions.filter((s) => {
+    if (!q) return scopedLiveSessions
+    return scopedLiveSessions.filter((s) => {
       if (s.title.toLowerCase().includes(q) || s.cwd.toLowerCase().includes(q)) return true
       const list = messages[s.id]
       const last = list?.[list.length - 1]
       return last ? last.content.toLowerCase().includes(q) : false
     })
-  }, [sessions, query, messages])
+  }, [scopedLiveSessions, query, messages])
 
   // Pinned sessions first, each group keeping its original order
   const pinnedSessions = useMemo(
@@ -238,9 +256,9 @@ export default function Sidebar() {
 
   const sessionCwdSet = useMemo(() => {
     const set = new Set<string>()
-    for (const s of sessions) if (s.cwd) set.add(s.cwd)
+    for (const s of scopedLiveSessions) if (s.cwd) set.add(s.cwd)
     return set
-  }, [sessions])
+  }, [scopedLiveSessions])
 
   const groupedProjectCwds = useMemo(
     () => projectOrder.filter((p) => sessionCwdSet.has(p)),
@@ -248,12 +266,12 @@ export default function Sidebar() {
   )
 
   const untiedSessions = useMemo(
-    () => sessions.filter((s) => !projectOrder.includes(s.cwd) && !archivedSet.has(s.id)),
-    [sessions, projectOrder, archivedSet]
+    () => scopedLiveSessions.filter((s) => !projectOrder.includes(s.cwd) && !archivedSet.has(s.id)),
+    [scopedLiveSessions, projectOrder, archivedSet]
   )
 
   const renderProjectGroup = (cwd: string) => {
-    const group = sessions.filter((s) => s.cwd === cwd && !archivedSet.has(s.id))
+    const group = scopedLiveSessions.filter((s) => s.cwd === cwd && !archivedSet.has(s.id))
     const pinned = group.filter((s) => pinnedSet.has(s.id))
     const normal = group.filter((s) => !pinnedSet.has(s.id))
     const name = cwd.split('/').filter(Boolean).pop() ?? cwd
@@ -278,14 +296,13 @@ export default function Sidebar() {
   // History entries whose file belongs to a live session (resumed from it or
   // freshly created into it) are hidden; the search box filters by title too.
   const visibleHistory = useMemo(() => {
-    const live = new Set(
-      sessions.flatMap((s) => [s.resumeFrom, s.sessionFile]).filter(Boolean)
-    )
-    let list = historySessions.filter((h) => !live.has(h.filePath))
+    let list = scopedRecords
+      .filter((record) => !record.isLive && record.history)
+      .map((record) => record.history as HistorySessionInfo)
     const q = query.trim().toLowerCase()
     if (q) list = list.filter((h) => h.title.toLowerCase().includes(q))
     return list
-  }, [historySessions, sessions, query])
+  }, [scopedRecords, query])
 
   const navRow = (active: boolean) =>
     `group flex h-8 w-full items-center gap-2.5 rounded-lg border px-2.5 text-[13px] transition-all duration-150 ease-standard ${
@@ -626,7 +643,7 @@ export default function Sidebar() {
           ) : (
             <div className="space-y-0.5">{[...pinnedSessions, ...normalSessions].map(renderSessionRow)}</div>
           )
-        ) : sessions.length === 0 ? (
+        ) : scopedLiveSessions.length === 0 ? (
           <div className="px-2 py-1.5 text-xs leading-5 text-cream-faint">{t('sidebar.noSessions')}</div>
         ) : (
           <>

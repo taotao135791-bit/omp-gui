@@ -13,6 +13,7 @@ vi.mock('../omp', () => ({
 
 import {
   sessionDirFor,
+  currentSessionDirFor,
   listSessionHistory,
   deleteSessionFile,
   isSessionFilePath
@@ -130,6 +131,17 @@ describe('listSessionHistory', () => {
     expect(list).toHaveLength(1)
     expect(list[0].uuid).toBe('uuid-c')
     expect(list[0].title).toBe('current runtime session')
+  })
+
+  it('discovers the current home-relative OMP directory layout', async () => {
+    const dir = currentSessionDirFor(projectDir, agentDir)
+    mkdirSync(dir, { recursive: true })
+    const filePath = path.join(dir, 'current-layout_uuid-r.jsonl')
+    writeFileSync(filePath, [sessionHeader('uuid-r', '2025-01-04T00:00:00.000Z'), userMessage('resume me')].join('\n') + '\n')
+
+    const list = await listSessionHistory(projectDir, agentDir)
+    expect(list.map((s) => s.uuid)).toEqual(['uuid-r'])
+    expect(list[0].filePath).toBe(filePath)
   })
 
   it('truncates long titles to 80 chars and collapses whitespace', async () => {
