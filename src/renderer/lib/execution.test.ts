@@ -246,6 +246,17 @@ describe('durable historical agents', () => {
     expect(p.agents['hist-1'].durationMs).toBe(12000)
   })
 
+  it('does not synthesize historical timestamps when durable history omits them', () => {
+    let p = emptyProjection(S)
+    p = applyHistoricalAgents(
+      p,
+      [{ id: 'hist-unknown-time', agent: 'explore', agentSource: 'bundled', status: 'unknown', durationMs: 12000 }],
+      999
+    )
+    expect(p.agents['hist-unknown-time'].startedAt).toBeUndefined()
+    expect(p.agents['hist-unknown-time'].endedAt).toBeUndefined()
+  })
+
   it('live roster/events override history for status but keep historical telemetry', () => {
     let p = emptyProjection(S)
     p = applyHistoricalAgents(

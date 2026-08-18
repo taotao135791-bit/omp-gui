@@ -165,8 +165,8 @@ export default function Sidebar() {
           : session.title
       addSession({ ...session, title })
       setMessages(session.id, restored)
-      // Fold durable historical agents (completed/failed/aborted) into the
-      // projection — live roster is empty for these.
+      // Fold durable historical agents into the projection — live roster is
+      // empty for these. Unknown stays unknown until durable data proves more.
       useAppStore.getState().applyHistoricalAgents(session.id, historicalAgents ?? [])
       setCurrentSessionId(session.id)
       navigate('/')

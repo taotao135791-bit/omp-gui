@@ -216,9 +216,11 @@ data layer for all of it is in place and tested.
    `retryState`/`retryFailure`/`recentTools`/`currentTool`/`lastIntent`; merges
    use `mergeDefinedFields` so a missing field never erases confirmed truth.
 6. **Durable historical agents** — `reconstructHistoricalAgents` rebuilds
-   completed/failed/aborted children from the active path's `task` tool results
-   (`details.results`), merged through the SAME `upsertAgent` reducer. Running
-   state is never claimed from durable data.
+   blocking children from upstream `SingleResult` records and background
+   children from the real `AgentProgress` snapshot + persisted `async-result`
+   delivery + child session artifact. These records merge through the SAME
+   `upsertAgent` reducer; stale progress never becomes a fake running or
+   terminal state, and missing timestamps remain unknown.
 
 ## Stage 6 — Repository hardening (this round)
 
@@ -302,4 +304,3 @@ Execution Projection  (sessionId → { agents, tools, trajectory })
 The same normalized fact stream feeds every surface; no surface keeps its own
 copy of history. Chat continues to use the existing message list; the Agent Hub
 and trajectory overview derive from `executions[sessionId]` selectors.
-

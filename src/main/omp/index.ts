@@ -431,9 +431,10 @@ export async function resumeSession(
     if (meta.model !== undefined) message.runtimeModel = meta.model
     if (meta.thinking !== undefined) message.runtimeThinking = meta.thinking
   }
-  // Reconstruct completed/failed/aborted historical children from durable task
-  // results, so a resumed session shows its agent history even though the live
-  // roster is empty. Running state is NEVER claimed from durable data.
+  // Reconstruct historical children from durable task results, async-result
+  // delivery, and child session artifacts, so a resumed session shows its
+  // agent history even though the live roster is empty. Running state is NEVER
+  // claimed from a stale durable progress snapshot.
   const historicalAgents = await reconstructHistoricalAgents(filePath)
   return { session, messages, historicalAgents }
 }

@@ -409,14 +409,19 @@ function toAgentNode(event: Extract<SessionEvent, { type: 'subagent' }>, now: nu
 function upsertAgent(
   state: ExecutionProjection,
   incoming: AgentNode,
-  now: number
+  now: number,
+  source: 'live' | 'historical' = 'live'
 ): ExecutionProjection {
   const existing = state.agents[incoming.id]
-  const startedAt = existing?.startedAt ?? incoming.startedAt ?? now
-  const endedAt = isTerminalAgent(incoming.status)
-    ? existing?.endedAt ?? incoming.endedAt ?? now
-    : existing?.endedAt ?? incoming.endedAt
-  const node = mergeDefinedFields(existing, { ...incoming, startedAt, endedAt })
+  const historical = source === 'historical'
+  const startedAt = historical ? incoming.startedAt : existing?.startedAt ?? incoming.startedAt ?? now
+  const endedAt = historical
+    ? incoming.endedAt
+    : isTerminalAgent(incoming.status)
+      ? existing?.endedAt ?? incoming.endedAt ?? now
+      : existing?.endedAt ?? incoming.endedAt
+  const status = historical && incoming.status === 'unknown' && existing ? existing.status : incoming.status
+  const node = mergeDefinedFields(existing, { ...incoming, status, startedAt, endedAt })
   return {
     ...state,
     agents: { ...state.agents, [incoming.id]: node }
@@ -460,10 +465,13 @@ function snapshotToAgentNode(s: SubagentSnapshot, now: number): AgentNode {
 }
 
 /**
- * Upsert durable historical agents (reconstructed from OMP `task` results)
+ * Upsert durable historical agents (reconstructed from OMP task results,
+ * async-result delivery, and child session artifacts)
  * through the SAME `upsertAgent` reducer. Live roster/events override history
  * for CURRENT status field-wise, while history supplies the completed/failed/
  * aborted children that the live `get_subagents` roster no longer reports.
+ * Historical hydration never creates arrival-time timestamps; only durable
+ * timestamps supplied by the runtime are retained.
  */
 export function applyHistoricalAgents(
   state: ExecutionProjection,
@@ -472,31 +480,34 @@ export function applyHistoricalAgents(
 ): ExecutionProjection {
   let next = state
   for (const r of records) {
-    next = upsertAgent(next, historicalToAgentNode(r, now), now)
+    next = upsertAgent(next, historicalToAgentNode(r), now, 'historical')
   }
   return next
 }
 
-function historicalToAgentNode(r: HistoricalAgentRecord, now: number): AgentNode {
+function historicalToAgentNode(r: HistoricalAgentRecord): AgentNode {
   return {
     id: r.id,
     agent: r.agent,
     agentSource: r.agentSource,
     status: normalizeOmpAgentStatus(r.status),
+    index: r.index,
     task: r.task,
     assignment: r.assignment,
     description: r.description,
     lastIntent: r.lastIntent,
     resolvedModel: r.resolvedModel,
     resolvedModelIsFallback: r.resolvedModelIsFallback,
+    modelRole: r.modelRole,
     durationMs: r.durationMs,
     tokens: r.tokens,
     requests: r.requests,
     contextTokens: r.contextTokens,
     contextWindow: r.contextWindow,
+    cost: r.cost,
     resultSummary: r.resultSummary,
-    startedAt: now,
-    endedAt: now
+    startedAt: r.startedAt,
+    endedAt: r.endedAt
   }
 }
 
@@ -667,4 +678,3 @@ export function turnSummaryFor(projection: ExecutionProjection): TurnSummary | u
   if (!turn) return undefined
   return { elapsedMs: turnElapsedMs(turn), counts: toTurnCounts(turn.tools) }
 }
-

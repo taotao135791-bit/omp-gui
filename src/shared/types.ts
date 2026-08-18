@@ -119,9 +119,11 @@ export interface SubagentTranscriptSelector {
 }
 
 /**
- * A completed/failed/aborted subagent reconstructed from OMP's durable `task`
- * tool result (not the live `get_subagents` roster). Lets a resumed session show
- * its historical children even when the live roster is empty.
+ * A subagent reconstructed from OMP's durable task result, async-result
+ * delivery, and/or child session artifact (not the live `get_subagents`
+ * roster). Lets a resumed session show its historical children even when the
+ * live roster is empty. A record is `unknown` when durable data proves the
+ * child existed but does not prove a terminal outcome.
  *
  * Timestamp rule: startedAt/endedAt are only populated when the durable runtime
  * record supplies real timestamps. A record that only carries durationMs keeps
@@ -131,13 +133,16 @@ export interface HistoricalAgentRecord {
   id: string
   agent: string
   agentSource: SubagentAgentSource
-  status: SubagentStatus
+  status: SubagentStatus | 'unknown'
+  index?: number
+  source?: 'task-result' | 'async-result' | 'child-session'
   task?: string
   assignment?: string
   description?: string
   lastIntent?: string
   resolvedModel?: string
   resolvedModelIsFallback?: boolean
+  modelRole?: string
   /** Real start timestamp (epoch ms) when the runtime recorded one. */
   startedAt?: number
   /** Real end timestamp (epoch ms) when the runtime recorded one. */
@@ -147,6 +152,7 @@ export interface HistoricalAgentRecord {
   requests?: number
   contextTokens?: number
   contextWindow?: number
+  cost?: number
   resultSummary?: string
 }
 
