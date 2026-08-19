@@ -106,6 +106,8 @@ interface AppState {
   busy: Record<string, boolean>
   /** sessionId -> messages queued while the session is busy (FIFO) */
   queuedMessages: Record<string, QueuedMessage[]>
+  /** sessionId -> queued ids temporarily reserved for an in-flight Steer RPC */
+  steeringQueuedIds: Record<string, string[]>
   /** sessionId -> user-visible failure banner key (dead session / send failure). */
   sessionErrors: Record<string, I18nKey | undefined>
   /** sessionId -> whether context compaction is running */
@@ -202,6 +204,12 @@ interface AppState {
   removeQueuedMessage: (sessionId: string, id: string) => void
   /** Pop the first queued message (returns it, or undefined when empty). */
   shiftQueuedMessage: (sessionId: string) => QueuedMessage | undefined
+  /** Reserve one queued message without changing FIFO ownership. */
+  reserveQueuedMessage: (sessionId: string, id: string) => boolean
+  /** Release a queued-message Steer reservation after ACK failure. */
+  releaseQueuedMessage: (sessionId: string, id: string) => void
+  /** Drain one queued message when the runtime is idle. */
+  drainQueuedMessage: (sessionId: string) => boolean
   /** Drop every queued message of a session. */
   clearQueuedMessages: (sessionId: string) => void
   setCompacting: (sessionId: string, compacting: boolean) => void
@@ -310,6 +318,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   modelConfig: null,
   busy: {},
   queuedMessages: {},
+  steeringQueuedIds: {},
   sessionErrors: {},
   compacting: {},
   stats: {},
@@ -640,11 +649,39 @@ export const useAppStore = create<AppState>((set, get) => ({
       queuedMessages: {
         ...state.queuedMessages,
         [sessionId]: (state.queuedMessages[sessionId] || []).filter((m) => m.id !== id)
+      },
+      steeringQueuedIds: {
+        ...state.steeringQueuedIds,
+        [sessionId]: (state.steeringQueuedIds[sessionId] || []).filter((queuedId) => queuedId !== id)
+      }
+    })),
+  reserveQueuedMessage: (sessionId, id) => {
+    const state = get()
+    if (!(state.queuedMessages[sessionId] || []).some((message) => message.id === id)) return false
+    const reserved = state.steeringQueuedIds[sessionId] || []
+    if (reserved.includes(id)) return false
+    set((current) => ({
+      steeringQueuedIds: {
+        ...current.steeringQueuedIds,
+        [sessionId]: [...(current.steeringQueuedIds[sessionId] || []), id]
+      }
+    }))
+    return true
+  },
+  releaseQueuedMessage: (sessionId, id) =>
+    set((state) => ({
+      steeringQueuedIds: {
+        ...state.steeringQueuedIds,
+        [sessionId]: (state.steeringQueuedIds[sessionId] || []).filter((queuedId) => queuedId !== id)
       }
     })),
   shiftQueuedMessage: (sessionId) => {
-    const first = (get().queuedMessages[sessionId] || [])[0]
+    const state = get()
+    const first = (state.queuedMessages[sessionId] || [])[0]
     if (!first) return undefined
+    // A reserved head must stay in FIFO ownership until its Steer RPC is
+    // acknowledged. Do not let an idle event drain it as a normal prompt.
+    if ((state.steeringQueuedIds[sessionId] || []).includes(first.id)) return undefined
     set((state) => ({
       queuedMessages: {
         ...state.queuedMessages,
@@ -653,8 +690,48 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
     return first
   },
+  drainQueuedMessage: (sessionId) => {
+    const next = get().shiftQueuedMessage(sessionId)
+    if (!next) return false
+    // Snapshot the ACTUAL dispatch-time session state, so a queued turn
+    // is tagged with the model/thinking it really runs under — even if the
+    // user hot-switched the session model while it was queued.
+    void captureSessionSnapshot(sessionId).then((snap) => {
+      const bubbleId = crypto.randomUUID()
+      get().addMessage(sessionId, {
+        id: bubbleId,
+        role: 'user',
+        kind: 'prompt',
+        content: next.text,
+        images: next.images?.map(({ data, mimeType }) => ({ data, mimeType })),
+        runtimeModel: snap.modelSelector,
+        runtimeThinking: snap.thinkingLevel
+      })
+      set((state) => ({ busy: { ...state.busy, [sessionId]: true } }))
+      void window.electronAPI
+        .sendMessage(sessionId, next.text, next.images)
+        .then((sent) => {
+          if (sent) {
+            const list = get().messages[sessionId] || []
+            void get().createCheckpointForMessage(sessionId, list.length - 1, next.text)
+            void get().maybeNameSession(sessionId, next.text)
+          } else {
+            // The session died underneath the queue: stop draining into
+            // the void — drop the rest, release busy, flag the failure.
+            set((state) => ({ busy: { ...state.busy, [sessionId]: false } }))
+            get().clearQueuedMessages(sessionId)
+            get().setSessionError(sessionId, 'chat.sendFailed')
+            get().updateMessage(sessionId, bubbleId, { failed: true })
+          }
+        })
+    })
+    return true
+  },
   clearQueuedMessages: (sessionId) =>
-    set((state) => ({ queuedMessages: { ...state.queuedMessages, [sessionId]: [] } })),
+    set((state) => ({
+      queuedMessages: { ...state.queuedMessages, [sessionId]: [] },
+      steeringQueuedIds: { ...state.steeringQueuedIds, [sessionId]: [] }
+    })),
   setCompacting: (sessionId, compacting) =>
     set((state) => ({ compacting: { ...state.compacting, [sessionId]: compacting } })),
   setStats: (sessionId, stats) =>
@@ -916,41 +993,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       // The wasBusy guard plus the optimistic busy=true below keep a stray or
       // repeated 'idle' from draining more than one message per real turn.
       if (event.status === 'idle' && wasBusy) {
-        const next = get().shiftQueuedMessage(event.sessionId)
-        if (next) {
-          // Snapshot the ACTUAL dispatch-time session state, so a queued turn
-          // is tagged with the model/thinking it really runs under — even if
-          // the user hot-switched the session model while it was queued.
-          void captureSessionSnapshot(event.sessionId).then((snap) => {
-            const bubbleId = crypto.randomUUID()
-            get().addMessage(event.sessionId, {
-              id: bubbleId,
-              role: 'user',
-              kind: 'prompt',
-              content: next.text,
-              images: next.images?.map(({ data, mimeType }) => ({ data, mimeType })),
-              runtimeModel: snap.modelSelector,
-              runtimeThinking: snap.thinkingLevel
-            })
-            set((state) => ({ busy: { ...state.busy, [event.sessionId]: true } }))
-            void window.electronAPI
-              .sendMessage(event.sessionId, next.text, next.images)
-              .then((sent) => {
-                if (sent) {
-                  const list = get().messages[event.sessionId] || []
-                  void get().createCheckpointForMessage(event.sessionId, list.length - 1, next.text)
-                  void get().maybeNameSession(event.sessionId, next.text)
-                } else {
-                  // The session died underneath the queue: stop draining into
-                  // the void — drop the rest, release busy, flag the failure.
-                  set((state) => ({ busy: { ...state.busy, [event.sessionId]: false } }))
-                  get().clearQueuedMessages(event.sessionId)
-                  get().setSessionError(event.sessionId, 'chat.sendFailed')
-                  get().updateMessage(event.sessionId, bubbleId, { failed: true })
-                }
-              })
-          })
-        } else if (event.sessionId !== get().currentSessionId) {
+        const drained = get().drainQueuedMessage(event.sessionId)
+        if (!drained && event.sessionId !== get().currentSessionId) {
           // Turn finished in a background session — flag it unread
           get().markSessionUnread(event.sessionId)
         }
@@ -1024,7 +1068,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         busy: { ...state.busy, [event.sessionId]: false },
         compacting: { ...state.compacting, [event.sessionId]: false },
         uiRequests: { ...state.uiRequests, [event.sessionId]: [] },
-        queuedMessages: { ...state.queuedMessages, [event.sessionId]: [] }
+        queuedMessages: { ...state.queuedMessages, [event.sessionId]: [] },
+        steeringQueuedIds: { ...state.steeringQueuedIds, [event.sessionId]: [] }
       }))
     }
   }

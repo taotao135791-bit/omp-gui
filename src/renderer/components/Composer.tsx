@@ -13,6 +13,7 @@ import {
 import { PromptImage, SlashCommand } from '@shared/types'
 import { QueuedMessage, useAppStore } from '../store'
 import { SessionComposerDraft } from '../lib/composerDraft'
+import { dispatchSteer } from '../lib/steerDispatch'
 import { useT } from '../i18n'
 import ModelPicker from './ModelPicker'
 import ThinkingPicker from './ThinkingPicker'
@@ -104,6 +105,8 @@ export default function Composer({
   const [atMenuIndex, setAtMenuIndex] = useState(0)
   const [atDismissed, setAtDismissed] = useState(false)
   const [images, setImages] = useState<PendingImage[]>([])
+  const [steeringQueuedId, setSteeringQueuedId] = useState<string | null>(null)
+  const steeringQueuedIdRef = useRef<string | null>(null)
   const [loadedSessionId, setLoadedSessionId] = useState<string | null | undefined>(undefined)
   const [imageError, setImageError] = useState<keyof typeof IMAGE_ERROR_KEYS | null>(null)
   const [projectFiles, setProjectFiles] = useState<string[]>([])
@@ -121,6 +124,7 @@ export default function Composer({
   )
   const enqueueQueuedMessage = useAppStore((s) => s.enqueueQueuedMessage)
   const removeQueuedMessage = useAppStore((s) => s.removeQueuedMessage)
+  const reserveQueuedMessage = useAppStore((s) => s.reserveQueuedMessage)
 
   const writeDraft = (sessionId: string | null, nextText: string, nextImages: PendingImage[]) => {
     if (!sessionId) return
@@ -424,21 +428,56 @@ export default function Composer({
     }
   }
 
-  // Send a queued message into the running turn right now
+  // Send a queued message into the running turn right now. The item remains
+  // queue-owned until OMP acknowledges the Steer, so a false/rejected RPC
+  // cannot silently destroy the user's queued work.
   const handleSteerNow = (m: QueuedMessage) => {
-    if (!currentSessionId) return
-    removeQueuedMessage(currentSessionId, m.id)
-    useAppStore.getState().addMessage(currentSessionId, {
-      id: crypto.randomUUID(),
-      role: 'user',
-      kind: 'steer',
-      content: m.text,
-      images: m.images?.map(({ data, mimeType }) => ({ data, mimeType }))
+    const sessionId = currentSessionId
+    if (!sessionId || steeringQueuedIdRef.current) return
+    if (!reserveQueuedMessage(sessionId, m.id)) return
+    steeringQueuedIdRef.current = m.id
+    setSteeringQueuedId(m.id)
+
+    void dispatchSteer({
+      sessionId,
+      text: m.text,
+      images: m.images,
+      source: 'queue',
+      steer: (sid, text, imgs) => window.electronAPI.steer(sid, text, imgs)
     })
-    // Steer is an interaction INSIDE the active turn, not a new prompt turn —
-    // record it in the execution projection's current-turn trajectory.
-    useAppStore.getState().recordSteer(currentSessionId, m.text)
-    void window.electronAPI.steer(currentSessionId, m.text, m.images)
+      .then((result) => {
+        const latest = useAppStore.getState()
+        if (result.ok) {
+          if (!latest.sessions.some((session) => session.id === sessionId)) {
+            latest.releaseQueuedMessage(sessionId, m.id)
+            return
+          }
+          latest.removeQueuedMessage(sessionId, m.id)
+          latest.addMessage(sessionId, {
+            id: crypto.randomUUID(),
+            role: 'user',
+            kind: 'steer',
+            content: m.text,
+            images: m.images?.map(({ data, mimeType }) => ({ data, mimeType }))
+          })
+          // A trajectory fact exists only after OMP accepted the Steer.
+          latest.recordSteer(sessionId, m.text)
+          latest.setSessionError(sessionId, null)
+          return
+        }
+
+        latest.releaseQueuedMessage(sessionId, m.id)
+        latest.setSessionError(sessionId, 'chat.steerFailed')
+        // If the turn ended while the ACK was pending, release ownership and
+        // give the queued item its normal FIFO drain opportunity.
+        if (!latest.busy[sessionId]) latest.drainQueuedMessage(sessionId)
+      })
+      .finally(() => {
+        if (steeringQueuedIdRef.current === m.id) {
+          steeringQueuedIdRef.current = null
+          setSteeringQueuedId(null)
+        }
+      })
   }
 
   // Send directly into the active turn. This is deliberately separate from
@@ -449,38 +488,41 @@ export default function Composer({
     if (!sessionId || !trimmed || disabled || !busy) return
     const staged = images
     const imgs = stagedImages()
-    const messageId = crypto.randomUUID()
     const store = useAppStore.getState()
     store.clearComposerDraft(sessionId)
     clearLocalDraft()
-    store.addMessage(sessionId, {
-      id: messageId,
-      role: 'user',
-      kind: 'steer',
-      content: trimmed,
-      images: imgs?.map(({ data, mimeType }) => ({ data, mimeType }))
-    })
-    store.recordSteer(sessionId, trimmed)
 
-    void window.electronAPI
-      .steer(sessionId, trimmed, imgs)
-      .then((accepted) => {
-        if (accepted) return
-        store.updateMessage(sessionId, messageId, { failed: true })
-        store.setComposerDraft(sessionId, { text: trimmed, images: toPromptImages(staged) })
-        if (useAppStore.getState().currentSessionId !== sessionId) return
-        setText(trimmed)
-        setImages(staged)
-        setCaret(trimmed.length)
-      })
-      .catch(() => {
-        store.updateMessage(sessionId, messageId, { failed: true })
-        store.setComposerDraft(sessionId, { text: trimmed, images: toPromptImages(staged) })
-        if (useAppStore.getState().currentSessionId !== sessionId) return
-        setText(trimmed)
-        setImages(staged)
-        setCaret(trimmed.length)
-      })
+    void dispatchSteer({
+      sessionId,
+      text: trimmed,
+      images: imgs,
+      source: 'composer',
+      steer: (sid, text, images) => window.electronAPI.steer(sid, text, images)
+    }).then((result) => {
+      const latest = useAppStore.getState()
+      if (result.ok) {
+        if (!latest.sessions.some((session) => session.id === sessionId)) return
+        latest.addMessage(sessionId, {
+          id: crypto.randomUUID(),
+          role: 'user',
+          kind: 'steer',
+          content: trimmed,
+          images: imgs?.map(({ data, mimeType }) => ({ data, mimeType }))
+        })
+        // A trajectory fact exists only after OMP accepted the Steer.
+        latest.recordSteer(sessionId, trimmed)
+        latest.setSessionError(sessionId, null)
+        return
+      }
+
+      if (!latest.sessions.some((session) => session.id === sessionId)) return
+      latest.setComposerDraft(sessionId, { text: trimmed, images: toPromptImages(staged) })
+      latest.setSessionError(sessionId, 'chat.steerFailed')
+      if (latest.currentSessionId !== sessionId) return
+      setText(trimmed)
+      setImages(staged)
+      setCaret(trimmed.length)
+    })
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -644,15 +686,22 @@ export default function Composer({
                   ) : null}
                   <button
                     onClick={() => handleSteerNow(m)}
-                    title={t('composer.steerNow')}
-                    className="focus-ring shrink-0 rounded-full p-1 text-accent transition-colors hover:bg-overlay-strong"
+                    disabled={steeringQueuedId === m.id}
+                    title={steeringQueuedId === m.id ? t('composer.steering') : t('composer.steerNow')}
+                    aria-label={steeringQueuedId === m.id ? t('composer.steering') : t('composer.steerNow')}
+                    className="focus-ring shrink-0 rounded-full p-1 text-accent transition-colors hover:bg-overlay-strong disabled:cursor-wait disabled:opacity-60"
                   >
-                    <Zap size={11} />
+                    {steeringQueuedId === m.id ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
+                      <Zap size={11} />
+                    )}
                   </button>
                   <button
                     onClick={() => currentSessionId && removeQueuedMessage(currentSessionId, m.id)}
+                    disabled={steeringQueuedId === m.id}
                     title={t('composer.remove')}
-                    className="focus-ring shrink-0 rounded-full p-1 text-cream-faint transition-colors hover:bg-overlay-strong hover:text-cream"
+                    className="focus-ring shrink-0 rounded-full p-1 text-cream-faint transition-colors hover:bg-overlay-strong hover:text-cream disabled:cursor-wait disabled:opacity-60"
                   >
                     <X size={11} />
                   </button>
