@@ -31,6 +31,11 @@ const en = {
   'sidebar.showMore': 'Show {count} more',
   'sidebar.showLess': 'Show less',
   'sidebar.removeRecent': 'Remove from recent projects',
+  'sidebar.status.running': 'Running',
+  'sidebar.status.attention': 'Needs attention',
+  'sidebar.status.error': 'Error',
+  'sidebar.status.unread': 'New',
+  'sidebar.status.idle': 'Idle',
 
   // Compact relative timestamps (session/history rows)
   'sidebar.time.secondsAgo': '{count}s ago',
@@ -115,7 +120,7 @@ const en = {
   'msg.copy': 'Copy',
   'msg.copied': 'Copied',
   'msg.edit': 'Edit',
-  'msg.steer': 'Steer',
+  'msg.steer': 'Adjust current turn',
   'msg.thinking': 'Thinking',
   'msg.sendFailed': 'Not delivered',
 
@@ -148,6 +153,7 @@ const en = {
   'export.exporting': 'Exporting…',
   'export.failed': 'Export failed',
   'export.success': 'Exported successfully',
+  'export.successWithFile': 'Exported · {filename}',
 
   // Settings page
   'settings.title': 'Settings',
@@ -405,6 +411,11 @@ const zh: Record<I18nKey, string> = {
   'sidebar.showMore': '展开显示（还有 {count} 条）',
   'sidebar.showLess': '收起',
   'sidebar.removeRecent': '从最近项目中移除',
+  'sidebar.status.running': '运行中',
+  'sidebar.status.attention': '需要处理',
+  'sidebar.status.error': '运行错误',
+  'sidebar.status.unread': '新消息',
+  'sidebar.status.idle': '空闲',
 
   'sidebar.time.secondsAgo': '{count}秒钟',
   'sidebar.time.minutesAgo': '{count}分钟',
@@ -485,7 +496,7 @@ const zh: Record<I18nKey, string> = {
   'msg.copy': '复制',
   'msg.copied': '已复制',
   'msg.edit': '编辑',
-  'msg.steer': '转向',
+  'msg.steer': '调整当前任务',
   'msg.thinking': '思考',
   'msg.sendFailed': '未送达',
 
@@ -515,6 +526,7 @@ const zh: Record<I18nKey, string> = {
   'export.exporting': '导出中…',
   'export.failed': '导出失败',
   'export.success': '导出成功',
+  'export.successWithFile': '已导出 · {filename}',
 
   // Settings page
   'settings.title': '设置',

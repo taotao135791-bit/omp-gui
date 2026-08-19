@@ -133,7 +133,10 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
   if (isUser) {
     const isSteer = message.kind === 'steer'
     return (
-      <div className="msg-in group flex justify-end">
+      <div
+        className="msg-in group flex justify-end"
+        aria-label={isSteer ? `${t('msg.steer')}: ${message.content}` : undefined}
+      >
         <div className="relative max-w-[85%]">
           {isSteer && (
             <div className="mb-1 flex justify-end">

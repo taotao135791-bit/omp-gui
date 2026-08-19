@@ -441,6 +441,48 @@ export default function Composer({
     void window.electronAPI.steer(currentSessionId, m.text, m.images)
   }
 
+  // Send directly into the active turn. This is deliberately separate from
+  // Queue so the user never has to discover the queued-chip Zap action first.
+  const handleSteerCurrent = () => {
+    const sessionId = currentSessionId
+    const trimmed = text.trim()
+    if (!sessionId || !trimmed || disabled || !busy) return
+    const staged = images
+    const imgs = stagedImages()
+    const messageId = crypto.randomUUID()
+    const store = useAppStore.getState()
+    store.clearComposerDraft(sessionId)
+    clearLocalDraft()
+    store.addMessage(sessionId, {
+      id: messageId,
+      role: 'user',
+      kind: 'steer',
+      content: trimmed,
+      images: imgs?.map(({ data, mimeType }) => ({ data, mimeType }))
+    })
+    store.recordSteer(sessionId, trimmed)
+
+    void window.electronAPI
+      .steer(sessionId, trimmed, imgs)
+      .then((accepted) => {
+        if (accepted) return
+        store.updateMessage(sessionId, messageId, { failed: true })
+        store.setComposerDraft(sessionId, { text: trimmed, images: toPromptImages(staged) })
+        if (useAppStore.getState().currentSessionId !== sessionId) return
+        setText(trimmed)
+        setImages(staged)
+        setCaret(trimmed.length)
+      })
+      .catch(() => {
+        store.updateMessage(sessionId, messageId, { failed: true })
+        store.setComposerDraft(sessionId, { text: trimmed, images: toPromptImages(staged) })
+        if (useAppStore.getState().currentSessionId !== sessionId) return
+        setText(trimmed)
+        setImages(staged)
+        setCaret(trimmed.length)
+      })
+  }
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (atOpen) {
       if (e.key === 'ArrowDown' && fileItems.length > 0) {
@@ -697,18 +739,28 @@ export default function Composer({
             </div>
             {busy ? (
               <div className="flex items-center gap-1.5">
-                <button
-                  onClick={handleSend}
-                  disabled={!canSend}
-                  title={t('composer.queue')}
-                  className={`flex h-8 w-8 items-center justify-center rounded-full transition-all duration-150 active:scale-95 ${
-                    canSend
-                      ? 'bg-accent text-white shadow-card hover:bg-accent-bright'
-                      : 'cursor-not-allowed bg-overlay-strong text-cream-faint'
-                  }`}
-                >
-                  <ListPlus size={14} strokeWidth={2.5} />
-                </button>
+                {canSend && (
+                  <>
+                    <button
+                      onClick={handleSend}
+                      title={t('composer.queue')}
+                      aria-label={t('composer.queue')}
+                      className="flex h-8 items-center gap-1.5 rounded-full bg-overlay-strong px-2.5 text-[11px] font-medium text-cream-dim shadow-card transition-all duration-150 hover:bg-overlay hover:text-cream active:scale-95"
+                    >
+                      <ListPlus size={13} strokeWidth={2.5} />
+                      <span>{t('composer.queue')}</span>
+                    </button>
+                    <button
+                      onClick={handleSteerCurrent}
+                      title={t('composer.steerNow')}
+                      aria-label={t('composer.steerNow')}
+                      className="flex h-8 items-center gap-1.5 rounded-full bg-accent px-2.5 text-[11px] font-medium text-white shadow-card transition-all duration-150 hover:bg-accent-bright active:scale-95"
+                    >
+                      <Zap size={13} strokeWidth={2.5} />
+                      <span>{t('composer.steerNow')}</span>
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={onStop}
                   disabled={stopping}

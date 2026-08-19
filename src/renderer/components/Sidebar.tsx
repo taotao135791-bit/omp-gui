@@ -27,6 +27,7 @@ import { useT } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
 import { recordsForWorkspace } from '../lib/sessionRegistry'
 import { formatRelativeTime } from '../lib/time'
+import { getSessionStatus } from '../lib/sessionStatus'
 import Logo from './Logo'
 
 export default function Sidebar() {
@@ -320,9 +321,11 @@ export default function Sidebar() {
     const unread = !active && Boolean(unreadSessionIds[session.id])
     // A background session waiting on an approval/plugin dialog needs the
     // user — outranks the plain working dot.
-    const waiting = !active && (uiRequests[session.id] || []).length > 0
+    const waiting = (uiRequests[session.id] || []).length > 0
     // The process is gone (spawn failure / crash) — outranks everything.
     const dead = session.status === 'error'
+    const status = getSessionStatus({ busy: running, waiting, error: dead, unread })
+    const statusLabel = t(`sidebar.status.${status}`)
     const pinned = pinnedSet.has(session.id)
     const archived = archivedSet.has(session.id)
     return (
@@ -332,6 +335,7 @@ export default function Sidebar() {
           setCurrentSessionId(session.id)
           navigate('/')
         }}
+        aria-label={`${session.title}, ${statusLabel}`}
         className={`group flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-[6px] transition-all duration-150 ease-standard ${
           active ? 'border-line bg-ink-850 shadow-card' : 'border-transparent hover:bg-overlay'
         }`}
@@ -363,6 +367,21 @@ export default function Sidebar() {
             {formatRelativeTime(session.createdAt, language)}
           </div>
         </div>
+        <span
+          className={`w-16 shrink-0 truncate text-right text-[10px] font-medium ${
+            status === 'error'
+              ? 'text-red-500'
+              : status === 'attention'
+                ? 'text-red-400'
+                : status === 'running'
+                  ? 'text-amber-400'
+                  : status === 'unread'
+                    ? 'text-accent'
+                    : 'text-cream-faint/70'
+          }`}
+        >
+          {statusLabel}
+        </span>
         {!archived && (
           <button
             onClick={(e) => {

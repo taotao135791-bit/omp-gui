@@ -5,6 +5,7 @@ import { useAppStore } from '../store'
 import { I18nKey, useT } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
+import { exportFilename } from '../lib/exportFilename'
 import MessageList from './MessageList'
 import Composer from './Composer'
 import ExtensionUiDialog from './ExtensionUiDialog'
@@ -257,6 +258,7 @@ export default function ChatPanel() {
   }
 
   const projectName = currentWorkspace ? currentWorkspace.displayPath.split('/').filter(Boolean).pop() : null
+  const exportedFilename = exportSuccessPath ? exportFilename(exportSuccessPath) : null
   const enabledCount = packages.filter((p) => p.enabled).length
   const showHero = sessionMessages.length === 0
   const showThinking =
@@ -294,7 +296,7 @@ export default function ChatPanel() {
                   : exportFailed
                     ? t('export.failed')
                     : exportSuccessPath
-                      ? t('export.success')
+                      ? t('export.successWithFile', { filename: exportedFilename ?? '' })
                     : t('export.button')
               }
               className={`app-no-drag rounded-md p-1.5 transition hover:bg-overlay disabled:opacity-60 ${
@@ -313,8 +315,17 @@ export default function ChatPanel() {
             </button>
           )}
           {exportSuccessPath && (
-            <span className="max-w-[180px] truncate font-medium text-emerald-500" title={exportSuccessPath}>
-              {t('export.success')}
+            <span
+              className="max-w-[220px] truncate font-medium text-emerald-500"
+              title={exportSuccessPath}
+              aria-live="polite"
+            >
+              {t('export.successWithFile', { filename: exportedFilename ?? '' })}
+            </span>
+          )}
+          {exportFailed && (
+            <span className="font-medium text-red-500" aria-live="polite">
+              {t('export.failed')}
             </span>
           )}
           {isCompacting && (
