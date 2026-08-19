@@ -1,6 +1,11 @@
 import { PromptImage } from '@shared/types'
+import type { I18nKey } from '../i18n'
 
 export type SteerSource = 'composer' | 'queue'
+
+export function steerFailureKey(source: SteerSource): I18nKey {
+  return source === 'queue' ? 'chat.steerQueueFailed' : 'chat.steerComposerFailed'
+}
 
 export type SteerDispatchResult =
   | { source: SteerSource; ok: true }

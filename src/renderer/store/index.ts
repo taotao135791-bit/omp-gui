@@ -198,6 +198,8 @@ interface AppState {
   setBusy: (sessionId: string, busy: boolean) => void
   /** Set/clear a session's user-visible failure banner (i18n key). */
   setSessionError: (sessionId: string, key: I18nKey | null) => void
+  /** Clear a recoverable error only when it is still the expected key. */
+  clearSessionErrorIf: (sessionId: string, key: I18nKey) => void
   /** Append a message to the session's queue. */
   enqueueQueuedMessage: (sessionId: string, message: QueuedMessage) => void
   /** Remove one queued message by id. */
@@ -637,6 +639,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ busy: { ...state.busy, [sessionId]: busy } })),
   setSessionError: (sessionId, key) =>
     set((state) => ({ sessionErrors: { ...state.sessionErrors, [sessionId]: key ?? undefined } })),
+  clearSessionErrorIf: (sessionId, key) =>
+    set((state) => {
+      if (state.sessionErrors[sessionId] !== key) return state
+      return { sessionErrors: { ...state.sessionErrors, [sessionId]: undefined } }
+    }),
   enqueueQueuedMessage: (sessionId, message) =>
     set((state) => ({
       queuedMessages: {
@@ -712,6 +719,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         .sendMessage(sessionId, next.text, next.images)
         .then((sent) => {
           if (sent) {
+            // A queued item successfully became a normal prompt; clear only
+            // the stale recoverable Steer feedback, never fatal session state.
+            get().clearSessionErrorIf(sessionId, 'chat.steerQueueFailed')
             const list = get().messages[sessionId] || []
             void get().createCheckpointForMessage(sessionId, list.length - 1, next.text)
             void get().maybeNameSession(sessionId, next.text)

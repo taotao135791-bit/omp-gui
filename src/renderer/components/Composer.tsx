@@ -13,7 +13,7 @@ import {
 import { PromptImage, SlashCommand } from '@shared/types'
 import { QueuedMessage, useAppStore } from '../store'
 import { SessionComposerDraft } from '../lib/composerDraft'
-import { dispatchSteer } from '../lib/steerDispatch'
+import { dispatchSteer, steerFailureKey } from '../lib/steerDispatch'
 import { useT } from '../i18n'
 import ModelPicker from './ModelPicker'
 import ThinkingPicker from './ThinkingPicker'
@@ -467,7 +467,7 @@ export default function Composer({
         }
 
         latest.releaseQueuedMessage(sessionId, m.id)
-        latest.setSessionError(sessionId, 'chat.steerFailed')
+        latest.setSessionError(sessionId, steerFailureKey(result.source))
         // If the turn ended while the ACK was pending, release ownership and
         // give the queued item its normal FIFO drain opportunity.
         if (!latest.busy[sessionId]) latest.drainQueuedMessage(sessionId)
@@ -517,7 +517,7 @@ export default function Composer({
 
       if (!latest.sessions.some((session) => session.id === sessionId)) return
       latest.setComposerDraft(sessionId, { text: trimmed, images: toPromptImages(staged) })
-      latest.setSessionError(sessionId, 'chat.steerFailed')
+      latest.setSessionError(sessionId, steerFailureKey(result.source))
       if (latest.currentSessionId !== sessionId) return
       setText(trimmed)
       setImages(staged)

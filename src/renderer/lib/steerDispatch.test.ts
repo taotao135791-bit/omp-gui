@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dispatchSteer } from './steerDispatch'
+import { dispatchSteer, steerFailureKey } from './steerDispatch'
 
 const image = { type: 'image' as const, data: 'AA==', mimeType: 'image/png' }
 
 describe('dispatchSteer', () => {
+  it('maps failure feedback to the interaction source', () => {
+    expect(steerFailureKey('composer')).toBe('chat.steerComposerFailed')
+    expect(steerFailureKey('queue')).toBe('chat.steerQueueFailed')
+  })
+
   it('normalizes an accepted composer steer and forwards images', async () => {
     const steer = vi.fn().mockResolvedValue(true)
 
