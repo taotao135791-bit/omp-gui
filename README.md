@@ -6,7 +6,7 @@ A desktop GUI for [Oh My Pi](https://omp.sh) / [Pi](https://github.com/badlogic/
 
 ## Download
 
-**macOS** — download, open the DMG, drag OMP GUI into Applications:
+**macOS · v0.11.0（最新正式版）** — download, open the DMG, drag OMP GUI into Applications:
 
 - [Apple Silicon (M1/M2/M3/M4)](https://github.com/taotao135791-bit/omp-gui/releases/latest/download/OMP-GUI-arm64.dmg)
 - [Intel](https://github.com/taotao135791-bit/omp-gui/releases/latest/download/OMP-GUI-x64.dmg)

@@ -3,6 +3,7 @@ import { Check, KeyRound, RefreshCw, RotateCcw, Save, Trash2 } from 'lucide-reac
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { defaultThinkingOptionsFor } from '../lib/thinking'
+import { resolveRuntimeSettingDraft } from '../lib/runtimeModelDraft'
 import { currentValueState } from '../lib/runtimeSelect'
 
 /**
@@ -41,8 +42,14 @@ export default function RuntimeModelSection() {
   const providers = overview?.providers ?? []
 
   const [provider, setProvider] = useState('')
-  const [model, setModel] = useState(defaultModel)
-  const [thinking, setThinking] = useState(defaultThinking)
+  // Keep unsaved choices separate from runtime truth. A delayed overview is
+  // allowed to update untouched fields, but must never erase a user's choice
+  // before they press Save. `''` is a deliberate automatic-default choice;
+  // only `null` means "follow the runtime".
+  const [modelDraft, setModelDraft] = useState<string | null>(null)
+  const [thinkingDraft, setThinkingDraft] = useState<string | null>(null)
+  const model = resolveRuntimeSettingDraft(modelDraft, defaultModel)
+  const thinking = resolveRuntimeSettingDraft(thinkingDraft, defaultThinking)
   const [keyInput, setKeyInput] = useState('')
   const [saving, setSaving] = useState(false)
   const [keyBusy, setKeyBusy] = useState(false)
@@ -56,13 +63,11 @@ export default function RuntimeModelSection() {
   }
 
   useEffect(() => {
-    setModel(defaultModel)
-    setThinking(defaultThinking)
     // Seed the provider from the persisted model's provider (never overwrite
     // a provider the user already picked).
     const defaultProvider = defaultModel.split('/')[0]
     if (defaultProvider) setProvider((p) => p || defaultProvider)
-  }, [defaultModel, defaultThinking])
+  }, [defaultModel])
 
   // Load the full static catalog once (concrete models, key-independent).
   useEffect(() => {
@@ -138,6 +143,10 @@ export default function RuntimeModelSection() {
       flashSaved()
       await loadRuntimeOverview(true)
       await loadRuntimeModels()
+      // The final refresh above is now authoritative, so release the local
+      // drafts and resume following future runtime changes.
+      setModelDraft(null)
+      setThinkingDraft(null)
     } else {
       setError(modelRes.error ?? thinkingRes.error ?? 'failed')
     }
@@ -151,12 +160,12 @@ export default function RuntimeModelSection() {
     const thinkingRes = await setRuntimeDefaultThinking('')
     setSaving(false)
     if (modelRes.ok && thinkingRes.ok) {
-      setModel('')
-      setThinking('')
       setProvider('')
       flashSaved()
       await loadRuntimeOverview(true)
       await loadRuntimeModels()
+      setModelDraft(null)
+      setThinkingDraft(null)
     } else {
       setError(modelRes.error ?? thinkingRes.error ?? 'failed')
     }
@@ -256,7 +265,10 @@ export default function RuntimeModelSection() {
               onChange={(e) => {
                 const next = e.target.value
                 setProvider(next)
-                if (model && model.split('/')[0] !== next) setModel('')
+                // Switching provider also makes an explicit automatic choice
+                // local; otherwise a late overview for the old provider can
+                // populate this picker again before the user chooses a model.
+                if (model.split('/')[0] !== next) setModelDraft('')
                 setKeyInput('')
               }}
               className={selectCls}
@@ -275,20 +287,21 @@ export default function RuntimeModelSection() {
         {/* Model */}
         <div className="flex items-center justify-between gap-3 py-3">
           <span className="text-[13px] text-cream">{t('settings.defaultModel')}</span>
-          <select value={modelState.value} onChange={(e) => setModel(e.target.value)} className={selectCls}>
+          <select value={modelState.value} onChange={(e) => setModelDraft(e.target.value)} className={selectCls}>
             <option value="">{t('settings.modelRuntimeDefault')}</option>
             {modelState.unavailable && (
               <option value={modelState.value}>
                 {modelState.value} · {t('settings.modelUnavailable')}
               </option>
             )}
-            {modelOptions
-              .filter((m) => m.selector !== modelState.value)
-              .map((m) => (
-                <option key={m.selector} value={m.selector}>
-                  {m.name}
-                </option>
-              ))}
+            {/* Keep a valid selected model in the DOM. Removing it makes a
+                controlled native <select> fall back to its first option,
+                visually (and interactively) reverting to “Auto”. */}
+            {modelOptions.map((m) => (
+              <option key={m.selector} value={m.selector}>
+                {m.name}
+              </option>
+            ))}
           </select>
         </div>
         {modelState.unavailable && (
@@ -367,7 +380,7 @@ export default function RuntimeModelSection() {
           <span className="text-[13px] text-cream">{t('settings.thinkingCurrent')}</span>
           <select
             value={thinkingState.value}
-            onChange={(e) => setThinking(e.target.value)}
+            onChange={(e) => setThinkingDraft(e.target.value)}
             className={selectCls}
           >
             <option value="">{t('settings.thinkingReset')}</option>
@@ -376,13 +389,14 @@ export default function RuntimeModelSection() {
                 {thinkingState.value} · {t('settings.thinkingUnsupported')}
               </option>
             )}
-            {thinkingOptions
-              .filter((level) => level !== thinkingState.value)
-              .map((level) => (
-                <option key={level} value={level}>
-                  {level === 'auto' ? `${t('settings.thinkingAuto')} (auto)` : level}
-                </option>
-              ))}
+            {/* Same rule as the model picker: the current valid value must
+                remain an option, otherwise the native control displays its
+                first entry instead. */}
+            {thinkingOptions.map((level) => (
+              <option key={level} value={level}>
+                {level === 'auto' ? `${t('settings.thinkingAuto')} (auto)` : level}
+              </option>
+            ))}
           </select>
         </div>
         {thinkingState.unavailable && (

@@ -57,6 +57,14 @@ const STATUS_BUSY: Partial<Record<SessionRuntimeState, boolean>> = {
   failed: false
 }
 
+/**
+ * App and Settings can both refresh the runtime overview. Only the most
+ * recently-started request may update the singleton store: otherwise an older
+ * automatic-default response can arrive last and overwrite a newer model
+ * configuration response.
+ */
+let runtimeOverviewRequestGeneration = 0
+
 /** A message parked while the session is busy; drained FIFO on idle. */
 export interface QueuedMessage {
   id: string
@@ -827,8 +835,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setInstallStatus: (installStatus) => set({ installStatus }),
 
   loadRuntimeOverview: async (force = false) => {
+    const requestGeneration = ++runtimeOverviewRequestGeneration
     const runtimeOverview = await window.electronAPI.runtimeOverview(force)
-    set({ runtimeOverview })
+    if (requestGeneration === runtimeOverviewRequestGeneration) set({ runtimeOverview })
   },
 
   loadRuntimeModels: async () => {
