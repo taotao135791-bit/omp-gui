@@ -1,31 +1,105 @@
 /**
- * Community pi packages, searched live from the npm registry.
- * pi packages self-declare with the `pi-package` keyword, so the registry
- * search doubles as the ecosystem index (pi.dev/packages points there too).
+ * Community pi packages.
+ *
+ * The curated marketplace list is static data: the featured packages live on
+ * GitHub and have no npm registry entry to fetch, and a static list keeps the
+ * marketplace usable offline. Live npm registry search (keyword `pi-package`)
+ * still doubles as the ecosystem index (pi.dev/packages points there too).
  */
-import { CommunityPackageInfo } from '../shared/types'
+import { CommunityPackageInfo, CuratedPackageInfo } from '../shared/types'
 
 export type CommunityPackage = CommunityPackageInfo
 
 const SEARCH_URL = 'https://registry.npmjs.org/-/v1/search'
-const REGISTRY_URL = 'https://registry.npmjs.org'
 const TIMEOUT_MS = 10_000
 
-/** Well-known packages highlighted at the top of the community list. */
-export const CURATED_PACKAGES = [
-  'pi-subagents',
-  'pi-mcp-adapter',
-  'pi-web-access',
-  'pi-lens',
-  '@plannotator/pi-extension',
-  '@narumitw/pi-goal'
+/**
+ * GitHub-hosted picks featured at the top of the marketplace. Every entry was
+ * verified to exist and to carry a `pi` manifest plus the `pi-package`
+ * keyword. `name` is the npm name where one is known, otherwise the repo name.
+ */
+export const CURATED_GIT_PACKAGES: CuratedPackageInfo[] = [
+  {
+    name: 'pi-web-access',
+    repo: 'nicobailon/pi-web-access',
+    description: 'Web search, URL fetching, GitHub cloning, PDF/YouTube extraction',
+    category: 'web'
+  },
+  {
+    name: 'pi-mcp-adapter',
+    repo: 'nicobailon/pi-mcp-adapter',
+    description: 'Token-efficient MCP (Model Context Protocol) adapter',
+    category: 'mcp'
+  },
+  {
+    name: 'pi-subagents',
+    repo: 'nicobailon/pi-subagents',
+    description: 'Async subagent delegation with truncation & artifacts',
+    category: 'agents'
+  },
+  {
+    name: 'pi-subagents',
+    repo: 'tintinweb/pi-subagents',
+    description: 'Claude Code-style subagents: parallel runs, live widget, mid-run steering',
+    category: 'agents'
+  },
+  {
+    name: 'pi-lens',
+    repo: 'apmantza/pi-lens',
+    description: 'Real-time code feedback: LSP, linters, formatters, type-checking',
+    category: 'quality'
+  },
+  {
+    name: 'context-mode',
+    repo: 'mksglu/context-mode',
+    description: 'Context-window saver: sandboxed execution + FTS5 knowledge base',
+    category: 'productivity'
+  },
+  {
+    name: 'pi-permission-system',
+    repo: 'gotgenes/pi-permission-system',
+    description: 'Permission enforcement extension',
+    category: 'safety'
+  },
+  {
+    name: 'cc-safety-net',
+    repo: 'kenryu42/cc-safety-net',
+    description: 'Blocks destructive git/fs commands and secret-file access',
+    category: 'safety'
+  },
+  {
+    name: 'rpiv-todo',
+    repo: 'juicesharp/rpiv-todo',
+    description: 'Model todo list rendered as a live overlay',
+    category: 'productivity'
+  },
+  {
+    name: 'rpiv-ask-user-question',
+    repo: 'juicesharp/rpiv-ask-user-question',
+    description: 'Structured typed questionnaires from the model',
+    category: 'productivity'
+  },
+  {
+    name: 'pi-background-tasks',
+    repo: 'ismailsaleekh/pi-background-tasks',
+    description: 'Durable background shell tasks via child pi processes',
+    category: 'productivity'
+  }
 ]
 
 export async function searchCommunityPackages(
   query: string,
   curatedOnly = false
 ): Promise<CommunityPackage[]> {
-  if (curatedOnly) return fetchCurated()
+  if (curatedOnly) {
+    return CURATED_GIT_PACKAGES.map((p) => ({
+      name: p.name,
+      description: p.description,
+      version: '',
+      repo: p.repo,
+      category: p.category
+    }))
+  }
   const text = `keywords:pi-package ${query.trim()}`.trim()
   const url = `${SEARCH_URL}?text=${encodeURIComponent(text)}&size=20`
   try {
@@ -54,35 +128,4 @@ export async function searchCommunityPackages(
   } catch {
     return []
   }
-}
-
-/**
- * The curated set is fetched from each package's registry document — the
- * search endpoint can't disjunct multiple `name:` terms in one query.
- * Order follows CURATED_PACKAGES.
- */
-async function fetchCurated(): Promise<CommunityPackage[]> {
-  const one = async (name: string): Promise<CommunityPackage | null> => {
-    try {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-      const res = await fetch(`${REGISTRY_URL}/${encodeURIComponent(name)}/latest`, {
-        signal: controller.signal,
-        headers: { accept: 'application/json' }
-      })
-      clearTimeout(timer)
-      if (!res.ok) return null
-      const d = (await res.json()) as { name?: unknown; description?: unknown; version?: unknown }
-      if (typeof d.name !== 'string') return null
-      return {
-        name: d.name,
-        description: typeof d.description === 'string' ? d.description : '',
-        version: typeof d.version === 'string' ? d.version : ''
-      }
-    } catch {
-      return null
-    }
-  }
-  const all = await Promise.all(CURATED_PACKAGES.map(one))
-  return all.filter((p): p is CommunityPackage => p !== null)
 }

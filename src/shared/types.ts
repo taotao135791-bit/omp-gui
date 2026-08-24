@@ -645,12 +645,59 @@ export interface PackageActionResult {
   log: string
 }
 
+/** Category buckets used by the curated marketplace list. */
+export type CuratedPackageCategory = 'web' | 'mcp' | 'agents' | 'quality' | 'safety' | 'productivity'
+
+/** A hand-picked GitHub-hosted pi package featured in the marketplace. */
+export interface CuratedPackageInfo {
+  name: string
+  /** GitHub `owner/repo`; installed via `git:github.com/<repo>`. */
+  repo: string
+  description: string
+  category: CuratedPackageCategory
+}
+
 /** A pi package found on the npm registry (community/curated lists). */
 export interface CommunityPackageInfo {
   name: string
   description: string
   version: string
+  /** GitHub `owner/repo` when the package installs from git instead of npm. */
+  repo?: string
+  category?: CuratedPackageCategory
 }
+
+/** Extension skeleton offered by the plugin scaffold form. */
+export type PluginTemplate = 'blank' | 'command' | 'tool-guard'
+
+/** Everything the plugin scaffold needs, collected by the /plugins/new form. */
+export interface PluginScaffoldSpec {
+  name: string
+  displayName?: string
+  description: string
+  version: string
+  author?: string
+  /** Existing parent directory; the package is created in <parentDir>/<name>. */
+  parentDir: string
+  extension: boolean
+  skill: boolean
+  prompt: boolean
+  template: PluginTemplate
+}
+
+/** Stable error codes from plugin scaffolding; the renderer maps them to i18n. */
+export type PluginScaffoldError =
+  | 'invalid-spec'
+  | 'invalid-name'
+  | 'invalid-version'
+  | 'no-resources'
+  | 'dir-missing'
+  | 'dir-not-empty'
+  | 'write-failed'
+
+export type PluginScaffoldResult =
+  | { ok: true; dir: string; files: string[] }
+  | { ok: false; error: PluginScaffoldError; detail?: string }
 
 export type Language = 'zh' | 'en'
 

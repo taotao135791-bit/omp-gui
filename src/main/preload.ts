@@ -36,7 +36,9 @@ import {
   SubagentTranscriptSelector,
   HistoricalAgentRecord,
   WorkspaceGrant,
-  RecentWorkspaceDescriptor
+  RecentWorkspaceDescriptor,
+  PluginScaffoldSpec,
+  PluginScaffoldResult
 } from '../shared/types'
 
 export interface ElectronAPI {
@@ -92,6 +94,10 @@ export interface ElectronAPI {
   removePackage: (source: string) => Promise<PackageActionResult>
   updatePackage: (source: string) => Promise<PackageActionResult>
   setPackageEnabled: (source: string, enabled: boolean) => Promise<PackageActionResult>
+  /** Scaffold a new pi package into <spec.parentDir>/<spec.name>. */
+  scaffoldPlugin: (spec: PluginScaffoldSpec) => Promise<PluginScaffoldResult>
+  /** Reveal a path in the OS file manager (shell.showItemInFolder). */
+  revealPath: (target: string) => Promise<boolean>
   getStore: <K extends keyof AppSettings>(key: K) => Promise<AppSettings[K]>
   setStore: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => Promise<boolean>
   selectFolder: () => Promise<string | null>
@@ -263,6 +269,9 @@ const api: ElectronAPI = {
   updatePackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_UPDATE, source),
   setPackageEnabled: (source: string, enabled: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SET_ENABLED, source, enabled),
+  scaffoldPlugin: (spec: PluginScaffoldSpec) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_SCAFFOLD, spec),
+  revealPath: (target: string) => ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_REVEAL, target),
   getStore: (key: keyof AppSettings) => ipcRenderer.invoke(IPC_CHANNELS.STORE_GET, key),
   setStore: (key: keyof AppSettings, value: unknown) =>
     ipcRenderer.invoke(IPC_CHANNELS.STORE_SET, key, value),

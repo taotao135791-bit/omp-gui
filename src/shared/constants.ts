@@ -28,6 +28,8 @@ export const IPC_CHANNELS = {
   PACKAGES_REMOVE: 'packages:remove',
   PACKAGES_UPDATE: 'packages:update',
   PACKAGES_SET_ENABLED: 'packages:set-enabled',
+  PLUGINS_SCAFFOLD: 'plugins:scaffold',
+  PLUGINS_REVEAL: 'plugins:reveal',
   STORE_GET: 'store:get',
   STORE_SET: 'store:set',
   DIALOG_SELECT_FOLDER: 'dialog:select-folder',

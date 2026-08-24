@@ -21,9 +21,19 @@ import {
 } from 'lucide-react'
 import { CommunityPackageInfo, PackageInfo, PackageResource } from '@shared/types'
 import { useAppStore } from '../store'
-import { useT } from '../i18n'
-import { createSessionForCurrentProject } from '../lib/session'
+import { useT, I18nKey } from '../i18n'
 import Logo from '../components/Logo'
+
+type PageTab = 'installed' | 'marketplace'
+
+const CATEGORY_KEYS: Record<string, I18nKey> = {
+  web: 'plugins.category.web',
+  mcp: 'plugins.category.mcp',
+  agents: 'plugins.category.agents',
+  quality: 'plugins.category.quality',
+  safety: 'plugins.category.safety',
+  productivity: 'plugins.category.productivity'
+}
 
 type PendingAction =
   | { kind: 'install' }
@@ -59,6 +69,7 @@ export default function PackagesPage() {
   const [dragSource, setDragSource] = useState<string | null>(null)
   const [overZone, setOverZone] = useState<DropZone | null>(null)
   const [fileDrag, setFileDrag] = useState(false)
+  const [tab, setTab] = useState<PageTab>('installed')
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fileDragDepth = useRef(0)
 
@@ -255,145 +266,170 @@ export default function PackagesPage() {
 
       <div className="flex-1 overflow-y-auto p-5 pb-20">
         <div className="mx-auto max-w-[760px] space-y-4">
-          {/* Install */}
-          <section className="rounded-[16px] border border-line bg-ink-850 p-4 shadow-card">
-            <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
-              {t('plugins.installTitle')}
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleInstall()
-                }}
-                placeholder={t('plugins.installPlaceholder')}
-                disabled={pending !== null}
-                className="min-w-0 flex-1 rounded-lg border border-line bg-ink-900 px-3 py-2 font-mono text-[13px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50 focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50"
-              />
+          {/* Installed / Marketplace tabs */}
+          <div className="flex w-fit gap-1 rounded-full border border-line bg-ink-900 p-1">
+            {(['installed', 'marketplace'] as const).map((value) => (
               <button
-                onClick={() => handlePick('folder')}
-                disabled={pending !== null}
-                title={t('plugins.browseFolder')}
-                className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+                key={value}
+                onClick={() => setTab(value)}
+                className={`rounded-full px-3.5 py-1.5 text-[12px] transition ${
+                  tab === value
+                    ? 'bg-ink-850 font-medium text-cream shadow-card'
+                    : 'text-cream-dim hover:text-cream'
+                }`}
               >
-                <FolderOpen size={12} />
-                {t('plugins.browseFolder')}
+                {value === 'installed' ? t('plugins.tab.installed') : t('plugins.tab.marketplace')}
               </button>
-              <button
-                onClick={() => handlePick('file')}
-                disabled={pending !== null}
-                title={t('plugins.browseFile')}
-                className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
-              >
-                <FileCode size={12} />
-                {t('plugins.browseFile')}
-              </button>
-              <button
-                onClick={() => handleInstall()}
-                disabled={!source.trim() || pending !== null}
-                className="flex shrink-0 items-center gap-1.5 rounded-full bg-cream px-4 py-2 text-[12px] font-medium whitespace-nowrap text-ink-950 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Plus size={12} />
-                {pending?.kind === 'install' ? t('plugins.installing') : t('plugins.install')}
-              </button>
-            </div>
-            {logBlock}
-          </section>
+            ))}
+          </div>
 
-          {/* How to assemble */}
-          <section className="rounded-[16px] border border-line bg-ink-850 px-4 py-3 shadow-card">
-            <div className="flex items-start gap-2.5">
-              <Info size={13} className="mt-0.5 shrink-0 text-accent" />
-              <div className="space-y-1 text-xs leading-5 text-cream-dim">
-                <div className="font-medium text-cream">{t('plugins.usageTitle')}</div>
-                <div>· {t('plugins.usage1')}</div>
-                <div>· {t('plugins.usage2')}</div>
-                <div>· {t('plugins.usage3')}</div>
-              </div>
-            </div>
-          </section>
+          {tab === 'marketplace' ? (
+            <MarketplaceSection
+              packages={packages}
+              pending={pending}
+              onInstall={handleInstall}
+              logBlock={logBlock}
+            />
+          ) : (
+            <>
+              {/* Install */}
+              <section className="rounded-[16px] border border-line bg-ink-850 p-4 shadow-card">
+                <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
+                  {t('plugins.installTitle')}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={source}
+                    onChange={(e) => setSource(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleInstall()
+                    }}
+                    placeholder={t('plugins.installPlaceholder')}
+                    disabled={pending !== null}
+                    className="min-w-0 flex-1 rounded-lg border border-line bg-ink-900 px-3 py-2 font-mono text-[13px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50 focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50"
+                  />
+                  <button
+                    onClick={() => handlePick('folder')}
+                    disabled={pending !== null}
+                    title={t('plugins.browseFolder')}
+                    className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+                  >
+                    <FolderOpen size={12} />
+                    {t('plugins.browseFolder')}
+                  </button>
+                  <button
+                    onClick={() => handlePick('file')}
+                    disabled={pending !== null}
+                    title={t('plugins.browseFile')}
+                    className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+                  >
+                    <FileCode size={12} />
+                    {t('plugins.browseFile')}
+                  </button>
+                  <button
+                    onClick={() => handleInstall()}
+                    disabled={!source.trim() || pending !== null}
+                    className="flex shrink-0 items-center gap-1.5 rounded-full bg-cream px-4 py-2 text-[12px] font-medium whitespace-nowrap text-ink-950 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Plus size={12} />
+                    {pending?.kind === 'install' ? t('plugins.installing') : t('plugins.install')}
+                  </button>
+                </div>
+                {logBlock}
+              </section>
 
-          {/* Chassis — mounted parts */}
-          <section
-            {...zoneDropProps('chassis')}
-            className={zoneClass(
-              'chassis',
-              'rounded-[18px] border-[1.5px] border-dashed bg-ink-850/60 p-4'
-            )}
-          >
-            <div className="mb-3 flex items-center gap-2.5">
-              <Logo size={28} className="shrink-0" />
-              <span className="text-[13px] font-semibold text-cream">{t('plugins.core')}</span>
-              <span className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] text-accent">
-                {t('plugins.mounted', { count: mounted.length })}
-              </span>
-            </div>
-            {mounted.length === 0 ? (
-              <div className="flex flex-col items-center gap-1.5 py-6 text-center">
-                <PackageOpen size={18} className="text-cream-faint" />
-                <span className="text-xs text-cream-dim">
-                  {packages.length === 0 ? t('plugins.empty') : t('plugins.emptyMounted')}
-                </span>
-                {packages.length === 0 && (
-                  <span className="text-[11px] text-cream-faint">{t('plugins.emptyHint')}</span>
+              {/* How to assemble */}
+              <section className="rounded-[16px] border border-line bg-ink-850 px-4 py-3 shadow-card">
+                <div className="flex items-start gap-2.5">
+                  <Info size={13} className="mt-0.5 shrink-0 text-accent" />
+                  <div className="space-y-1 text-xs leading-5 text-cream-dim">
+                    <div className="font-medium text-cream">{t('plugins.usageTitle')}</div>
+                    <div>· {t('plugins.usage1')}</div>
+                    <div>· {t('plugins.usage2')}</div>
+                    <div>· {t('plugins.usage3')}</div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Chassis — mounted parts */}
+              <section
+                {...zoneDropProps('chassis')}
+                className={zoneClass(
+                  'chassis',
+                  'rounded-[18px] border-[1.5px] border-dashed bg-ink-850/60 p-4'
                 )}
-              </div>
-            ) : (
-              <div className="grid gap-2.5">
-                {mounted.map((pkg) => (
-                  <PartCard
-                    key={pkg.source}
-                    pkg={pkg}
-                    pending={pending}
-                    confirmRemove={confirmRemove === pkg.source}
-                    onDragStateChange={setDragSource}
-                    onUpdate={() => handleUpdate(pkg)}
-                    onRemove={() => handleRemoveClick(pkg)}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
+              >
+                <div className="mb-3 flex items-center gap-2.5">
+                  <Logo size={28} className="shrink-0" />
+                  <span className="text-[13px] font-semibold text-cream">{t('plugins.core')}</span>
+                  <span className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] text-accent">
+                    {t('plugins.mounted', { count: mounted.length })}
+                  </span>
+                </div>
+                {mounted.length === 0 ? (
+                  <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+                    <PackageOpen size={18} className="text-cream-faint" />
+                    <span className="text-xs text-cream-dim">
+                      {packages.length === 0 ? t('plugins.empty') : t('plugins.emptyMounted')}
+                    </span>
+                    {packages.length === 0 && (
+                      <span className="text-[11px] text-cream-faint">{t('plugins.emptyHint')}</span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid gap-2.5">
+                    {mounted.map((pkg) => (
+                      <PartCard
+                        key={pkg.source}
+                        pkg={pkg}
+                        pending={pending}
+                        confirmRemove={confirmRemove === pkg.source}
+                        onDragStateChange={setDragSource}
+                        onUpdate={() => handleUpdate(pkg)}
+                        onRemove={() => handleRemoveClick(pkg)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
 
-          {/* Rack — detached parts */}
-          <section
-            {...zoneDropProps('rack')}
-            className={zoneClass('rack', 'rounded-[18px] border-[1.5px] border-dashed p-4')}
-          >
-            <div className="mb-3 flex items-center gap-2 px-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
-                {t('plugins.rack')}
-              </span>
-              <span className="rounded-full bg-overlay-strong px-2 py-0.5 font-mono text-[10px] text-cream-dim">
-                {parts.length}
-              </span>
-            </div>
-            {parts.length === 0 ? (
-              <div className="py-4 text-center text-xs text-cream-faint">
-                {t('plugins.emptyParts')}
-              </div>
-            ) : (
-              <div className="grid gap-2.5">
-                {parts.map((pkg) => (
-                  <PartCard
-                    key={pkg.source}
-                    pkg={pkg}
-                    pending={pending}
-                    confirmRemove={confirmRemove === pkg.source}
-                    onDragStateChange={setDragSource}
-                    onUpdate={() => handleUpdate(pkg)}
-                    onRemove={() => handleRemoveClick(pkg)}
-                  />
-                ))}
-              </div>
-            )}
-            {logBlock}
-          </section>
-
-          {/* Discover — curated picks, community search, build-your-own */}
-          <DiscoverSection packages={packages} pending={pending} onInstall={handleInstall} />
+              {/* Rack — detached parts */}
+              <section
+                {...zoneDropProps('rack')}
+                className={zoneClass('rack', 'rounded-[18px] border-[1.5px] border-dashed p-4')}
+              >
+                <div className="mb-3 flex items-center gap-2 px-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
+                    {t('plugins.rack')}
+                  </span>
+                  <span className="rounded-full bg-overlay-strong px-2 py-0.5 font-mono text-[10px] text-cream-dim">
+                    {parts.length}
+                  </span>
+                </div>
+                {parts.length === 0 ? (
+                  <div className="py-4 text-center text-xs text-cream-faint">
+                    {t('plugins.emptyParts')}
+                  </div>
+                ) : (
+                  <div className="grid gap-2.5">
+                    {parts.map((pkg) => (
+                      <PartCard
+                        key={pkg.source}
+                        pkg={pkg}
+                        pending={pending}
+                        confirmRemove={confirmRemove === pkg.source}
+                        onDragStateChange={setDragSource}
+                        onUpdate={() => handleUpdate(pkg)}
+                        onRemove={() => handleRemoveClick(pkg)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {logBlock}
+              </section>
+            </>
+          )}
         </div>
       </div>
 
@@ -551,17 +587,19 @@ function PartCard({
 }
 
 /**
- * Discover — curated pi packages, live npm community search, and the
- * build-your-own entry that jumps into a chat with a scaffold prompt.
+ * Marketplace — curated GitHub picks, live npm community search, and the
+ * build-your-own entry that opens the scaffold form at /plugins/new.
  */
-function DiscoverSection({
+function MarketplaceSection({
   packages,
   pending,
-  onInstall
+  onInstall,
+  logBlock
 }: {
   packages: PackageInfo[]
   pending: PendingAction
   onInstall: (source: string) => void
+  logBlock: React.ReactNode
 }) {
   const t = useT()
   const navigate = useNavigate()
@@ -570,12 +608,22 @@ function DiscoverSection({
   const [results, setResults] = useState<CommunityPackageInfo[] | null>(null)
   const [searching, setSearching] = useState(false)
 
-  const isInstalled = (name: string) =>
+  // Installed when the git repo slug matches (git installs) or the npm name
+  // matches (the same package may have been installed from npm).
+  const isInstalled = (pkg: CommunityPackageInfo) =>
     packages.some((p) => {
-      if (p.kind !== 'npm') return false
-      const spec = p.source.replace(/^npm:/, '')
-      return spec === name || spec.startsWith(`${name}@`)
+      if (pkg.repo && p.kind === 'git' && p.source.toLowerCase().includes(pkg.repo.toLowerCase())) {
+        return true
+      }
+      if (p.kind === 'npm') {
+        const spec = p.source.replace(/^npm:/, '')
+        if (spec === pkg.name || spec.startsWith(`${pkg.name}@`)) return true
+      }
+      return false
     })
+
+  const installSource = (pkg: CommunityPackageInfo) =>
+    pkg.repo ? `git:github.com/${pkg.repo}` : `npm:${pkg.name}`
 
   useEffect(() => {
     let alive = true
@@ -607,45 +655,29 @@ function DiscoverSection({
     return () => clearTimeout(timer)
   }, [query])
 
-  const handleBuildOwn = async () => {
-    const id = await createSessionForCurrentProject()
-    if (!id) return
-    useAppStore.getState().setComposerPrefill(t('plugins.buildOwnPrompt'))
-    navigate('/')
-  }
-
   return (
     <section className="space-y-3">
-      <div className="flex items-center gap-2 px-1">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-cream-faint">
-          {t('plugins.discover')}
-        </span>
-      </div>
+      {logBlock}
 
-      {/* Curated picks */}
-      {curated !== null &&
-        (curated.length === 0 ? (
-          <div className="rounded-[16px] border border-line bg-ink-850 px-4 py-3 text-xs text-cream-faint">
-            {t('plugins.curatedEmpty')}
+      {/* Curated picks — GitHub-hosted, installed via git: */}
+      {curated !== null && (
+        <div>
+          <div className="mb-2 px-1 text-[11px] font-medium text-cream-faint">
+            {t('plugins.curated')}
           </div>
-        ) : (
-          <div>
-            <div className="mb-2 px-1 text-[11px] font-medium text-cream-faint">
-              {t('plugins.curated')}
-            </div>
-            <div className="grid grid-cols-2 gap-2.5">
-              {curated.map((pkg) => (
-                <CommunityPackageCard
-                  key={pkg.name}
-                  pkg={pkg}
-                  installed={isInstalled(pkg.name)}
-                  disabled={pending !== null}
-                  onInstall={() => onInstall(`npm:${pkg.name}`)}
-                />
-              ))}
-            </div>
+          <div className="grid grid-cols-2 gap-2.5">
+            {curated.map((pkg) => (
+              <CommunityPackageCard
+                key={pkg.repo ?? pkg.name}
+                pkg={pkg}
+                installed={isInstalled(pkg)}
+                disabled={pending !== null}
+                onInstall={() => onInstall(installSource(pkg))}
+              />
+            ))}
           </div>
-        ))}
+        </div>
+      )}
 
       {/* Community search */}
       <div className="rounded-[16px] border border-line bg-ink-850 p-4 shadow-card">
@@ -675,9 +707,9 @@ function DiscoverSection({
               <CommunityPackageCard
                 key={pkg.name}
                 pkg={pkg}
-                installed={isInstalled(pkg.name)}
+                installed={isInstalled(pkg)}
                 disabled={pending !== null}
-                onInstall={() => onInstall(`npm:${pkg.name}`)}
+                onInstall={() => onInstall(installSource(pkg))}
               />
             ))}
           </div>
@@ -686,13 +718,13 @@ function DiscoverSection({
 
       {/* Build your own */}
       <button
-        onClick={handleBuildOwn}
+        onClick={() => navigate('/plugins/new')}
         className="flex w-full items-center gap-3 rounded-[16px] border border-dashed border-line px-4 py-3.5 text-left transition hover:border-accent/60 hover:bg-accent-soft"
       >
         <Hammer size={15} className="shrink-0 text-accent" />
         <div className="min-w-0">
-          <div className="text-[13px] font-medium text-cream">{t('plugins.buildOwn')}</div>
-          <div className="mt-0.5 text-xs text-cream-dim">{t('plugins.buildOwnHint')}</div>
+          <div className="text-[13px] font-medium text-cream">{t('plugins.market.buildOwn')}</div>
+          <div className="mt-0.5 text-xs text-cream-dim">{t('plugins.market.buildOwnHint')}</div>
         </div>
       </button>
     </section>
@@ -721,12 +753,22 @@ function CommunityPackageCard({
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-cream">
             {pkg.name}
           </span>
+          {pkg.category && CATEGORY_KEYS[pkg.category] && (
+            <span className="rounded-full bg-overlay-strong px-1.5 py-0.5 text-[10px] text-cream-faint">
+              {t(CATEGORY_KEYS[pkg.category])}
+            </span>
+          )}
           {pkg.version && (
             <span className="rounded-full bg-overlay-strong px-1.5 py-0.5 font-mono text-[10px] text-cream-dim">
               {pkg.version}
             </span>
           )}
         </div>
+        {pkg.repo && (
+          <div className="mt-0.5 truncate font-mono text-[10.5px] text-cream-faint">
+            github.com/{pkg.repo}
+          </div>
+        )}
         {pkg.description && (
           <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-cream-dim">
             {pkg.description}

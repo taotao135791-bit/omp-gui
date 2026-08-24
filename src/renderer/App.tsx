@@ -6,6 +6,7 @@ import { createSessionForCurrentProject } from './lib/session'
 import Layout from './components/Layout'
 import ChatPage from './pages/ChatPage'
 import PackagesPage from './pages/PackagesPage'
+import PluginAuthorPage from './pages/PluginAuthorPage'
 import SettingsPage from './pages/SettingsPage'
 import SetupWizard from './pages/SetupWizard'
 
@@ -170,6 +171,7 @@ function App() {
         <Routes>
           <Route path="/" element={<ChatPage />} />
           <Route path="/plugins" element={<PackagesPage />} />
+          <Route path="/plugins/new" element={<PluginAuthorPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </Layout>

@@ -21,7 +21,8 @@ import {
   LoginState,
   SubagentTranscriptSelector,
   WorkspaceGrant,
-  RecentWorkspaceDescriptor
+  RecentWorkspaceDescriptor,
+  PluginScaffoldSpec
 } from '../shared/types'
 import {
   detectCli,
@@ -62,6 +63,7 @@ import { listAvailableModels, listCatalogModels, invalidateModelCache } from './
 import { getStore, rememberRecentProject, setStore } from './store'
 import { installOmp } from './installer'
 import { searchCommunityPackages } from './community'
+import { scaffoldPlugin } from './pluginScaffold'
 import { FsGuard } from './fsGuard'
 import {
   createCheckpoint,
@@ -906,6 +908,44 @@ export function registerIpc() {
       return setPackageEnabled(source.trim(), Boolean(enabled))
     }
   )
+
+  /**
+   * The scaffold spec crosses the trust boundary as `unknown` — whitelist and
+   * re-type every field; semantic validation (name pattern, version, …)
+   * happens again inside scaffoldPlugin.
+   */
+  function sanitizeScaffoldSpec(raw: unknown): PluginScaffoldSpec | null {
+    if (!raw || typeof raw !== 'object') return null
+    const s = raw as Record<string, unknown>
+    if (typeof s.name !== 'string' || typeof s.parentDir !== 'string') return null
+    if (s.name.length > 250 || s.parentDir.length > 1000) return null
+    const opt = (v: unknown) =>
+      typeof v === 'string' && v.trim().length > 0 && v.length <= 500 ? v.trim() : undefined
+    return {
+      name: s.name.trim(),
+      displayName: opt(s.displayName),
+      description: typeof s.description === 'string' ? s.description.slice(0, 2000) : '',
+      version: typeof s.version === 'string' && s.version.trim() ? s.version.trim() : '0.1.0',
+      author: opt(s.author),
+      parentDir: s.parentDir,
+      extension: s.extension === true,
+      skill: s.skill === true,
+      prompt: s.prompt === true,
+      template: s.template === 'command' || s.template === 'tool-guard' ? s.template : 'blank'
+    }
+  }
+
+  ipcMain.handle(IPC_CHANNELS.PLUGINS_SCAFFOLD, async (_event, raw: unknown) => {
+    const spec = sanitizeScaffoldSpec(raw)
+    if (!spec) return { ok: false, error: 'invalid-spec' }
+    return scaffoldPlugin(spec)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PLUGINS_REVEAL, async (_event, target: unknown) => {
+    if (typeof target !== 'string' || !target.trim() || target.length > 1000) return false
+    shell.showItemInFolder(target)
+    return true
+  })
 
   ipcMain.handle(IPC_CHANNELS.SHELL_SHOW_CLI_SETTINGS, async () => {
     const settingsFile = path.join(defaultPiAgentDir(), 'settings.json')
