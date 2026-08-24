@@ -10,8 +10,10 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import {
   PackageActionResult,
+  PackageManagerCapabilities,
   PackageInfo,
   PackageResource,
+  PackageScope,
   PackageSourceKind
 } from '../shared/types'
 import { detectCli, executableSearchDirs } from './omp'
@@ -342,27 +344,217 @@ function fallbackName(source: string, kind: PackageSourceKind): string {
 }
 
 // ---------------------------------------------------------------------------
+// Current OMP plugin list (native CLI JSON)
+// ---------------------------------------------------------------------------
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+function packageRowId(kind: 'npm' | 'marketplace', commandSource: string, scope?: PackageScope): string {
+  return `omp:${kind}:${scope ?? 'user'}:${commandSource}`
+}
+
+/**
+ * Parse the public `omp plugin list --json` response. Current OMP owns this
+ * registry; falling back to ~/.omp/agent/settings.json would show stale Pi
+ * packages that the runtime never loads.
+ */
+export function parseOmpPluginList(raw: unknown): PackageInfo[] {
+  const root = asRecord(raw)
+  if (!root) return []
+
+  const packages: PackageInfo[] = []
+  const seen = new Set<string>()
+  const add = (pkg: PackageInfo) => {
+    if (seen.has(pkg.source)) return
+    seen.add(pkg.source)
+    packages.push(pkg)
+  }
+
+  const npm = Array.isArray(root.npm) ? root.npm : []
+  for (const item of npm) {
+    const plugin = asRecord(item)
+    const name = stringValue(plugin?.name)
+    if (!plugin || !name) continue
+    const manifest = asRecord(plugin.manifest)
+    add({
+      source: packageRowId('npm', name),
+      commandSource: name,
+      kind: 'npm',
+      name,
+      description: stringValue(manifest?.description),
+      version: stringValue(plugin.version),
+      enabled: plugin.enabled !== false,
+      path: stringValue(plugin.path),
+      resources: [],
+      pinned: false,
+      // OMP has no generic npm-plugin update verb; `plugin install <spec>` is
+      // the upstream update path and should not be presented as a fake button.
+      canUpdate: false
+    })
+  }
+
+  const marketplace = Array.isArray(root.marketplace) ? root.marketplace : []
+  for (const item of marketplace) {
+    const plugin = asRecord(item)
+    const id = stringValue(plugin?.id)
+    if (!plugin || !id) continue
+    const scope: PackageScope = plugin.scope === 'project' ? 'project' : 'user'
+    const entries = Array.isArray(plugin.entries) ? plugin.entries : []
+    const selected =
+      entries
+        .map(asRecord)
+        .find((entry) => entry?.scope === scope) ??
+      entries.map(asRecord).find((entry) => entry !== null) ??
+      null
+    add({
+      source: packageRowId('marketplace', id, scope),
+      commandSource: id,
+      scope,
+      kind: 'marketplace',
+      name: id,
+      version: stringValue(selected?.version),
+      enabled: selected?.enabled !== false,
+      path: stringValue(selected?.installPath),
+      resources: [],
+      pinned: false,
+      canUpdate: true
+    })
+  }
+
+  return packages
+}
+
+/** Inspect `omp plugin --help` before exposing state-changing controls. */
+export function parseOmpPluginCapabilities(help: string): PackageManagerCapabilities {
+  const actionLine = help
+    .split(/\r?\n/)
+    .find((line) => /^\s*ACTION\b/i.test(line)) ?? ''
+  const actions = new Set((actionLine.toLowerCase().match(/\b[a-z][a-z-]*\b/g) ?? []))
+  return {
+    profile: 'current',
+    canToggle: actions.has('enable') && actions.has('disable'),
+    canUpdate: actions.has('upgrade')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CLI execution
+// ---------------------------------------------------------------------------
+
+const PI_COMMAND_TIMEOUT_MS = 5 * 60 * 1000
+
+interface CliCommandResult extends PackageActionResult {
+  stdout: string
+  stderr: string
+}
+
+function runCli(
+  args: string[],
+  cli = detectCli(),
+  options: { preserveStdout?: boolean } = {}
+): Promise<CliCommandResult> {
+  if (!cli.available) {
+    return Promise.resolve({ ok: false, log: 'omp/pi CLI not found', stdout: '', stderr: '' })
+  }
+  return new Promise((resolve) => {
+    const proc = spawn(cli.path ?? cli.command, args, {
+      env: {
+        ...process.env,
+        PATH: executableSearchDirs().join(path.delimiter),
+        HOME: homedir(),
+        FORCE_COLOR: '0'
+      }
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const append = (target: 'stdout' | 'stderr') => (chunk: Buffer) => {
+      if (target === 'stdout') stdout += chunk.toString('utf-8')
+      else stderr += chunk.toString('utf-8')
+      if (!options.preserveStdout && stdout.length > 20_000) stdout = stdout.slice(-20_000)
+      if (stderr.length > 20_000) stderr = stderr.slice(-20_000)
+    }
+    const finish = (ok: boolean, fallback?: string) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      const output = `${stdout}${stderr}`.trim() || fallback || ''
+      const log = output.length > 20_000 ? output.slice(-20_000) : output
+      resolve({ ok, log, stdout, stderr })
+    }
+    proc.stdout?.on('data', append('stdout'))
+    proc.stderr?.on('data', append('stderr'))
+    timer = setTimeout(() => {
+      proc.kill()
+      finish(false, 'timed out')
+    }, PI_COMMAND_TIMEOUT_MS)
+    proc.on('error', (err) => finish(false, err.message))
+    proc.on('exit', (code) => finish(code === 0))
+  })
+}
+
+async function listCurrentOmpPackages(cli = detectCli()): Promise<PackageInfo[]> {
+  const result = await runCli(['plugin', 'list', '--json'], cli, { preserveStdout: true })
+  if (!result.ok) return []
+  try {
+    return parseOmpPluginList(JSON.parse(result.stdout))
+  } catch {
+    return []
+  }
+}
+
+export async function getPackageManagerCapabilities(): Promise<PackageManagerCapabilities> {
+  const cli = detectCli()
+  if (!cli.available) return { profile: 'unavailable', canToggle: false, canUpdate: false }
+  if (cli.command !== 'omp') return { profile: 'legacy', canToggle: true, canUpdate: true }
+  const result = await runCli(['plugin', '--help'], cli)
+  return result.ok
+    ? parseOmpPluginCapabilities(result.stdout)
+    : { profile: 'current', canToggle: false, canUpdate: false }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-export function listPackages(piAgentDir: string = defaultPiAgentDir()): PackageInfo[] {
+export async function listPackages(piAgentDir: string = defaultPiAgentDir()): Promise<PackageInfo[]> {
+  const cli = detectCli()
+  if (cli.command === 'omp') {
+    return cli.available ? listCurrentOmpPackages(cli) : []
+  }
   return parsePackages(readPiSettings(piAgentDir), piAgentDir)
 }
 
-export function setPackageEnabled(
+export async function setPackageEnabled(
   source: string,
   enabled: boolean,
-  piAgentDir: string = defaultPiAgentDir()
-): PackageActionResult {
-  // The enabled/disabled flag lives in pi's legacy settings.json — a file
-  // current Oh My Pi does not read. Toggling it there would be a fake
-  // success, so the operation is legacy-profile-only.
-  if (detectCli().command === 'omp') {
-    return {
-      ok: false,
-      log: 'Package enable/disable uses the legacy Pi configuration and is not supported by this Oh My Pi version.'
+  piAgentDir: string = defaultPiAgentDir(),
+  scope?: PackageScope
+): Promise<PackageActionResult> {
+  const cli = detectCli()
+  if (cli.command === 'omp') {
+    const capabilities = await getPackageManagerCapabilities()
+    if (!capabilities.canToggle) {
+      return {
+        ok: false,
+        log: 'This Oh My Pi version does not expose native plugin enable/disable commands.'
+      }
     }
+    return runCli(
+      ['plugin', enabled ? 'enable' : 'disable', source, ...(scope ? ['--scope', scope] : [])],
+      cli
+    )
   }
+
   const settings = readPiSettings(piAgentDir)
   const packages = (settings.packages ?? []) as PackageEntry[]
   const idx = packages.findIndex((entry) => entrySource(entry) === source)
@@ -381,44 +573,6 @@ export function setPackageEnabled(
   }
 }
 
-const PI_COMMAND_TIMEOUT_MS = 5 * 60 * 1000
-
-function runPi(args: string[]): Promise<PackageActionResult> {
-  const cli = detectCli()
-  if (!cli.available) {
-    return Promise.resolve({ ok: false, log: 'omp/pi CLI not found' })
-  }
-  return new Promise((resolve) => {
-    const proc = spawn(cli.path ?? cli.command, args, {
-      env: {
-        ...process.env,
-        PATH: executableSearchDirs().join(path.delimiter),
-        HOME: homedir(),
-        FORCE_COLOR: '0'
-      }
-    })
-    let log = ''
-    const append = (chunk: Buffer) => {
-      log += chunk.toString('utf-8')
-      if (log.length > 20_000) log = log.slice(-20_000)
-    }
-    proc.stdout?.on('data', append)
-    proc.stderr?.on('data', append)
-    const timer = setTimeout(() => {
-      proc.kill()
-      resolve({ ok: false, log: log.trim() || 'timed out' })
-    }, PI_COMMAND_TIMEOUT_MS)
-    proc.on('error', (err) => {
-      clearTimeout(timer)
-      resolve({ ok: false, log: err.message })
-    })
-    proc.on('exit', (code) => {
-      clearTimeout(timer)
-      resolve({ ok: code === 0, log: log.trim() })
-    })
-  })
-}
-
 /**
  * Relative local sources in settings resolve against the settings dir, but pi
  * resolves CLI arguments against its own cwd — canonicalize to absolute paths
@@ -430,13 +584,22 @@ export function canonicalSourceForCommand(source: string, piAgentDir: string): s
 }
 
 export function installPackage(source: string): Promise<PackageActionResult> {
-  return runPi(['install', source])
+  const cli = detectCli()
+  return runCli(cli.command === 'omp' ? ['plugin', 'install', source] : ['install', source], cli)
 }
 
-export function removePackage(source: string): Promise<PackageActionResult> {
-  return runPi(['remove', canonicalSourceForCommand(source, defaultPiAgentDir())])
+export function removePackage(source: string, scope?: PackageScope): Promise<PackageActionResult> {
+  const cli = detectCli()
+  if (cli.command === 'omp') {
+    return runCli(['plugin', 'uninstall', source, ...(scope ? ['--scope', scope] : [])], cli)
+  }
+  return runCli(['remove', canonicalSourceForCommand(source, defaultPiAgentDir())], cli)
 }
 
-export function updatePackage(source: string): Promise<PackageActionResult> {
-  return runPi(['update', canonicalSourceForCommand(source, defaultPiAgentDir())])
+export function updatePackage(source: string, scope?: PackageScope): Promise<PackageActionResult> {
+  const cli = detectCli()
+  if (cli.command === 'omp') {
+    return runCli(['plugin', 'upgrade', source, ...(scope ? ['--scope', scope] : [])], cli)
+  }
+  return runCli(['update', canonicalSourceForCommand(source, defaultPiAgentDir())], cli)
 }

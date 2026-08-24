@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ChevronRight, ChevronDown, Folder, File, Loader2 } from 'lucide-react'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
+import { WorkspaceRequestFence } from '../lib/workspaceRequest'
 
 interface TreeNode {
   name: string
@@ -16,32 +17,45 @@ export default function FileTree() {
   const { currentWorkspace, selectedFile, setSelectedFile, setActiveRightTab } = useAppStore()
   const [tree, setTree] = useState<TreeNode[]>([])
   const [loading, setLoading] = useState(false)
+  const requestFence = useRef(new WorkspaceRequestFence()).current
+  const treeGeneration = useRef(0)
   const t = useT()
 
+  // Update synchronously with render, rather than waiting for an effect: an
+  // older IPC completion can otherwise win in the short gap after a workspace
+  // switch has rendered but before its effects run.
+  requestFence.setWorkspace(currentWorkspace?.id ?? null)
+
   useEffect(() => {
+    const generation = ++treeGeneration.current
     if (!currentWorkspace) {
       setTree([])
+      setLoading(false)
       return
     }
-    let cancelled = false
+    const workspace = currentWorkspace
+    const request = requestFence.begin(workspace.id, 'root')
     setTree([])
     setLoading(true)
-    loadDir(currentWorkspace.id, '').then((children) => {
-      if (cancelled) return
-      setTree([
-        {
-          name: currentWorkspace.displayPath.split('/').pop() || currentWorkspace.displayPath,
-          path: '',
-          isDirectory: true,
-          children,
-          expanded: true
-        }
-      ])
-      setLoading(false)
-    })
-    return () => {
-      cancelled = true
-    }
+    void loadDir(workspace.id, '')
+      .then((children) => {
+        if (!requestFence.isCurrent(request) || treeGeneration.current !== generation) return
+        setTree([
+          {
+            name: workspace.displayPath.split('/').pop() || workspace.displayPath,
+            path: '',
+            isDirectory: true,
+            children,
+            expanded: true
+          }
+        ])
+        setLoading(false)
+      })
+      .catch(() => {
+        if (!requestFence.isCurrent(request) || treeGeneration.current !== generation) return
+        setTree([])
+        setLoading(false)
+      })
   }, [currentWorkspace])
 
   const loadDir = async (grantId: string, relativePath: string): Promise<TreeNode[]> => {
@@ -65,19 +79,37 @@ export default function FileTree() {
       return
     }
 
+    if (node.loading) {
+      // IPC cannot be aborted, but dropping its token makes a second click a
+      // real cancellation instead of letting the late response reopen it.
+      requestFence.invalidate(`tree:${node.path}`)
+      setParentList(parentList.map((n) => (n.path === node.path ? { ...n, loading: false } : n)))
+      return
+    }
+
     if (node.expanded) {
+      requestFence.invalidate(`tree:${node.path}`)
       const updated = parentList.map((n) => (n.path === node.path ? { ...n, expanded: false, children: undefined } : n))
       setParentList(updated)
       return
     }
 
     if (!currentWorkspace) return
+    const workspace = currentWorkspace
+    const generation = treeGeneration.current
+    const request = requestFence.begin(workspace.id, `tree:${node.path}`)
     setParentList(parentList.map((n) => (n.path === node.path ? { ...n, loading: true } : n)))
-    const children = await loadDir(currentWorkspace.id, node.path)
-    const updated = parentList.map((n) =>
-      n.path === node.path ? { ...n, expanded: true, children, loading: false } : n
-    )
-    setParentList(updated)
+    try {
+      const children = await loadDir(workspace.id, node.path)
+      if (!requestFence.isCurrent(request) || treeGeneration.current !== generation) return
+      const updated = parentList.map((n) =>
+        n.path === node.path ? { ...n, expanded: true, children, loading: false } : n
+      )
+      setParentList(updated)
+    } catch {
+      if (!requestFence.isCurrent(request) || treeGeneration.current !== generation) return
+      setParentList(parentList.map((n) => (n.path === node.path ? { ...n, loading: false } : n)))
+    }
   }
 
   const renderNode = (

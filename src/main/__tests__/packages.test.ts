@@ -1,12 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
-// packages.ts pulls in ./omp (CLI detection) — the tests never spawn anything,
-// so stub it out to keep the module graph electron-free.
+const cliState = vi.hoisted(() => ({
+  cli: { command: 'pi', path: '/usr/local/bin/pi', available: true },
+  spawn: vi.fn()
+}))
+
+vi.mock('node:child_process', () => ({ spawn: cliState.spawn }))
+
+// packages.ts pulls in ./omp (CLI detection). Keep the tests hermetic while
+// allowing explicit current-OMP cases to exercise the native CLI branch.
 vi.mock('../omp', () => ({
-  detectCli: () => ({ command: 'pi', path: '/usr/local/bin/pi', available: true }),
+  detectCli: () => cliState.cli,
   executableSearchDirs: () => []
 }))
 
@@ -17,6 +25,8 @@ import {
   resolvePackagePath,
   canonicalSourceForCommand,
   parsePackages,
+  parseOmpPluginCapabilities,
+  parseOmpPluginList,
   listPackages,
   setPackageEnabled,
   resourceEntries
@@ -26,6 +36,8 @@ let dir: string
 
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), 'omp-gui-pkg-'))
+  cliState.cli = { command: 'pi', path: '/usr/local/bin/pi', available: true }
+  cliState.spawn.mockReset()
 })
 
 afterEach(() => {
@@ -34,6 +46,24 @@ afterEach(() => {
 
 function writeSettings(settings: unknown) {
   writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settings, null, 2))
+}
+
+function mockCliResult(stdout: string, code = 0, stderr = '') {
+  cliState.spawn.mockImplementationOnce(() => {
+    const stdoutStream = new EventEmitter()
+    const stderrStream = new EventEmitter()
+    const proc = Object.assign(new EventEmitter(), {
+      stdout: stdoutStream,
+      stderr: stderrStream,
+      kill: vi.fn()
+    })
+    queueMicrotask(() => {
+      if (stdout) stdoutStream.emit('data', Buffer.from(stdout))
+      if (stderr) stderrStream.emit('data', Buffer.from(stderr))
+      proc.emit('exit', code)
+    })
+    return proc
+  })
 }
 
 describe('classifySource', () => {
@@ -229,30 +259,138 @@ describe('canonicalSourceForCommand', () => {
 })
 
 describe('setPackageEnabled', () => {
-  it('rewrites a string entry to the disabled object form and back', () => {
+  it('rewrites a string entry to the disabled object form and back', async () => {
     writeSettings({ theme: 'dark', packages: ['npm:pkg'] })
 
-    expect(setPackageEnabled('npm:pkg', false, dir).ok).toBe(true)
-    let packages = listPackages(dir)
+    expect((await setPackageEnabled('npm:pkg', false, dir)).ok).toBe(true)
+    let packages = await listPackages(dir)
     expect(packages[0].enabled).toBe(false)
 
-    expect(setPackageEnabled('npm:pkg', true, dir).ok).toBe(true)
-    packages = listPackages(dir)
+    expect((await setPackageEnabled('npm:pkg', true, dir)).ok).toBe(true)
+    packages = await listPackages(dir)
     expect(packages[0].enabled).toBe(true)
     // unrelated settings survive the rewrite
-    expect(listPackages(dir)).toHaveLength(1)
+    expect(await listPackages(dir)).toHaveLength(1)
   })
 
-  it('preserves unrelated settings keys', () => {
+  it('preserves unrelated settings keys', async () => {
     writeSettings({ theme: 'dark', packages: ['npm:pkg'] })
-    setPackageEnabled('npm:pkg', false, dir)
+    await setPackageEnabled('npm:pkg', false, dir)
     const raw = JSON.parse(readFileSync(path.join(dir, 'settings.json'), 'utf-8'))
     expect(raw.theme).toBe('dark')
   })
 
-  it('fails for unknown sources', () => {
+  it('fails for unknown sources', async () => {
     writeSettings({ packages: [] })
-    expect(setPackageEnabled('npm:nope', false, dir).ok).toBe(false)
+    expect((await setPackageEnabled('npm:nope', false, dir)).ok).toBe(false)
+  })
+})
+
+describe('current OMP plugin output', () => {
+  it('uses native list output instead of stale legacy settings.json', async () => {
+    writeSettings({ packages: ['npm:legacy-only'] })
+    cliState.cli = { command: 'omp', path: '/fake/omp', available: true }
+    mockCliResult(JSON.stringify({ npm: [], marketplace: [] }))
+
+    await expect(listPackages(dir)).resolves.toEqual([])
+    expect(cliState.spawn).toHaveBeenCalledWith(
+      '/fake/omp',
+      ['plugin', 'list', '--json'],
+      expect.objectContaining({ env: expect.any(Object) })
+    )
+  })
+
+  it('uses the native enable command and marketplace scope', async () => {
+    cliState.cli = { command: 'omp', path: '/fake/omp', available: true }
+    mockCliResult('ACTION install|uninstall|list|enable|disable|upgrade')
+    mockCliResult('disabled review@company-marketplace')
+
+    await expect(
+      setPackageEnabled('review@company-marketplace', false, dir, 'project')
+    ).resolves.toMatchObject({ ok: true })
+    expect(cliState.spawn.mock.calls.map((call: unknown[]) => call[1])).toEqual([
+      ['plugin', '--help'],
+      ['plugin', 'disable', 'review@company-marketplace', '--scope', 'project']
+    ])
+  })
+
+  it('uses native plugin rows, including separate marketplace scopes', () => {
+    const packages = parseOmpPluginList({
+      npm: [
+        {
+          name: '@scope/native-plugin',
+          version: '1.2.3',
+          path: '/tmp/native-plugin',
+          enabled: false,
+          manifest: { description: 'Native plugin' }
+        }
+      ],
+      marketplace: [
+        {
+          id: 'review@company-marketplace',
+          scope: 'project',
+          entries: [
+            {
+              scope: 'project',
+              installPath: '/tmp/review',
+              version: '2.0.0',
+              enabled: true
+            }
+          ]
+        },
+        {
+          id: 'review@company-marketplace',
+          scope: 'user',
+          entries: [
+            {
+              scope: 'user',
+              installPath: '/tmp/review-user',
+              version: '1.0.0',
+              enabled: false
+            }
+          ]
+        }
+      ]
+    })
+
+    expect(packages).toEqual([
+      expect.objectContaining({
+        source: 'omp:npm:user:@scope/native-plugin',
+        commandSource: '@scope/native-plugin',
+        kind: 'npm',
+        enabled: false,
+        canUpdate: false
+      }),
+      expect.objectContaining({
+        source: 'omp:marketplace:project:review@company-marketplace',
+        commandSource: 'review@company-marketplace',
+        kind: 'marketplace',
+        scope: 'project',
+        enabled: true,
+        canUpdate: true
+      }),
+      expect.objectContaining({
+        source: 'omp:marketplace:user:review@company-marketplace',
+        commandSource: 'review@company-marketplace',
+        kind: 'marketplace',
+        scope: 'user',
+        enabled: false,
+        canUpdate: true
+      })
+    ])
+  })
+
+  it('only exposes drag-to-toggle after native enable and disable are advertised', () => {
+    expect(parseOmpPluginCapabilities('ACTION install|list|enable|disable|upgrade')).toEqual({
+      profile: 'current',
+      canToggle: true,
+      canUpdate: true
+    })
+    expect(parseOmpPluginCapabilities('ACTION install|list|uninstall')).toEqual({
+      profile: 'current',
+      canToggle: false,
+      canUpdate: false
+    })
   })
 })
 

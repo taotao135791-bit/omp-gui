@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, FileDiff, Loader2, RefreshCw } from 'lucide-react'
 import { GitFileChange } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { useGitInfo } from '../lib/useGitInfo'
+import { WorkspaceRequestFence } from '../lib/workspaceRequest'
 
 const STATUS_DOT: Record<GitFileChange['status'], string> = {
   M: 'bg-amber-500',
@@ -34,32 +35,58 @@ export default function ChangesPanel() {
   const [diffView, setDiffView] = useState<{ path: string; text: string } | null>(null)
   const [loadingDiff, setLoadingDiff] = useState<string | null>(null)
   const [diffFailed, setDiffFailed] = useState<string | null>(null)
+  const requestFence = useRef(new WorkspaceRequestFence()).current
+
+  // Keep the active workspace current before effects run so a late diff from
+  // the previous project cannot overwrite this panel during a project switch.
+  requestFence.setWorkspace(currentWorkspace?.id ?? null)
 
   useEffect(() => {
+    requestFence.invalidate('diff')
     setDiffView(null)
     setDiffFailed(null)
+    setLoadingDiff(null)
   }, [currentWorkspace])
 
   const openDiff = async (filePath: string) => {
     if (!currentWorkspace || loadingDiff) return
+    const workspace = currentWorkspace
+    const request = requestFence.begin(workspace.id, 'diff')
     setDiffFailed(null)
     setLoadingDiff(filePath)
-    const text = await window.electronAPI.gitFileDiff(currentWorkspace.id, filePath)
-    setLoadingDiff(null)
-    // '' means the file's changes vanished since the list was built — stay on
-    // the list; null means the diff could not be produced at all.
-    if (text) setDiffView({ path: filePath, text })
-    else if (text === null) setDiffFailed(filePath)
+    try {
+      const text = await window.electronAPI.gitFileDiff(workspace.id, filePath)
+      if (!requestFence.isCurrent(request)) return
+      // '' means the file's changes vanished since the list was built — stay on
+      // the list; null means the diff could not be produced at all.
+      if (text) setDiffView({ path: filePath, text })
+      else if (text === null) setDiffFailed(filePath)
+    } catch {
+      if (requestFence.isCurrent(request)) setDiffFailed(filePath)
+    } finally {
+      if (requestFence.isCurrent(request)) setLoadingDiff(null)
+    }
   }
 
   const refreshAll = async () => {
     refresh()
-    if (diffView && currentWorkspace) {
-      const text = await window.electronAPI.gitFileDiff(currentWorkspace.id, diffView.path)
+    if (!diffView || !currentWorkspace) return
+    const workspace = currentWorkspace
+    const path = diffView.path
+    const request = requestFence.begin(workspace.id, 'diff')
+    setDiffFailed(null)
+    setLoadingDiff(path)
+    try {
+      const text = await window.electronAPI.gitFileDiff(workspace.id, path)
+      if (!requestFence.isCurrent(request)) return
       // An empty diff means the change is gone — drop back to the file list
       // instead of rendering a blank diff page.
-      if (text) setDiffView({ path: diffView.path, text })
+      if (text) setDiffView({ path, text })
       else setDiffView(null)
+    } catch {
+      if (requestFence.isCurrent(request)) setDiffFailed(path)
+    } finally {
+      if (requestFence.isCurrent(request)) setLoadingDiff(null)
     }
   }
 

@@ -23,6 +23,7 @@ export const IPC_CHANNELS = {
   WORKSPACE_REVOKE: 'workspace:revoke',
   WORKSPACE_LIST: 'workspace:list',
   PACKAGES_LIST: 'packages:list',
+  PACKAGES_CAPABILITIES: 'packages:capabilities',
   PACKAGES_SEARCH: 'packages:search',
   PACKAGES_INSTALL: 'packages:install',
   PACKAGES_REMOVE: 'packages:remove',

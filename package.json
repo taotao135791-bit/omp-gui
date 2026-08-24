@@ -1,6 +1,6 @@
 {
   "name": "omp-gui",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "A Codex-style GUI for Oh My Pi with modular Pi assembly.",
   "author": "OMP GUI Team",
   "private": true,

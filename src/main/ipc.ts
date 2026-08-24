@@ -23,6 +23,7 @@ import {
   WorkspaceGrant,
   RecentWorkspaceDescriptor,
   PluginScaffoldSpec,
+  PackageScope,
   CustomProvidersListResult,
   CustomProviderSaveResult,
   CustomProviderDeleteResult
@@ -59,6 +60,7 @@ import {
   removePackage,
   updatePackage,
   setPackageEnabled,
+  getPackageManagerCapabilities,
   defaultPiAgentDir
 } from './packages'
 import { getModelConfig, setModelConfig, setApiKey, clearApiKey, syncMachineSkills, listMachineSkillNames } from './piSettings'
@@ -95,6 +97,7 @@ import {
 } from './omp/settings/RuntimeSettings'
 import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
+import { configPath, makeExecRunner } from './omp/settings/OmpConfigCli'
 import { listOmpModelCatalog, refreshModelCatalog } from './omp/settings/OmpModelCatalog'
 import {
   clearProviderKey,
@@ -910,6 +913,10 @@ export function registerIpc() {
     return listPackages()
   })
 
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_CAPABILITIES, async () => {
+    return getPackageManagerCapabilities()
+  })
+
   /** Package sources become CLI argv — reject anything flag-shaped. */
   function validSource(source: unknown): source is string {
     return (
@@ -920,26 +927,36 @@ export function registerIpc() {
     )
   }
 
+  function validPackageScope(scope: unknown): scope is PackageScope | undefined {
+    return scope === undefined || scope === 'user' || scope === 'project'
+  }
+
   ipcMain.handle(IPC_CHANNELS.PACKAGES_INSTALL, async (_event, source: string) => {
     if (!validSource(source)) return { ok: false, log: 'invalid package source' }
     return installPackage(source.trim())
   })
 
-  ipcMain.handle(IPC_CHANNELS.PACKAGES_REMOVE, async (_event, source: string) => {
-    if (!validSource(source)) return { ok: false, log: 'invalid package source' }
-    return removePackage(source.trim())
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_REMOVE, async (_event, source: string, scope: unknown) => {
+    if (!validSource(source) || !validPackageScope(scope)) {
+      return { ok: false, log: 'invalid package source or scope' }
+    }
+    return removePackage(source.trim(), scope)
   })
 
-  ipcMain.handle(IPC_CHANNELS.PACKAGES_UPDATE, async (_event, source: string) => {
-    if (!validSource(source)) return { ok: false, log: 'invalid package source' }
-    return updatePackage(source.trim())
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_UPDATE, async (_event, source: string, scope: unknown) => {
+    if (!validSource(source) || !validPackageScope(scope)) {
+      return { ok: false, log: 'invalid package source or scope' }
+    }
+    return updatePackage(source.trim(), scope)
   })
 
   ipcMain.handle(
     IPC_CHANNELS.PACKAGES_SET_ENABLED,
-    async (_event, source: string, enabled: boolean) => {
-      if (!validSource(source)) return { ok: false, log: 'invalid package source' }
-      return setPackageEnabled(source.trim(), Boolean(enabled))
+    async (_event, source: string, enabled: boolean, scope: unknown) => {
+      if (!validSource(source) || !validPackageScope(scope)) {
+        return { ok: false, log: 'invalid package source or scope' }
+      }
+      return setPackageEnabled(source.trim(), Boolean(enabled), undefined, scope)
     }
   )
 
@@ -982,6 +999,13 @@ export function registerIpc() {
   })
 
   ipcMain.handle(IPC_CHANNELS.SHELL_SHOW_CLI_SETTINGS, async () => {
+    const cli = detectCli()
+    if (cli.command === 'omp') {
+      if (!cli.available) return false
+      const configDir = await configPath(makeExecRunner(cli.path ?? cli.command))
+      if (!configDir) return false
+      return (await shell.openPath(configDir)) === ''
+    }
     const settingsFile = path.join(defaultPiAgentDir(), 'settings.json')
     shell.showItemInFolder(settingsFile)
     return true

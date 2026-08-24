@@ -9,6 +9,8 @@ import {
   SlashCommand,
   PackageInfo,
   PackageActionResult,
+  PackageManagerCapabilities,
+  PackageScope,
   AppSettings,
   InstallStatus,
   ReadFileResult,
@@ -94,12 +96,13 @@ export interface ElectronAPI {
   /** List active workspace grants. */
   listWorkspaceGrants: () => Promise<WorkspaceGrant[]>
   listPackages: () => Promise<PackageInfo[]>
+  getPackageCapabilities: () => Promise<PackageManagerCapabilities>
   /** Search the npm registry for community pi packages (keyword pi-package). */
   searchPackages: (query: string, curatedOnly?: boolean) => Promise<CommunityPackageInfo[]>
   installPackage: (source: string) => Promise<PackageActionResult>
-  removePackage: (source: string) => Promise<PackageActionResult>
-  updatePackage: (source: string) => Promise<PackageActionResult>
-  setPackageEnabled: (source: string, enabled: boolean) => Promise<PackageActionResult>
+  removePackage: (source: string, scope?: PackageScope) => Promise<PackageActionResult>
+  updatePackage: (source: string, scope?: PackageScope) => Promise<PackageActionResult>
+  setPackageEnabled: (source: string, enabled: boolean, scope?: PackageScope) => Promise<PackageActionResult>
   /** Scaffold a new pi package into <spec.parentDir>/<spec.name>. */
   scaffoldPlugin: (spec: PluginScaffoldSpec) => Promise<PluginScaffoldResult>
   /** Reveal a path in the OS file manager (shell.showItemInFolder). */
@@ -281,13 +284,16 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_REVOKE, grantId),
   listWorkspaceGrants: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST),
   listPackages: () => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_LIST),
+  getPackageCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_CAPABILITIES),
   searchPackages: (query: string, curatedOnly?: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SEARCH, query, curatedOnly),
   installPackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_INSTALL, source),
-  removePackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_REMOVE, source),
-  updatePackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_UPDATE, source),
-  setPackageEnabled: (source: string, enabled: boolean) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SET_ENABLED, source, enabled),
+  removePackage: (source: string, scope?: PackageScope) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_REMOVE, source, scope),
+  updatePackage: (source: string, scope?: PackageScope) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_UPDATE, source, scope),
+  setPackageEnabled: (source: string, enabled: boolean, scope?: PackageScope) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SET_ENABLED, source, enabled, scope),
   scaffoldPlugin: (spec: PluginScaffoldSpec) =>
     ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_SCAFFOLD, spec),
   revealPath: (target: string) => ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_REVEAL, target),

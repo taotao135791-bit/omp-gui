@@ -6,9 +6,9 @@ A desktop GUI for [Oh My Pi](https://omp.sh) / [Pi](https://github.com/badlogic/
 
 ## Download
 
-**macOS · v0.11.0（最新正式版）** — download, open the DMG, drag OMP GUI into Applications:
+**macOS · v0.12.0（最新正式版）** — download, open the DMG, drag OMP GUI into Applications:
 
-- [Apple Silicon (M1/M2/M3/M4)](https://github.com/taotao135791-bit/omp-gui/releases/latest/download/OMP-GUI-arm64.dmg)
+- [Apple Silicon](https://github.com/taotao135791-bit/omp-gui/releases/latest/download/OMP-GUI-arm64.dmg)
 - [Intel](https://github.com/taotao135791-bit/omp-gui/releases/latest/download/OMP-GUI-x64.dmg)
 
 > The app is not notarized. On first launch macOS may say it can't be opened: right-click the app → **Open** → **Open**, or run `xattr -cr "/Applications/OMP GUI.app"`.

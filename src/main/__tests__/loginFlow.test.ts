@@ -17,7 +17,7 @@ interface FakeClient {
   respond: ReturnType<typeof vi.fn>
   kill: ReturnType<typeof vi.fn>
   emit: (event: Record<string, unknown>) => void
-  openUrl: (url: string) => void
+  openUrl: (url: string, launchUrl?: string, instructions?: string) => void
   exit: (code: number) => void
   resolveLogin: (response: Record<string, unknown> | null) => void
 }
@@ -26,7 +26,7 @@ function makeFlow(opts: { spawnNull?: boolean; authenticated?: boolean } = {}) {
   const states: LoginState[] = []
   const urls: string[] = []
   let eventCb: ((event: Record<string, unknown>) => void) | null = null
-  let urlCb: ((url: string, launchUrl?: string) => void) | null = null
+  let urlCb: ((url: string, launchUrl?: string, instructions?: string) => void) | null = null
   let exitCb: ((code: number) => void) | null = null
   let resolveLogin: (response: Record<string, unknown> | null) => void = () => {}
   const client: FakeClient = {
@@ -52,7 +52,7 @@ function makeFlow(opts: { spawnNull?: boolean; authenticated?: boolean } = {}) {
     respond: vi.fn((_id: string, _a: ExtensionUiAnswer) => true),
     kill: vi.fn(() => {}),
     emit: (event) => eventCb?.(event),
-    openUrl: (url) => urlCb?.(url),
+    openUrl: (url, launchUrl, instructions) => urlCb?.(url, launchUrl, instructions),
     exit: (code) => exitCb?.(code),
     resolveLogin: (response) => resolveLogin(response)
   }
@@ -63,7 +63,7 @@ function makeFlow(opts: { spawnNull?: boolean; authenticated?: boolean } = {}) {
   ) => {
     if (opts.spawnNull) return null
     eventCb = (e) => events?.onEvent?.(e as never)
-    urlCb = (url, launchUrl) => events?.onOpenUrl?.(url, launchUrl)
+    urlCb = (url, launchUrl, instructions) => events?.onOpenUrl?.(url, launchUrl, instructions)
     exitCb = (code) => events?.onExit?.(code, '')
     return { client: client as unknown as RuntimeRpcClient, bootstrap: false }
   }
@@ -83,7 +83,11 @@ describe('OmpLoginFlow', () => {
     const { flow, states, urls, client } = makeFlow()
     const started = flow.start('deepseek')
     await vi.waitFor(() => expect(states.some((s) => s.status === 'starting')).toBe(true))
-    client.openUrl('https://platform.deepseek.com/api_keys')
+    client.openUrl(
+      'https://platform.deepseek.com/api_keys',
+      'http://localhost:43123/callback',
+      'Create or locate your API key, then return here.'
+    )
     client.emit({ type: 'ui_request', id: 'i1', method: 'input', title: 'Paste your DeepSeek API key', placeholder: 'sk-...' })
     await tick()
     expect(states.map((s) => s.status)).toEqual(['starting', 'waiting_for_browser', 'waiting_for_input'])
@@ -92,6 +96,8 @@ describe('OmpLoginFlow', () => {
       | (LoginState & { status: 'waiting_for_browser' })
       | undefined
     expect(browserState?.url).toBe('https://platform.deepseek.com/api_keys')
+    expect(browserState?.launchUrl).toBe('http://localhost:43123/callback')
+    expect(browserState?.instructions).toBe('Create or locate your API key, then return here.')
     const answered = flow.answer({ value: 'sk-fake' })
     expect(answered).toBe(true)
     expect(client.respond).toHaveBeenCalledWith('i1', { value: 'sk-fake' })

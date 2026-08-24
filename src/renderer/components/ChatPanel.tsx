@@ -7,6 +7,7 @@ import { createSessionForCurrentProject } from '../lib/session'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import { exportFilename } from '../lib/exportFilename'
 import MessageList from './MessageList'
+import ExecutionActivity from './ExecutionActivity'
 import Composer from './Composer'
 import ExtensionUiDialog from './ExtensionUiDialog'
 import GitChip from './GitChip'
@@ -407,6 +408,7 @@ export default function ChatPanel() {
         ) : (
           <div className="mx-auto max-w-[760px]">
             <MessageList messages={sessionMessages} sessionId={currentSessionId} />
+            <ExecutionActivity sessionId={currentSessionId} />
             {showThinking && (
               <div className="msg-in flex items-center gap-1 px-6 pb-6">
                 <span className="think-dot h-1.5 w-1.5 rounded-full bg-cream-dim" />

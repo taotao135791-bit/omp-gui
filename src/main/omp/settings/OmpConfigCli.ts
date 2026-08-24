@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import path from 'node:path'
 import { EnvMode, resolveSubprocessEnv } from '../env'
 
 /**
@@ -74,6 +75,22 @@ function parseJson(raw: string): unknown | null {
   } catch {
     return null
   }
+}
+
+/** Parse the directory emitted by the official `omp config path` command. */
+export function parseConfigPath(raw: string): string | null {
+  const candidates = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const configDir = candidates.find((line) => path.isAbsolute(line))
+  return configDir ?? null
+}
+
+/** `omp config path` — the supported way to locate current OMP configuration. */
+export async function configPath(run: CliRunner): Promise<string | null> {
+  const res = await run(['config', 'path'])
+  return res.ok ? parseConfigPath(res.stdout) : null
 }
 
 /** `omp config get <key> --json` → entry. Null on failure/unknown key. */

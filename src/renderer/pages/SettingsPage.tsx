@@ -62,6 +62,7 @@ export default function SettingsPage() {
   const [notifications, setNotificationsState] = useState(true)
   const [notifyPreviews, setNotifyPreviewsState] = useState(false)
   const [updater, setUpdater] = useState<UpdaterStatus>({ status: 'idle' })
+  const [cliSettingsError, setCliSettingsError] = useState(false)
 
   // Runtime profile decides which settings surface applies: current (omp
   // config/RPC-backed) vs legacy (auth.json/settings.json file-backed). The
@@ -127,6 +128,12 @@ export default function SettingsPage() {
     useAppStore.getState().setRecentProjects([])
     setCleared(true)
     setTimeout(() => setCleared(false), 1500)
+  }
+
+  const showCliSettings = async () => {
+    setCliSettingsError(false)
+    const opened = await window.electronAPI.showCliSettings()
+    if (!opened) setCliSettingsError(true)
   }
 
   const changePermissionMode = (value: PermissionMode) => {
@@ -304,12 +311,19 @@ export default function SettingsPage() {
                 </button>
               </Row>
             )}
-            <Row label={t('settings.cliSettingsFile')}>
-              <button onClick={() => window.electronAPI.showCliSettings()} className={buttonCls}>
+            <Row
+              label={
+                cli?.available && cli.command === 'omp'
+                  ? t('settings.ompConfigDirectory')
+                  : t('settings.cliSettingsFile')
+              }
+            >
+              <button onClick={showCliSettings} disabled={!cli?.available} className={buttonCls}>
                 <FolderCog size={11} />
                 {t('settings.showInFinder')}
               </button>
             </Row>
+            {cliSettingsError && <Note>{t('settings.cliSettingsUnavailable')}</Note>}
           </Section>
 
           <Section title={t('settings.data')}>

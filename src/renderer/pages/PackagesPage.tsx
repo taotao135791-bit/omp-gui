@@ -17,9 +17,15 @@ import {
   PackageOpen,
   Search,
   Hammer,
-  Check
+  Check,
+  Loader2
 } from 'lucide-react'
-import { CommunityPackageInfo, PackageInfo, PackageResource } from '@shared/types'
+import {
+  CommunityPackageInfo,
+  PackageInfo,
+  PackageManagerCapabilities,
+  PackageResource
+} from '@shared/types'
 import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
 import Logo from '../components/Logo'
@@ -70,19 +76,48 @@ export default function PackagesPage() {
   const [overZone, setOverZone] = useState<DropZone | null>(null)
   const [fileDrag, setFileDrag] = useState(false)
   const [tab, setTab] = useState<PageTab>('installed')
+  const [packageCapabilities, setPackageCapabilities] = useState<PackageManagerCapabilities>({
+    profile: 'unavailable',
+    canToggle: false,
+    canUpdate: false
+  })
+  const [capabilitiesLoaded, setCapabilitiesLoaded] = useState(false)
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fileDragDepth = useRef(0)
+  const refreshGeneration = useRef(0)
 
+  const isCurrentOmp = packageCapabilities.profile === 'current'
+  const isLegacyPi = packageCapabilities.profile === 'legacy'
+  const canUseAssemblyLayout = packageCapabilities.profile === 'legacy' || packageCapabilities.canToggle
   const mounted = packages.filter((p) => p.enabled)
   const parts = packages.filter((p) => !p.enabled)
 
   const refresh = useCallback(async () => {
-    setPackages(await window.electronAPI.listPackages())
+    const generation = ++refreshGeneration.current
+    setCapabilitiesLoaded(false)
+    try {
+      const [nextPackages, capabilities] = await Promise.all([
+        window.electronAPI.listPackages(),
+        window.electronAPI.getPackageCapabilities()
+      ])
+      if (generation !== refreshGeneration.current) return
+      setPackages(nextPackages)
+      setPackageCapabilities(capabilities)
+    } catch {
+      if (generation !== refreshGeneration.current) return
+      setPackageCapabilities({ profile: 'unavailable', canToggle: false, canUpdate: false })
+    } finally {
+      if (generation === refreshGeneration.current) setCapabilitiesLoaded(true)
+    }
   }, [setPackages])
 
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (isCurrentOmp && tab === 'marketplace') setTab('installed')
+  }, [isCurrentOmp, tab])
 
   useEffect(() => {
     return () => {
@@ -115,7 +150,7 @@ export default function PackagesPage() {
 
   const handleRemove = async (pkg: PackageInfo) => {
     await run({ kind: 'remove', source: pkg.source }, () =>
-      window.electronAPI.removePackage(pkg.source)
+      window.electronAPI.removePackage(pkg.commandSource ?? pkg.source, pkg.scope)
     )
   }
 
@@ -133,17 +168,33 @@ export default function PackagesPage() {
 
   const handleUpdate = async (pkg: PackageInfo) => {
     await run({ kind: 'update', source: pkg.source }, () =>
-      window.electronAPI.updatePackage(pkg.source)
+      window.electronAPI.updatePackage(pkg.commandSource ?? pkg.source, pkg.scope)
     )
   }
 
   const handleToggle = async (pkg: PackageInfo, next: boolean) => {
-    if (pending || pkg.enabled === next) return
+    if (!packageCapabilities.canToggle || pending || pkg.enabled === next) return
+    setPending({ kind: 'toggle', source: pkg.source })
     updatePackageEnabled(pkg.source, next)
-    const result = await window.electronAPI.setPackageEnabled(pkg.source, next)
-    if (!result.ok) {
+    try {
+      const result = await window.electronAPI.setPackageEnabled(
+        pkg.commandSource ?? pkg.source,
+        next,
+        pkg.scope
+      )
+      if (!result.ok) {
+        updatePackageEnabled(pkg.source, !next)
+        setLog({ ok: false, text: result.log })
+        return
+      }
+
+      // Confirm native state rather than preserving only an optimistic move.
+      await refresh()
+    } catch (err) {
       updatePackageEnabled(pkg.source, !next)
-      setLog({ ok: false, text: result.log })
+      setLog({ ok: false, text: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setPending(null)
     }
   }
 
@@ -195,7 +246,7 @@ export default function PackagesPage() {
 
   const zoneDropProps = (zone: DropZone) => ({
     onDragOver: (e: React.DragEvent) => {
-      if (pending || !hasPackageDrag(e)) return
+      if (!canUseAssemblyLayout || pending || !hasPackageDrag(e)) return
       e.preventDefault()
       e.dataTransfer.dropEffect = zone === 'trash' ? 'move' : 'move'
       setOverZone(zone)
@@ -206,7 +257,7 @@ export default function PackagesPage() {
     onDrop: (e: React.DragEvent) => {
       setOverZone(null)
       setDragSource(null)
-      if (pending || !hasPackageDrag(e)) return
+      if (!canUseAssemblyLayout || pending || !hasPackageDrag(e)) return
       e.preventDefault()
       const dragged = e.dataTransfer.getData(PKG_DRAG_TYPE)
       const pkg = packages.find((p) => p.source === dragged)
@@ -253,7 +304,15 @@ export default function PackagesPage() {
         <div className="flex items-center gap-2.5">
           <Puzzle size={15} className="text-accent" />
           <span className="text-[13px] font-medium text-cream">{t('plugins.title')}</span>
-          <span className="text-xs text-cream-faint">{t('plugins.subtitle')}</span>
+          <span className="text-xs text-cream-faint">
+            {!capabilitiesLoaded
+              ? t('plugins.loadingCapabilities')
+              : isCurrentOmp
+                ? t('plugins.omp.subtitle')
+                : isLegacyPi
+                  ? t('plugins.subtitle')
+                  : t('plugins.capabilitiesUnavailable')}
+          </span>
         </div>
         <button
           onClick={refresh}
@@ -266,9 +325,21 @@ export default function PackagesPage() {
 
       <div className="flex-1 overflow-y-auto p-5 pb-20">
         <div className="mx-auto max-w-[760px] space-y-4">
-          {/* Installed / Marketplace tabs */}
+          {!capabilitiesLoaded ? (
+            <section className="flex items-center gap-2.5 rounded-[16px] border border-line bg-ink-850 px-4 py-3 text-xs text-cream-dim shadow-card">
+              <Loader2 size={14} className="animate-spin text-accent" />
+              {t('plugins.loadingCapabilities')}
+            </section>
+          ) : !isCurrentOmp && !isLegacyPi ? (
+            <section className="flex items-start gap-2.5 rounded-[16px] border border-red-500/30 bg-red-500/5 px-4 py-3 text-xs leading-5 text-cream-dim shadow-card">
+              <Info size={14} className="mt-0.5 shrink-0 text-red-600 dark:text-red-300" />
+              <div>{t('plugins.capabilitiesUnavailable')}</div>
+            </section>
+          ) : (
+            <>
+          {/* Legacy Pi has a GUI marketplace; current OMP owns its native one. */}
           <div className="flex w-fit gap-1 rounded-full border border-line bg-ink-900 p-1">
-            {(['installed', 'marketplace'] as const).map((value) => (
+            {(isCurrentOmp ? (['installed'] as const) : (['installed', 'marketplace'] as const)).map((value) => (
               <button
                 key={value}
                 onClick={() => setTab(value)}
@@ -283,7 +354,7 @@ export default function PackagesPage() {
             ))}
           </div>
 
-          {tab === 'marketplace' ? (
+          {tab === 'marketplace' && !isCurrentOmp ? (
             <MarketplaceSection
               packages={packages}
               pending={pending}
@@ -295,7 +366,7 @@ export default function PackagesPage() {
               {/* Install */}
               <section className="rounded-[16px] border border-line bg-ink-850 p-4 shadow-card">
                 <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
-                  {t('plugins.installTitle')}
+                  {isCurrentOmp ? t('plugins.omp.installTitle') : t('plugins.installTitle')}
                 </div>
                 <div className="flex gap-2">
                   <input
@@ -305,7 +376,11 @@ export default function PackagesPage() {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') handleInstall()
                     }}
-                    placeholder={t('plugins.installPlaceholder')}
+                    placeholder={
+                      isCurrentOmp
+                        ? t('plugins.omp.installPlaceholder')
+                        : t('plugins.installPlaceholder')
+                    }
                     disabled={pending !== null}
                     className="min-w-0 flex-1 rounded-lg border border-line bg-ink-900 px-3 py-2 font-mono text-[13px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50 focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50"
                   />
@@ -318,15 +393,17 @@ export default function PackagesPage() {
                     <FolderOpen size={12} />
                     {t('plugins.browseFolder')}
                   </button>
-                  <button
-                    onClick={() => handlePick('file')}
-                    disabled={pending !== null}
-                    title={t('plugins.browseFile')}
-                    className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
-                  >
-                    <FileCode size={12} />
-                    {t('plugins.browseFile')}
-                  </button>
+                  {!isCurrentOmp && (
+                    <button
+                      onClick={() => handlePick('file')}
+                      disabled={pending !== null}
+                      title={t('plugins.browseFile')}
+                      className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+                    >
+                      <FileCode size={12} />
+                      {t('plugins.browseFile')}
+                    </button>
+                  )}
                   <button
                     onClick={() => handleInstall()}
                     disabled={!source.trim() || pending !== null}
@@ -339,102 +416,160 @@ export default function PackagesPage() {
                 {logBlock}
               </section>
 
-              {/* How to assemble */}
-              <section className="rounded-[16px] border border-line bg-ink-850 px-4 py-3 shadow-card">
-                <div className="flex items-start gap-2.5">
-                  <Info size={13} className="mt-0.5 shrink-0 text-accent" />
-                  <div className="space-y-1 text-xs leading-5 text-cream-dim">
-                    <div className="font-medium text-cream">{t('plugins.usageTitle')}</div>
-                    <div>· {t('plugins.usage1')}</div>
-                    <div>· {t('plugins.usage2')}</div>
-                    <div>· {t('plugins.usage3')}</div>
-                  </div>
-                </div>
-              </section>
+              {canUseAssemblyLayout ? (
+                <>
+                  <section className="rounded-[16px] border border-line bg-ink-850 px-4 py-3 shadow-card">
+                    <div className="flex items-start gap-2.5">
+                      <Info size={13} className="mt-0.5 shrink-0 text-accent" />
+                      <div className="space-y-1 text-xs leading-5 text-cream-dim">
+                        <div className="font-medium text-cream">
+                          {isCurrentOmp ? t('plugins.omp.usageTitle') : t('plugins.usageTitle')}
+                        </div>
+                        <div>· {isCurrentOmp ? t('plugins.omp.usage1') : t('plugins.usage1')}</div>
+                        <div>· {isCurrentOmp ? t('plugins.omp.usage2') : t('plugins.usage2')}</div>
+                        <div>· {isCurrentOmp ? t('plugins.omp.usage3') : t('plugins.usage3')}</div>
+                      </div>
+                    </div>
+                  </section>
 
-              {/* Chassis — mounted parts */}
-              <section
-                {...zoneDropProps('chassis')}
-                className={zoneClass(
-                  'chassis',
-                  'rounded-[18px] border-[1.5px] border-dashed bg-ink-850/60 p-4'
-                )}
-              >
-                <div className="mb-3 flex items-center gap-2.5">
-                  <Logo size={28} className="shrink-0" />
-                  <span className="text-[13px] font-semibold text-cream">{t('plugins.core')}</span>
-                  <span className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] text-accent">
-                    {t('plugins.mounted', { count: mounted.length })}
-                  </span>
-                </div>
-                {mounted.length === 0 ? (
-                  <div className="flex flex-col items-center gap-1.5 py-6 text-center">
-                    <PackageOpen size={18} className="text-cream-faint" />
-                    <span className="text-xs text-cream-dim">
-                      {packages.length === 0 ? t('plugins.empty') : t('plugins.emptyMounted')}
-                    </span>
-                    {packages.length === 0 && (
-                      <span className="text-[11px] text-cream-faint">{t('plugins.emptyHint')}</span>
+                  <section
+                    {...zoneDropProps('chassis')}
+                    className={zoneClass(
+                      'chassis',
+                      'rounded-[18px] border-[1.5px] border-dashed bg-ink-850/60 p-4'
                     )}
-                  </div>
-                ) : (
-                  <div className="grid gap-2.5">
-                    {mounted.map((pkg) => (
-                      <PartCard
-                        key={pkg.source}
-                        pkg={pkg}
-                        pending={pending}
-                        confirmRemove={confirmRemove === pkg.source}
-                        onDragStateChange={setDragSource}
-                        onUpdate={() => handleUpdate(pkg)}
-                        onRemove={() => handleRemoveClick(pkg)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
+                  >
+                    <div className="mb-3 flex items-center gap-2.5">
+                      <Logo size={28} className="shrink-0" />
+                      <span className="text-[13px] font-semibold text-cream">
+                        {isCurrentOmp ? t('plugins.omp.enabled') : t('plugins.core')}
+                      </span>
+                      <span className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] text-accent">
+                        {isCurrentOmp
+                          ? t('plugins.omp.enabledCount', { count: mounted.length })
+                          : t('plugins.mounted', { count: mounted.length })}
+                      </span>
+                    </div>
+                    {mounted.length === 0 ? (
+                      <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+                        <PackageOpen size={18} className="text-cream-faint" />
+                        <span className="text-xs text-cream-dim">
+                          {isCurrentOmp
+                            ? t('plugins.omp.emptyEnabled')
+                            : packages.length === 0
+                              ? t('plugins.empty')
+                              : t('plugins.emptyMounted')}
+                        </span>
+                        {!isCurrentOmp && packages.length === 0 && (
+                          <span className="text-[11px] text-cream-faint">{t('plugins.emptyHint')}</span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="grid gap-2.5">
+                        {mounted.map((pkg) => (
+                          <PartCard
+                            key={pkg.source}
+                            pkg={pkg}
+                            pending={pending}
+                            confirmRemove={confirmRemove === pkg.source}
+                            draggable
+                            canUpdate={packageCapabilities.canUpdate}
+                            onDragStateChange={setDragSource}
+                            onUpdate={() => handleUpdate(pkg)}
+                            onRemove={() => handleRemoveClick(pkg)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </section>
 
-              {/* Rack — detached parts */}
-              <section
-                {...zoneDropProps('rack')}
-                className={zoneClass('rack', 'rounded-[18px] border-[1.5px] border-dashed p-4')}
-              >
-                <div className="mb-3 flex items-center gap-2 px-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
-                    {t('plugins.rack')}
-                  </span>
-                  <span className="rounded-full bg-overlay-strong px-2 py-0.5 font-mono text-[10px] text-cream-dim">
-                    {parts.length}
-                  </span>
-                </div>
-                {parts.length === 0 ? (
-                  <div className="py-4 text-center text-xs text-cream-faint">
-                    {t('plugins.emptyParts')}
-                  </div>
-                ) : (
-                  <div className="grid gap-2.5">
-                    {parts.map((pkg) => (
-                      <PartCard
-                        key={pkg.source}
-                        pkg={pkg}
-                        pending={pending}
-                        confirmRemove={confirmRemove === pkg.source}
-                        onDragStateChange={setDragSource}
-                        onUpdate={() => handleUpdate(pkg)}
-                        onRemove={() => handleRemoveClick(pkg)}
-                      />
-                    ))}
-                  </div>
-                )}
-                {logBlock}
-              </section>
+                  <section
+                    {...zoneDropProps('rack')}
+                    className={zoneClass('rack', 'rounded-[18px] border-[1.5px] border-dashed p-4')}
+                  >
+                    <div className="mb-3 flex items-center gap-2 px-1">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
+                        {isCurrentOmp ? t('plugins.omp.disabled') : t('plugins.rack')}
+                      </span>
+                      <span className="rounded-full bg-overlay-strong px-2 py-0.5 font-mono text-[10px] text-cream-dim">
+                        {parts.length}
+                      </span>
+                    </div>
+                    {parts.length === 0 ? (
+                      <div className="py-4 text-center text-xs text-cream-faint">
+                        {isCurrentOmp ? t('plugins.omp.emptyDisabled') : t('plugins.emptyParts')}
+                      </div>
+                    ) : (
+                      <div className="grid gap-2.5">
+                        {parts.map((pkg) => (
+                          <PartCard
+                            key={pkg.source}
+                            pkg={pkg}
+                            pending={pending}
+                            confirmRemove={confirmRemove === pkg.source}
+                            draggable
+                            canUpdate={packageCapabilities.canUpdate}
+                            onDragStateChange={setDragSource}
+                            onUpdate={() => handleUpdate(pkg)}
+                            onRemove={() => handleRemoveClick(pkg)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {logBlock}
+                  </section>
+                </>
+              ) : (
+                <>
+                  <section className="rounded-[16px] border border-line bg-ink-850 px-4 py-3 shadow-card">
+                    <div className="flex items-start gap-2.5">
+                      <Info size={13} className="mt-0.5 shrink-0 text-accent" />
+                      <div className="space-y-1 text-xs leading-5 text-cream-dim">
+                        <div className="font-medium text-cream">{t('plugins.omp.nativeControlsUnavailable')}</div>
+                        <div>{t('plugins.omp.nativeControlsUnavailableNote')}</div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="rounded-[18px] border border-line-strong bg-ink-850/60 p-4">
+                    <div className="mb-3 flex items-center gap-2.5">
+                      <PackageOpen size={18} className="text-accent" />
+                      <span className="text-[13px] font-semibold text-cream">{t('plugins.omp.installed')}</span>
+                      <span className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] text-accent">
+                        {packages.length}
+                      </span>
+                    </div>
+                    {packages.length === 0 ? (
+                      <div className="py-5 text-center text-xs text-cream-faint">{t('plugins.omp.empty')}</div>
+                    ) : (
+                      <div className="grid gap-2.5">
+                        {packages.map((pkg) => (
+                          <PartCard
+                            key={pkg.source}
+                            pkg={pkg}
+                            pending={pending}
+                            confirmRemove={confirmRemove === pkg.source}
+                            draggable={false}
+                            canUpdate={packageCapabilities.canUpdate}
+                            onDragStateChange={setDragSource}
+                            onUpdate={() => handleUpdate(pkg)}
+                            onRemove={() => handleRemoveClick(pkg)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </>
+              )}
+            </>
+          )}
             </>
           )}
         </div>
       </div>
 
       {/* Uninstall drop zone — appears while dragging a part */}
-      {dragSource !== null && (
+      {capabilitiesLoaded && canUseAssemblyLayout && dragSource !== null && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center pb-5">
           <div
             {...zoneDropProps('trash')}
@@ -466,6 +601,8 @@ function PartCard({
   pkg,
   pending,
   confirmRemove,
+  draggable,
+  canUpdate,
   onDragStateChange,
   onUpdate,
   onRemove
@@ -473,6 +610,8 @@ function PartCard({
   pkg: PackageInfo
   pending: PendingAction
   confirmRemove: boolean
+  draggable: boolean
+  canUpdate: boolean
   onDragStateChange: (source: string | null) => void
   onUpdate: () => void
   onRemove: () => void
@@ -481,19 +620,21 @@ function PartCard({
   const busy = pending !== null && 'source' in pending && pending.source === pkg.source
   const removing = busy && pending?.kind === 'remove'
   const updating = busy && pending?.kind === 'update'
-  const updatable = pkg.kind !== 'local' && !pkg.pinned
+  const updatable = canUpdate && (pkg.canUpdate ?? (pkg.kind !== 'local' && !pkg.pinned))
   const [dragging, setDragging] = useState(false)
 
   return (
     <div
-      draggable={pending === null}
+      draggable={draggable && pending === null}
       onDragStart={(e) => {
+        if (!draggable) return
         e.dataTransfer.setData(PKG_DRAG_TYPE, pkg.source)
         e.dataTransfer.effectAllowed = 'move'
         setDragging(true)
         onDragStateChange(pkg.source)
       }}
       onDragEnd={() => {
+        if (!draggable) return
         setDragging(false)
         onDragStateChange(null)
       }}
@@ -502,10 +643,12 @@ function PartCard({
       } ${pkg.enabled ? '' : 'opacity-70'}`}
     >
       <div className="flex items-start gap-2.5">
-        <GripVertical
-          size={14}
-          className="mt-0.5 shrink-0 cursor-grab text-cream-faint transition group-hover:text-cream-dim active:cursor-grabbing"
-        />
+        {draggable && (
+          <GripVertical
+            size={14}
+            className="mt-0.5 shrink-0 cursor-grab text-cream-faint transition group-hover:text-cream-dim active:cursor-grabbing"
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span
@@ -520,7 +663,11 @@ function PartCard({
               </span>
             )}
             <span className="rounded-full bg-accent-soft px-1.5 py-0.5 font-mono text-[10px] uppercase text-accent">
-              {pkg.kind === 'local' ? t('plugins.kind.local') : pkg.kind}
+              {pkg.kind === 'local'
+                ? t('plugins.kind.local')
+                : pkg.kind === 'marketplace'
+                  ? t('plugins.kind.marketplace')
+                  : pkg.kind}
             </span>
             {pkg.pinned && (
               <span className="rounded-full bg-overlay-strong px-1.5 py-0.5 text-[10px] text-cream-faint">

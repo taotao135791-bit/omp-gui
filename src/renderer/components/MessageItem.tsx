@@ -16,7 +16,6 @@ import { MessageLike, useAppStore } from '../store'
 import { useT } from '../i18n'
 import { formatSeconds } from '../lib/time'
 import Markdown from './Markdown'
-import ToolCallCard from './ToolCallCard'
 
 interface MessageItemProps {
   message: MessageLike
@@ -257,42 +256,36 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
   // Assistant text spans the column edge to edge — no avatar, no bubble.
   return (
     <div className="msg-in group">
-      {message.toolCall ? (
-        <ToolCallCard toolCall={message.toolCall} />
-      ) : (
-        <>
-          {message.thinking && (
-            <div className="mb-1.5">
-              <button
-                onClick={() => setThinkingOpen((v) => !v)}
-                className="flex items-center gap-1.5 rounded-md px-1 py-0.5 text-[12px] text-cream-faint transition-colors hover:bg-overlay hover:text-cream-dim"
-              >
-                <Brain size={12} className={thinkingStreaming ? 'animate-pulse text-accent' : ''} />
-                <span>
-                  {t('msg.thinking')}
-                  {thinkingElapsed ? ` ${thinkingElapsed}s` : ''}
-                </span>
-                {thinkingOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              </button>
-              {thinkingOpen && (
-                <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-overlay px-3 py-2 font-mono text-[12px] leading-5 text-cream-dim">
-                  {message.thinking}
-                </pre>
-              )}
-            </div>
+      {message.thinking && (
+        <div className="mb-1.5">
+          <button
+            onClick={() => setThinkingOpen((v) => !v)}
+            className="flex items-center gap-1.5 rounded-md px-1 py-0.5 text-[12px] text-cream-faint transition-colors hover:bg-overlay hover:text-cream-dim"
+          >
+            <Brain size={12} className={thinkingStreaming ? 'animate-pulse text-accent' : ''} />
+            <span>
+              {t('msg.thinking')}
+              {thinkingElapsed ? ` ${thinkingElapsed}s` : ''}
+            </span>
+            {thinkingOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </button>
+          {thinkingOpen && (
+            <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-overlay px-3 py-2 font-mono text-[12px] leading-5 text-cream-dim">
+              {message.thinking}
+            </pre>
           )}
-          <Markdown content={message.content} />
-          {message.content && (
-            <button
-              onClick={copyContent}
-              title={t('msg.copy')}
-              className="mt-1 flex items-center gap-1 rounded-md px-1 py-0.5 text-[10.5px] text-cream-faint opacity-0 transition-all hover:bg-overlay hover:text-cream group-hover:opacity-100"
-            >
-              {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
-              {copied ? t('msg.copied') : t('msg.copy')}
-            </button>
-          )}
-        </>
+        </div>
+      )}
+      <Markdown content={message.content} />
+      {message.content && (
+        <button
+          onClick={copyContent}
+          title={t('msg.copy')}
+          className="mt-1 flex items-center gap-1 rounded-md px-1 py-0.5 text-[10.5px] text-cream-faint opacity-0 transition-all hover:bg-overlay hover:text-cream group-hover:opacity-100"
+        >
+          {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+          {copied ? t('msg.copied') : t('msg.copy')}
+        </button>
       )}
     </div>
   )

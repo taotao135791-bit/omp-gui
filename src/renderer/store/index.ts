@@ -270,8 +270,17 @@ interface AppState {
   setPendingModel: (selector: string | null) => void
   /** Set the next-session thinking override. */
   setPendingThinking: (level: SessionThinkingLevel | null) => void
-  /** Read and clear the next-session overrides (session creation funnel). */
-  consumeSessionOverrides: () => { modelSelector?: string; thinkingLevel?: SessionThinkingLevel }
+  /** Snapshot next-session spawn overrides without consuming the user's choice. */
+  getSessionOverrides: () => { modelSelector?: string; thinkingLevel?: SessionThinkingLevel }
+  /**
+   * Clear only overrides that still match a successful session's snapshot.
+   * A picker change made while creation is in flight belongs to the next
+   * session and must remain selected.
+   */
+  clearSessionOverrides: (overrides: {
+    modelSelector?: string
+    thinkingLevel?: SessionThinkingLevel
+  }) => void
   /** Refresh the runtime settings overview (profile/capabilities/providers). */
   loadRuntimeOverview: (force?: boolean) => Promise<void>
   /** Refresh the runtime model catalog (current profile). */
@@ -289,11 +298,11 @@ interface AppState {
   /** Start the native login flow for a provider. */
   startLogin: (providerId: string) => Promise<{ ok: boolean; error?: string }>
   /** Answer the pending login prompt. */
-  answerLogin: (answer: LoginAnswer) => Promise<void>
+  answerLogin: (answer: LoginAnswer) => Promise<{ ok: boolean; error?: string }>
   /** Cancel the running login flow. */
-  cancelLogin: () => Promise<void>
+  cancelLogin: () => Promise<{ ok: boolean; error?: string }>
   /** Open a login URL the runtime asked for (explicit user action). */
-  openLoginUrl: (url: string) => Promise<void>
+  openLoginUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
   /** Remove a provider credential via the runtime. */
   logoutProvider: (providerId: string) => Promise<{ ok: boolean; error?: string }>
   applySessionEvent: (event: SessionEvent) => void
@@ -879,15 +888,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   answerLogin: async (answer) => {
-    await window.electronAPI.authAnswerLogin(answer)
+    return window.electronAPI.authAnswerLogin(answer)
   },
 
   cancelLogin: async () => {
-    await window.electronAPI.authCancelLogin()
+    return window.electronAPI.authCancelLogin()
   },
 
   openLoginUrl: async (url) => {
-    await window.electronAPI.authOpenLoginUrl(url)
+    return window.electronAPI.authOpenLoginUrl(url)
   },
 
   logoutProvider: async (providerId) => {
@@ -920,15 +929,23 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setPendingThinking: (level) => set({ pendingThinking: level }),
 
-  consumeSessionOverrides: () => {
+  getSessionOverrides: () => {
     const { pendingModel, pendingThinking } = get()
-    if (pendingModel || pendingThinking) {
-      set({ pendingModel: null, pendingThinking: null })
-    }
     return {
       ...(pendingModel ? { modelSelector: pendingModel } : {}),
       ...(pendingThinking ? { thinkingLevel: pendingThinking } : {})
     }
+  },
+
+  clearSessionOverrides: (overrides) => {
+    set((state) => ({
+      ...(overrides.modelSelector !== undefined && state.pendingModel === overrides.modelSelector
+        ? { pendingModel: null }
+        : {}),
+      ...(overrides.thinkingLevel !== undefined && state.pendingThinking === overrides.thinkingLevel
+        ? { pendingThinking: null }
+        : {})
+    }))
   },
 
   applySessionEvent: (event) => {

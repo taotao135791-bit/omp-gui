@@ -158,10 +158,14 @@ faked.
 large outputs render head + hidden-count + tail by default, with a
 keyboard-reachable expand to the full text. `retention.ts` is now actually used.
 
-**Not yet (next round — Agent Hub + Trajectory product UI):** the Agent Hub tree
-panel, child navigation, trajectory timeline/summary, interrupt/revive controls
-(upstream doesn't expose them anyway), and search index. The projection + bridge
-data layer for all of it is in place and tested.
+**Now available:** a compact, conditional in-chat Agent Activity disclosure shows
+the live/durable child roster, status/telemetry, the latest trajectory facts, and
+a read-only child-transcript action. It uses the existing projection rather than
+creating another execution state machine.
+
+**Still future work:** a dedicated Agent Hub tree/focus surface, a virtualized
+full trajectory timeline, interrupt/revive controls (upstream does not expose
+them anyway), and a search index.
 
 ## Stage 4 — Final runtime truth cleanup (this round)
 
@@ -279,11 +283,11 @@ These are strictly **OMP runtime does not expose it** — not OMP GUI missing:
   confirmed against a live runtime).
 - Persistent per-agent PTY (no confirmed terminal tool surface).
 
-These are **OMP GUI missing** (future work in this repo):
+These are **OMP GUI future enhancements**:
 
-- The Agent Hub **UI** (tree panel, focus mode, breadcrumb) on top of
-  `execution.ts` — the projection is in place and tested; the component is next.
-- The trajectory overview UI and virtualization.
+- A dedicated Agent Hub tree/focus mode/breadcrumb on top of the existing
+  in-chat activity disclosure.
+- Full trajectory overview virtualization beyond the latest in-chat facts.
 - Session full-text search index.
 
 

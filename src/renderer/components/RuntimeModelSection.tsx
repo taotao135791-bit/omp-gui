@@ -5,6 +5,7 @@ import { useT } from '../i18n'
 import { defaultThinkingOptionsFor } from '../lib/thinking'
 import { resolveRuntimeSettingDraft } from '../lib/runtimeModelDraft'
 import { currentValueState } from '../lib/runtimeSelect'
+import NativeLoginSection from './NativeLoginSection'
 
 /**
  * Settings → Models (current profile). One coherent configuration form:
@@ -35,6 +36,7 @@ export default function RuntimeModelSection() {
   const logoutProvider = useAppStore((s) => s.logoutProvider)
   const loadRuntimeOverview = useAppStore((s) => s.loadRuntimeOverview)
   const loadRuntimeModels = useAppStore((s) => s.loadRuntimeModels)
+  const loginState = useAppStore((s) => s.loginState)
   const t = useT()
 
   const defaultModel = overview?.modelState.defaultModel ?? ''
@@ -88,6 +90,17 @@ export default function RuntimeModelSection() {
   const authenticatedProviders = providers
     .filter((p) => p.authenticated)
     .sort((a, b) => a.name.localeCompare(b.name))
+  const selectedProvider = providers.find((item) => item.id === provider)
+  // API-key writes and logout mutate the same runtime credential store as a
+  // native login. Keep the direct-key route available, but do not let the two
+  // auth mechanisms race each other while a native flow is in progress.
+  const nativeLoginActive =
+    loginState.status === 'starting' ||
+    loginState.status === 'waiting_for_browser' ||
+    loginState.status === 'waiting_for_input' ||
+    loginState.status === 'waiting_for_select' ||
+    loginState.status === 'waiting_for_confirm' ||
+    loginState.status === 'verifying'
 
   // Prefer the full static catalog (concrete models for every provider),
   // falling back to the credential-filtered live catalog for extension/dynamic
@@ -172,7 +185,7 @@ export default function RuntimeModelSection() {
   }
 
   const saveKey = async () => {
-    if (!provider || !keyInput.trim() || keyBusy) return
+    if (!provider || !keyInput.trim() || keyBusy || nativeLoginActive) return
     setKeyBusy(true)
     setError(null)
     try {
@@ -193,7 +206,7 @@ export default function RuntimeModelSection() {
   }
 
   const removeCredential = async (providerId: string) => {
-    if (!providerId || keyBusy) return
+    if (!providerId || keyBusy || nativeLoginActive) return
     setKeyBusy(true)
     setError(null)
     try {
@@ -324,12 +337,12 @@ export default function RuntimeModelSection() {
                     if (e.key === 'Enter') void saveKey()
                   }}
                   placeholder={t('settings.apiKeyPlaceholder')}
-                  disabled={keyBusy}
+                  disabled={keyBusy || nativeLoginActive}
                   className={inputCls}
                 />
                 <button
                   onClick={saveKey}
-                  disabled={keyBusy || !keyInput.trim()}
+                  disabled={keyBusy || nativeLoginActive || !keyInput.trim()}
                   className={buttonCls}
                 >
                   <KeyRound size={12} />
@@ -341,6 +354,16 @@ export default function RuntimeModelSection() {
             )}
           </span>
         </div>
+
+        {/* Browser / device-code / interactive provider flows. This is
+            intentionally separate from the direct API-key form above, while
+            sharing its currently selected provider. */}
+        <NativeLoginSection
+          providerId={provider}
+          providerName={selectedProvider?.name}
+          providerAvailable={selectedProvider?.available ?? false}
+          capability={overview.capabilities.nativeLogin}
+        />
 
         {/* Saved credentials — one key per provider, independently removable */}
         <div className="py-3">
@@ -360,7 +383,7 @@ export default function RuntimeModelSection() {
                   {p.name}
                   <button
                     onClick={() => void removeCredential(p.id)}
-                    disabled={keyBusy}
+                    disabled={keyBusy || nativeLoginActive}
                     title={t('settings.clearKey')}
                     className="text-cream-faint transition-colors hover:text-red-500 disabled:opacity-40"
                   >

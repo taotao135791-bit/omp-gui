@@ -691,8 +691,22 @@ export type ToolAccess = 'full' | 'no-bash' | 'readonly'
  */
 export type PermissionMode = 'full' | 'no-bash' | 'readonly' | 'ask'
 
-/** pi package source flavor, derived from the source string in settings.json */
-export type PackageSourceKind = 'npm' | 'git' | 'local'
+/** Plugin source flavor. Legacy Pi derives this from settings.json; current OMP reports it natively. */
+export type PackageSourceKind = 'npm' | 'git' | 'local' | 'marketplace'
+
+/** The CLI profile that owns the plugin surface currently shown in the GUI. */
+export type PackageManagerProfile = 'current' | 'legacy' | 'unavailable'
+
+/** Native plugin operations that are actually available for the detected CLI. */
+export interface PackageManagerCapabilities {
+  profile: PackageManagerProfile
+  /** Current OMP exposes native enable/disable commands for the active CLI. */
+  canToggle: boolean
+  /** Current OMP exposes native marketplace upgrades for the active CLI. */
+  canUpdate: boolean
+}
+
+export type PackageScope = 'user' | 'project'
 
 export interface PackageResource {
   type: 'extension' | 'skill' | 'prompt' | 'theme'
@@ -700,8 +714,12 @@ export interface PackageResource {
 }
 
 export interface PackageInfo {
-  /** Verbatim source string as stored in settings.json — used for remove/update. */
+  /** Stable GUI row id. Legacy Pi uses its settings.json source verbatim. */
   source: string
+  /** Native CLI target when the stable GUI row id is profile/scope-qualified. */
+  commandSource?: string
+  /** Current OMP marketplace install scope, when relevant. */
+  scope?: PackageScope
   kind: PackageSourceKind
   name: string
   description?: string
@@ -712,6 +730,8 @@ export interface PackageInfo {
   resources: PackageResource[]
   /** Versioned npm specs and git refs are pinned; `pi update` skips them. */
   pinned: boolean
+  /** Whether this individual plugin has a real update action in its owning CLI. */
+  canUpdate?: boolean
 }
 
 export interface PackageActionResult {

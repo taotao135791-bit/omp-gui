@@ -193,8 +193,9 @@ then append-only entries. Resume: `--session <path>` — verified on 17.2.12
   longer reads `settings.json`/`auth.json` (verified: a legacy-format
   `auth.json` is ignored). The GUI's file-based provider-key management and
   default-model persistence are legacy-profile features; with a current
-  runtime, keys come from the environment or `omp` itself (RPC `login` +
-  `open_url` is the upstream path — not yet surfaced by the GUI).
+  runtime, keys come from the environment or `omp` itself. The GUI surfaces
+  the upstream RPC `login` / `open_url` state machine in Settings, including
+  browser, input, select and confirm prompts.
 - **Model catalog discovery**: legacy ships a single generated registry file
   the GUI reads for the settings picker; current omp builds the registry
   from per-provider sources + `models.db`. The picker falls back to the RPC

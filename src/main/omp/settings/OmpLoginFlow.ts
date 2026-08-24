@@ -78,12 +78,13 @@ export class OmpLoginFlow {
         // unprompted turns every such provider into a browser-login and
         // confuses key entry. The URL is stashed in state and opened only
         // when the user explicitly clicks.
-        onOpenUrl: (url, launchUrl) => {
+        onOpenUrl: (url, launchUrl, instructions) => {
           this.setState({
             status: 'waiting_for_browser',
             providerId,
             url,
-            launchUrl
+            launchUrl,
+            instructions
           })
         },
         onExit: () => {

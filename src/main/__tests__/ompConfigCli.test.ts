@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { CliRunner, configGet, configSet, configReset, authBrokerLogout } from '../omp/settings/OmpConfigCli'
+import {
+  CliRunner,
+  configGet,
+  configPath,
+  configSet,
+  configReset,
+  authBrokerLogout
+} from '../omp/settings/OmpConfigCli'
 
 /** Fake omp CLI: records argv, answers from a script map. */
 function fakeRunner(script: Record<string, { ok?: boolean; stdout?: string; stderr?: string }>) {
@@ -57,5 +64,13 @@ describe('OmpConfigCli', () => {
     expect(await configReset(run, 'defaultThinkingLevel')).toBe(true)
     expect(await authBrokerLogout(run, 'deepseek')).toBe(true)
     expect(await authBrokerLogout(run, 'nope')).toBe(false)
+  })
+
+  it('uses the official config path command for current OMP directories', async () => {
+    const { run, calls } = fakeRunner({
+      'config path': { stdout: '/Users/example/.omp/agent\n' }
+    })
+    expect(await configPath(run)).toBe('/Users/example/.omp/agent')
+    expect(calls).toEqual([['config', 'path']])
   })
 })
