@@ -10,7 +10,7 @@ RPC wire protocol lives in `docs/protocol-facts.md`.
 | Domain | Current Oh My Pi (17.x) | Legacy Pi (≤ 0.84) |
 |---|---|---|
 | Credentials | runtime-owned store; managed via RPC `login` / `omp auth-broker` | `~/.pi/agent/auth.json` |
-| Provider list | RPC `get_login_providers` (66 providers, `available`/`authenticated`) | static GUI list + auth.json keys |
+| Provider list | `omp auth-broker list --json` registry (pure CLI, no runtime spawn; `authenticated` layered on from RPC `get_login_providers`, falling back to the credential-filtered `omp models --json` when the probe is unusable) | static GUI list + auth.json keys |
 | Model catalog | `omp models --json` / RPC `get_available_models` (credential-filtered) | registry file + `get_available_models` |
 | Default model | `omp config modelRoles.default` (empty/absent = automatic) | `settings.json` `defaultModel` |
 | Enabled models | `omp config enabledModels` (separate allow-list, not modified by OMP GUI) | — |

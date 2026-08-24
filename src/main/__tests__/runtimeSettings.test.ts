@@ -146,15 +146,15 @@ describe('RuntimeSettings · current profile overview', () => {
     expect(overview.providers.find((p) => p.id === 'openai')?.authenticated).toBe(false)
   })
 
-  it('reports providers unsupported when the runtime will not start', async () => {
+  it('reports providers unknown (never a fake verdict) when runtime AND registry fail', async () => {
     const svc = new RuntimeSettings({
       cli: OMP_CLI,
       runner: fakeRunner({}).run,
       spawnProbe: fakeProbe({ probeFails: true })
     })
     const overview = await svc.getOverview()
-    expect(overview.capabilities.providers).toBe('unsupported')
-    expect(overview.capabilities.nativeLogin).toBe('unsupported')
+    expect(overview.capabilities.providers).toBe('unknown')
+    expect(overview.capabilities.nativeLogin).toBe('unknown')
     expect(overview.providers).toEqual([])
   })
 
@@ -170,6 +170,93 @@ describe('RuntimeSettings · current profile overview', () => {
     expect(second).toBe(first)
     const third = await svc.getOverview(true)
     expect(third).not.toBe(first)
+  })
+})
+
+describe('RuntimeSettings · provider list from the CLI registry', () => {
+  // `omp auth-broker list --json` — pure CLI, no runtime spawn, no
+  // credentials: the dropdown's stable source even when the probe dies.
+  const REGISTRY = JSON.stringify([
+    { id: 'deepseek', name: 'DeepSeek' },
+    { id: 'openai', name: 'OpenAI' }
+  ])
+
+  it('keeps the provider list when the probe fails (registry is the source)', async () => {
+    const svc = new RuntimeSettings({
+      cli: OMP_CLI,
+      runner: fakeRunner({ 'auth-broker list --json': { stdout: REGISTRY } }).run,
+      spawnProbe: fakeProbe({ probeFails: true })
+    })
+    const overview = await svc.getOverview()
+    expect(overview.providers).toEqual([
+      { id: 'deepseek', name: 'DeepSeek', available: true, authenticated: false },
+      { id: 'openai', name: 'OpenAI', available: true, authenticated: false }
+    ])
+    expect(overview.capabilities.providers).toBe('supported')
+    expect(overview.capabilities.nativeLogin).toBe('unknown')
+  })
+
+  it('marks authenticated from `omp models` when the probe is unusable', async () => {
+    const { run } = fakeRunner({
+      'auth-broker list --json': { stdout: REGISTRY },
+      // Credential-filtered: a provider with models listed necessarily has
+      // credentials — the honest authenticated fallback without a probe.
+      'models --json': {
+        stdout: JSON.stringify({ models: [{ provider: 'deepseek', id: 'deepseek-v4-flash' }] })
+      }
+    })
+    const svc = new RuntimeSettings({
+      cli: OMP_CLI,
+      runner: run,
+      spawnProbe: fakeProbe({ probeFails: true })
+    })
+    const overview = await svc.getOverview()
+    expect(overview.providers.find((p) => p.id === 'deepseek')?.authenticated).toBe(true)
+    expect(overview.providers.find((p) => p.id === 'openai')?.authenticated).toBe(false)
+  })
+
+  it('probe success layers authenticated onto registry identity', async () => {
+    const { run } = fakeRunner({ 'auth-broker list --json': { stdout: REGISTRY } })
+    const svc = new RuntimeSettings({
+      cli: OMP_CLI,
+      runner: run,
+      spawnProbe: fakeProbe({ providers: PROVIDERS })
+    })
+    const overview = await svc.getOverview()
+    expect(overview.providers).toEqual([
+      { id: 'deepseek', name: 'DeepSeek', available: true, authenticated: true },
+      { id: 'openai', name: 'OpenAI', available: true, authenticated: false }
+    ])
+    expect(overview.capabilities.nativeLogin).toBe('supported')
+  })
+
+  it('keeps masking the bootstrap placeholder when the registry is the source', async () => {
+    const { run } = fakeRunner({ 'auth-broker list --json': { stdout: REGISTRY } })
+    const svc = new RuntimeSettings({
+      cli: OMP_CLI,
+      runner: run,
+      spawnProbe: fakeProbe({ providers: PROVIDERS, bootstrap: true })
+    })
+    const overview = await svc.getOverview()
+    expect(overview.providers.find((p) => p.id === 'deepseek')?.authenticated).toBe(false)
+    expect(overview.providers.find((p) => p.id === 'openai')?.authenticated).toBe(false)
+  })
+
+  it('appends probe-only providers after the registry entries', async () => {
+    const { run } = fakeRunner({ 'auth-broker list --json': { stdout: REGISTRY } })
+    const svc = new RuntimeSettings({
+      cli: OMP_CLI,
+      runner: run,
+      spawnProbe: fakeProbe({
+        providers: [
+          ...PROVIDERS,
+          { id: 'extension-x', name: 'Extension X', available: true, authenticated: true }
+        ]
+      })
+    })
+    const overview = await svc.getOverview()
+    expect(overview.providers.map((p) => p.id)).toEqual(['deepseek', 'openai', 'extension-x'])
+    expect(overview.providers.at(-1)?.authenticated).toBe(true)
   })
 })
 

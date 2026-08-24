@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, KeyRound, RotateCcw, Save, Trash2 } from 'lucide-react'
+import { Check, KeyRound, RefreshCw, RotateCcw, Save, Trash2 } from 'lucide-react'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { defaultThinkingOptionsFor } from '../lib/thinking'
@@ -8,17 +8,20 @@ import { currentValueState } from '../lib/runtimeSelect'
 /**
  * Settings → Models (current profile). One coherent configuration form:
  *
- *   1. Provider dropdown  — the runtime's own provider list
- *                              (get_login_providers)
- *   2. Model dropdown      — omp models --json filtered by provider
+ *   1. Provider dropdown  — the CLI provider registry (omp auth-broker list;
+ *                              never empty just because the RPC probe failed)
+ *   2. Model dropdown      — static catalog filtered by provider
  *                              (persisted via modelRoles.default)
  *   3. API key input       — direct paste, provider-validated by the runtime
  *                              (native login flow's paste-key prompt)
- *   4. Default thinking    — config defaultThinkingLevel (auto..max)
- *   5. Save / Reset / Remove key — explicit persist, delete config, delete key
+ *   4. Saved credentials   — every authenticated provider, independently
+ *                              removable (omp auth-broker logout)
+ *   5. Default thinking    — config defaultThinkingLevel (auto..max)
+ *   6. Save / Reset        — explicit persist / delete config
  *
  * Runtime truth is always shown even when the persisted value is absent from
- * the catalog (synthetic "unavailable"/"unsupported" option).
+ * the catalog (synthetic "unavailable"/"unsupported" option). An empty
+ * provider list renders an explicit error + retry — never a dead dropdown.
  */
 export default function RuntimeModelSection() {
   const overview = useAppStore((s) => s.runtimeOverview)
@@ -45,6 +48,12 @@ export default function RuntimeModelSection() {
   const [keyBusy, setKeyBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
+
+  const retryOverview = () => {
+    setLoadFailed(false)
+    loadRuntimeOverview(true).catch(() => setLoadFailed(true))
+  }
 
   useEffect(() => {
     setModel(defaultModel)
@@ -60,9 +69,20 @@ export default function RuntimeModelSection() {
     void loadRuntimeModelCatalog()
   }, [loadRuntimeModelCatalog])
 
+  // Defensive: the settings page normally loads the overview before this
+  // section renders — when it didn't, load it here instead of showing a
+  // dead empty form.
+  useEffect(() => {
+    if (!overview) retryOverview()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const sortedProviders = [...providers].sort(
     (a, b) => Number(b.authenticated) - Number(a.authenticated) || a.name.localeCompare(b.name)
   )
+  const authenticatedProviders = providers
+    .filter((p) => p.authenticated)
+    .sort((a, b) => a.name.localeCompare(b.name))
 
   // Prefer the full static catalog (concrete models for every provider),
   // falling back to the credential-filtered live catalog for extension/dynamic
@@ -140,11 +160,11 @@ export default function RuntimeModelSection() {
     }
   }
 
-  const removeKey = async () => {
-    if (!provider || keyBusy) return
+  const removeCredential = async (providerId: string) => {
+    if (!providerId || keyBusy) return
     setKeyBusy(true)
     setError(null)
-    const res = await logoutProvider(provider)
+    const res = await logoutProvider(providerId)
     setKeyBusy(false)
     if (!res.ok) setError(res.error ?? 'failed')
     else flashSaved()
@@ -153,9 +173,34 @@ export default function RuntimeModelSection() {
   const selectCls =
     'h-8 min-w-52 rounded-lg border border-line bg-ink-850 px-2.5 text-[12.5px] text-cream outline-none focus:border-ink-600'
   const inputCls =
-    'h-8 min-w-52 rounded-lg border border-line bg-ink-850 px-2.5 text-[12.5px] text-cream outline-none placeholder:text-cream-faint focus:border-ink-600'
+    'h-8 min-w-52 rounded-lg border border-line bg-ink-850 px-2.5 text-[12.5px] text-cream outline-none placeholder:text-cream-faint focus:border-ink-600 disabled:opacity-40'
   const buttonCls =
     'flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-ink-600 hover:text-cream disabled:opacity-40'
+
+  if (!overview) {
+    return (
+      <section className="overflow-hidden rounded-[16px] border border-line bg-ink-850 shadow-card">
+        <div className="border-b border-line px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
+          {t('settings.models')}
+        </div>
+        <div className="px-4 py-3">
+          {loadFailed ? (
+            <span className="flex items-center gap-2">
+              <span className="text-xs text-red-500">{t('settings.runtimeError')}</span>
+              <button onClick={retryOverview} className={buttonCls}>
+                <RefreshCw size={11} />
+                {t('settings.runtimeRetry')}
+              </button>
+            </span>
+          ) : (
+            <p className="text-[11px] leading-relaxed text-cream-faint">
+              {t('settings.runtimeLoading')}
+            </p>
+          )}
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section className="overflow-hidden rounded-[16px] border border-line bg-ink-850 shadow-card">
@@ -167,24 +212,36 @@ export default function RuntimeModelSection() {
         {/* Provider */}
         <div className="flex items-center justify-between gap-3 py-3">
           <span className="text-[13px] text-cream">{t('settings.provider')}</span>
-          <select
-            value={provider}
-            onChange={(e) => {
-              const next = e.target.value
-              setProvider(next)
-              if (model && model.split('/')[0] !== next) setModel('')
-              setKeyInput('')
-            }}
-            className={selectCls}
-          >
-            <option value="">{t('settings.providerAuto')}</option>
-            {sortedProviders.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-                {p.authenticated ? ` · ${t('settings.authConnected')}` : ''}
-              </option>
-            ))}
-          </select>
+          {providers.length === 0 ? (
+            // Registry AND probe both failed — say so and offer a retry
+            // instead of rendering a dead empty dropdown.
+            <span className="flex items-center gap-2">
+              <span className="text-xs text-red-500">{t('settings.runtimeError')}</span>
+              <button onClick={retryOverview} className={buttonCls}>
+                <RefreshCw size={11} />
+                {t('settings.runtimeRetry')}
+              </button>
+            </span>
+          ) : (
+            <select
+              value={provider}
+              onChange={(e) => {
+                const next = e.target.value
+                setProvider(next)
+                if (model && model.split('/')[0] !== next) setModel('')
+                setKeyInput('')
+              }}
+              className={selectCls}
+            >
+              <option value="">{t('settings.providerAuto')}</option>
+              {sortedProviders.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.authenticated ? ` · ${t('settings.authConnected')}` : ''}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Model */}
@@ -226,6 +283,7 @@ export default function RuntimeModelSection() {
                     if (e.key === 'Enter') void saveKey()
                   }}
                   placeholder={t('settings.apiKeyPlaceholder')}
+                  disabled={keyBusy}
                   className={inputCls}
                 />
                 <button
@@ -234,25 +292,46 @@ export default function RuntimeModelSection() {
                   className={buttonCls}
                 >
                   <KeyRound size={12} />
-                  {t('settings.saveKey')}
+                  {keyBusy ? t('settings.saving') : t('settings.saveKey')}
                 </button>
-                {/* Removing a credential only makes sense when the runtime
-                    reports one; hiding it avoids guaranteed-failing logouts. */}
-                {providers.find((p) => p.id === provider)?.authenticated && (
-                  <button
-                    onClick={removeKey}
-                    disabled={keyBusy}
-                    title={t('settings.clearKey')}
-                    className="flex items-center gap-1 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500 disabled:opacity-40"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                )}
               </>
             ) : (
               <span className="text-xs text-cream-faint">{t('settings.selectProviderFirst')}</span>
             )}
           </span>
+        </div>
+
+        {/* Saved credentials — one key per provider, independently removable */}
+        <div className="py-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[13px] text-cream">{t('settings.savedCredentials')}</span>
+            {authenticatedProviders.length === 0 && (
+              <span className="text-xs text-cream-faint">{t('settings.savedCredentialsEmpty')}</span>
+            )}
+          </div>
+          {authenticatedProviders.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {authenticatedProviders.map((p) => (
+                <span
+                  key={p.id}
+                  className="flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[12px] text-cream-dim"
+                >
+                  {p.name}
+                  <button
+                    onClick={() => void removeCredential(p.id)}
+                    disabled={keyBusy}
+                    title={t('settings.clearKey')}
+                    className="text-cream-faint transition-colors hover:text-red-500 disabled:opacity-40"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="mt-2 text-[11px] leading-relaxed text-cream-faint">
+            {t('settings.savedCredentialsNote')}
+          </p>
         </div>
 
         {/* Default thinking */}

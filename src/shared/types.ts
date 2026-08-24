@@ -435,7 +435,11 @@ export type RuntimeProfile = 'current' | 'legacy'
 
 export type CapabilityState = 'supported' | 'unsupported' | 'unknown'
 
-/** A provider as the runtime reports it (get_login_providers). */
+/**
+ * A login provider as the settings overview reports it: identity from the
+ * CLI registry (`omp auth-broker list`), `authenticated` layered on from the
+ * RPC probe (or the credential-filtered `omp models --json` fallback).
+ */
 export interface RuntimeProvider {
   id: string
   name: string

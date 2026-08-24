@@ -19,6 +19,7 @@ import {
   OmpConfigEntry
 } from './OmpConfigCli'
 import { BOOTSTRAP_PROVIDER_ID, RuntimeRpcClient } from './RuntimeRpcClient'
+import { ProviderRegistry } from './ProviderRegistry'
 import { isValidModelSelector, PROVIDER_ID_PATTERN, splitModelSelector } from './modelSelector'
 import { switchModelSelector } from '../../../shared/modelSelector'
 
@@ -28,9 +29,13 @@ import { switchModelSelector } from '../../../shared/modelSelector'
  * capabilities from the overview and renders what the runtime supports.
  *
  * Current profile (omp): everything rides official interfaces —
- * `omp config` (typed config API), RPC get_login_providers / login,
- * `omp auth-broker logout`. Every write is read-after-write verified; a
- * write that the runtime does not confirm is a failure, never a fake "saved".
+ * `omp config` (typed config API), `omp auth-broker list` (the provider
+ * registry — pure CLI, no runtime spawn, no credentials), RPC
+ * get_login_providers / login, `omp auth-broker logout`. The provider LIST
+ * comes from the registry so the dropdown survives a dead probe; the probe
+ * only layers on authenticated state (with `omp models --json` as fallback).
+ * Every write is read-after-write verified; a write that the runtime does
+ * not confirm is a failure, never a fake "saved".
  *
  * Legacy profile (pi): the legacy file-based mechanisms keep working, just
  * reported through the same shape so the UI can label them honestly.
@@ -50,6 +55,8 @@ export interface RuntimeSettingsDeps {
   cli?: CliInfo
   runner?: CliRunner
   spawnProbe?: typeof RuntimeRpcClient.spawnWithBootstrap
+  /** Provider-registry reader (tests inject a fresh/canned one). */
+  registry?: ProviderRegistry
   /** Environment overrides for the runner + probe (test isolation). */
   env?: NodeJS.ProcessEnv
 }
@@ -98,11 +105,13 @@ export class RuntimeSettings {
   private readonly cli: CliInfo
   private readonly run: CliRunner
   private readonly spawnProbe: typeof RuntimeRpcClient.spawnWithBootstrap
+  private readonly registry: ProviderRegistry
 
   constructor(deps: RuntimeSettingsDeps = {}) {
     this.cli = deps.cli ?? detectCli()
     this.run = deps.runner ?? makeExecRunner(this.cli.path ?? this.cli.command, { env: deps.env })
     this.spawnProbe = deps.spawnProbe ?? RuntimeRpcClient.spawnWithBootstrap
+    this.registry = deps.registry ?? new ProviderRegistry()
     if (deps.env && !deps.spawnProbe) {
       // Isolate the login-provider probe too (never the developer's env),
       // while still honoring a fully injected probe in unit tests.
@@ -119,6 +128,7 @@ export class RuntimeSettings {
   invalidate(): void {
     this.overviewCache = null
     this.modelsCache = null
+    this.registry.invalidate()
   }
 
   // ------------------------------------------------------------- overview
@@ -135,18 +145,27 @@ export class RuntimeSettings {
 
   private async currentOverview(): Promise<RuntimeOverview> {
     const capabilities = currentCapabilities()
-    let providers: RuntimeOverview['providers'] = []
 
-    const spawned = await this.spawnProbe(this.cli, { args: ['--no-extensions'] })
+    // The provider LIST comes from the CLI registry (`auth-broker list`) —
+    // a pure CLI read that never spawns the runtime and never needs
+    // credentials, so the dropdown survives a dead/slow probe. The RPC probe
+    // runs in parallel but only layers on authenticated state.
+    const [registry, spawned] = await Promise.all([
+      this.registry.list(this.run),
+      this.spawnProbe(this.cli, { args: ['--no-extensions'] })
+    ])
+    capabilities.providers = registry ? 'supported' : 'unknown'
+
+    let probeProviders: RuntimeOverview['providers'] | null = null
+    let bootstrap = false
     if (spawned) {
       const res = await spawned.client.query({ type: 'get_login_providers' }, 10_000)
       spawned.client.kill()
       if (res?.success === true && res.data && typeof res.data === 'object') {
-        capabilities.providers = 'supported'
         capabilities.nativeLogin = 'supported'
         const raw = (res.data as { providers?: unknown }).providers
         if (Array.isArray(raw)) {
-          providers = raw
+          probeProviders = raw
             .map((p) => {
               const o = p as { id?: unknown; name?: unknown; available?: unknown; authenticated?: unknown }
               return {
@@ -158,21 +177,45 @@ export class RuntimeSettings {
             })
             .filter((p) => p.id)
         }
-        if (spawned.bootstrap) {
-          // The bootstrap env key makes its provider look authenticated —
-          // that is our placeholder, not real auth (read: fake-state guard).
-          providers = providers.map((p) =>
-            p.id === BOOTSTRAP_PROVIDER_ID ? { ...p, authenticated: false } : p
-          )
-        }
-      } else {
-        capabilities.providers = 'unsupported'
-        capabilities.nativeLogin = 'unsupported'
+        bootstrap = spawned.bootstrap
       }
-    } else {
-      // Runtime won't start at all (no models and bootstrap failed).
-      capabilities.providers = 'unsupported'
-      capabilities.nativeLogin = 'unsupported'
+      // A spawned probe that answers badly (or times out) proves nothing —
+      // nativeLogin stays 'unknown' rather than faking a verdict.
+    }
+
+    // Merge: registry identity/order first; probe-only extras appended so a
+    // runtime-reported provider never silently vanishes. With the registry
+    // unavailable the probe list (when present) is the fallback source.
+    const probeById = new Map((probeProviders ?? []).map((p) => [p.id, p]))
+    let providers: RuntimeOverview['providers'] = (registry ?? []).map((r) => {
+      const probed = probeById.get(r.id)
+      return {
+        id: r.id,
+        name: r.name,
+        available: probed?.available ?? true,
+        authenticated: probed?.authenticated === true
+      }
+    })
+    if (probeProviders) {
+      const known = new Set(providers.map((p) => p.id))
+      for (const p of probeProviders) {
+        if (!known.has(p.id)) providers.push(p)
+      }
+    }
+    if (bootstrap) {
+      // The bootstrap env key makes its provider look authenticated —
+      // that is our placeholder, not real auth (read: fake-state guard).
+      providers = providers.map((p) =>
+        p.id === BOOTSTRAP_PROVIDER_ID ? { ...p, authenticated: false } : p
+      )
+    }
+    if (!probeProviders && providers.length > 0) {
+      // Probe unusable: `omp models --json` is credential-filtered, so a
+      // provider whose models are listed necessarily has credentials.
+      const withModels = new Set((await this.listModels()).map((m) => m.provider))
+      providers = providers.map((p) =>
+        withModels.has(p.id) ? { ...p, authenticated: true } : p
+      )
     }
 
     const [modelRoles, defaultThinking, machineSkills] = await Promise.all([

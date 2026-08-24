@@ -250,6 +250,10 @@ const en = {
 
   // Authentication (runtime-native): provider status label used by the model picker.
   'settings.authConnected': 'Connected',
+  'settings.savedCredentials': 'Saved credentials',
+  'settings.savedCredentialsEmpty': 'No credentials saved yet.',
+  'settings.savedCredentialsNote':
+    "Keys are stored in Oh My Pi's own credential vault, one per provider — save as many as you need.",
   'settings.models': 'Models',
   'settings.modelCatalogEmpty': 'No models available — connect a provider first.',
   'settings.modelNoteCurrent': 'The default applies to new chats; the composer picker switches the current chat.',
@@ -718,6 +722,9 @@ const zh: Record<I18nKey, string> = {
 
   // Authentication (runtime-native)：模型选择器使用的 Provider 状态标签。
   'settings.authConnected': '已连接',
+  'settings.savedCredentials': '已保存的凭证',
+  'settings.savedCredentialsEmpty': '尚未保存任何凭证',
+  'settings.savedCredentialsNote': '密钥按服务商独立保存在 Oh My Pi 的凭证库中，可保存多个，互不影响。',
   'settings.modelUnavailable': '不可用',
   'settings.modelUnavailableNote': '当前运行时仍引用此模型。',
   'settings.thinkingUnsupported': '当前默认模型不支持',
