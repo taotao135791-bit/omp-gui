@@ -110,6 +110,23 @@ export default function RuntimeModelSection() {
     setTimeout(() => setSaved(false), 1500)
   }
 
+  const [catalogRefreshing, setCatalogRefreshing] = useState(false)
+  const [catalogNote, setCatalogNote] = useState<string | null>(null)
+
+  const refreshCatalog = async () => {
+    if (catalogRefreshing) return
+    setCatalogRefreshing(true)
+    setCatalogNote(null)
+    const res = await window.electronAPI.runtimeRefreshModelCatalog()
+    if (res.ok) {
+      await loadRuntimeModelCatalog()
+      setCatalogNote(t('settings.catalogRefreshed', { count: res.providers ?? 0 }))
+    } else {
+      setCatalogNote(t('settings.saveFailed', { error: res.error ?? 'failed' }))
+    }
+    setCatalogRefreshing(false)
+  }
+
   const save = async () => {
     if (saving) return
     setSaving(true)
@@ -371,6 +388,16 @@ export default function RuntimeModelSection() {
             {t('settings.saved')}
           </span>
         )}
+        {catalogNote && <span className="text-xs text-cream-faint">{catalogNote}</span>}
+        <button
+          onClick={refreshCatalog}
+          disabled={catalogRefreshing || saving}
+          className={buttonCls}
+          title={t('settings.refreshCatalogHint')}
+        >
+          <RotateCcw size={12} className={catalogRefreshing ? 'animate-spin' : ''} />
+          {t('settings.refreshCatalog')}
+        </button>
         <button onClick={reset} disabled={saving} className={buttonCls} title={t('settings.resetModel')}>
           <RotateCcw size={12} />
           {t('settings.resetModel')}

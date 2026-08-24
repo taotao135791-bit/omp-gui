@@ -9,7 +9,7 @@
     "dev": "ELECTRON_RUN_AS_NODE= electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "package": "electron-builder",
+    "package": "pnpm build && electron-builder",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:omp": "vitest run --config vitest.omp.config.ts",

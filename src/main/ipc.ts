@@ -95,7 +95,7 @@ import {
 } from './omp/settings/RuntimeSettings'
 import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
-import { listOmpModelCatalog } from './omp/settings/OmpModelCatalog'
+import { listOmpModelCatalog, refreshModelCatalog } from './omp/settings/OmpModelCatalog'
 import {
   deleteCustomProvider,
   listCustomProviders,
@@ -609,6 +609,10 @@ export function registerIpc() {
   // Full static catalog — the Settings model dropdown (credential-independent).
   ipcMain.handle(IPC_CHANNELS.RUNTIME_LIST_MODEL_CATALOG, async () => {
     return listOmpModelCatalog()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.RUNTIME_REFRESH_MODEL_CATALOG, async () => {
+    return refreshModelCatalog()
   })
 
   ipcMain.handle(
