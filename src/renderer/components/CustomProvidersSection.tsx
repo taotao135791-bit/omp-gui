@@ -17,13 +17,6 @@ import { useT } from '../i18n'
  * the renderer only renders the honest outcome.
  */
 
-interface FormModel {
-  id: string
-  name: string
-  contextWindow: string
-  maxTokens: string
-}
-
 interface FormState {
   id: string
   /** Editing an existing provider — the id is the models.yml key, immutable. */
@@ -35,7 +28,11 @@ interface FormState {
   /** Editing + key already stored: empty input keeps it. */
   hasStoredKey: boolean
   discovery: boolean
-  models: FormModel[]
+  /**
+   * Preset model ids, one per line ("id" or "id 显示名"). Relay/gateway
+   * endpoints have a fixed model set, so plain text beats per-row editors.
+   */
+  modelsText: string
 }
 
 const emptyForm = (): FormState => ({
@@ -47,7 +44,7 @@ const emptyForm = (): FormState => ({
   apiKey: '',
   hasStoredKey: false,
   discovery: false,
-  models: [{ id: '', name: '', contextWindow: '', maxTokens: '' }]
+  modelsText: ''
 })
 
 const formFromProvider = (p: CustomProviderInfo): FormState => ({
@@ -63,16 +60,25 @@ const formFromProvider = (p: CustomProviderInfo): FormState => ({
   apiKey: '',
   hasStoredKey: p.hasKey,
   discovery: p.discovery,
-  models:
-    p.models.length > 0
-      ? p.models.map((m) => ({
-          id: m.id,
-          name: m.name,
-          contextWindow: m.contextWindow !== undefined ? String(m.contextWindow) : '',
-          maxTokens: m.maxTokens !== undefined ? String(m.maxTokens) : ''
-        }))
-      : [{ id: '', name: '', contextWindow: '', maxTokens: '' }]
+  modelsText: p.models.map((m) => (m.name && m.name !== m.id ? `${m.id} ${m.name}` : m.id)).join('\n')
 })
+
+/** Parse the one-model-per-line textarea: "id" or "id 显示名". */
+export function parseModelsText(text: string): { id: string; name: string }[] {
+  const seen = new Set<string>()
+  const out: { id: string; name: string }[] = []
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const space = trimmed.search(/\s/)
+    const id = space === -1 ? trimmed : trimmed.slice(0, space)
+    const name = space === -1 ? '' : trimmed.slice(space).trim()
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push({ id, name })
+  }
+  return out
+}
 
 export default function CustomProvidersSection() {
   const overview = useAppStore((s) => s.runtimeOverview)
@@ -133,18 +139,7 @@ export default function CustomProvidersSection() {
     apiKey: f.apiKey.trim() ? f.apiKey.trim() : undefined,
     authNone: f.authNone,
     discovery: f.discovery,
-    models: f.discovery
-      ? []
-      : f.models.map((m) => {
-          const ctx = m.contextWindow.trim()
-          const max = m.maxTokens.trim()
-          return {
-            id: m.id.trim(),
-            name: m.name.trim(),
-            ...(ctx ? { contextWindow: Number(ctx) } : {}),
-            ...(max ? { maxTokens: Number(max) } : {})
-          }
-        })
+    models: f.discovery ? [] : parseModelsText(f.modelsText)
   })
 
   const save = async () => {
@@ -185,10 +180,6 @@ export default function CustomProvidersSection() {
   }
 
   const patchForm = (patch: Partial<FormState>) => setForm((f) => (f ? { ...f, ...patch } : f))
-  const patchModel = (index: number, patch: Partial<FormModel>) =>
-    setForm((f) =>
-      f ? { ...f, models: f.models.map((m, i) => (i === index ? { ...m, ...patch } : m)) } : f
-    )
 
   const selectCls =
     'h-8 rounded-lg border border-line bg-ink-850 px-2.5 text-[12.5px] text-cream outline-none focus:border-ink-600 disabled:opacity-40'
@@ -342,65 +333,18 @@ export default function CustomProvidersSection() {
             </label>
 
             {!form.discovery && (
-              <div className="space-y-1.5">
-                {form.models.map((m, i) => (
-                  <div key={i} className="flex items-center gap-1.5">
-                    <input
-                      value={m.id}
-                      onChange={(e) => patchModel(i, { id: e.target.value })}
-                      disabled={saving}
-                      placeholder={t('settings.customProviderModelIdPlaceholder')}
-                      className={`${inputCls} min-w-0 flex-1 font-mono`}
-                    />
-                    <input
-                      value={m.name}
-                      onChange={(e) => patchModel(i, { name: e.target.value })}
-                      disabled={saving}
-                      placeholder={t('settings.customProviderModelNamePlaceholder')}
-                      className={`${inputCls} min-w-0 flex-1`}
-                    />
-                    <input
-                      value={m.contextWindow}
-                      onChange={(e) => patchModel(i, { contextWindow: e.target.value })}
-                      disabled={saving}
-                      placeholder={t('settings.customProviderModelContextPlaceholder')}
-                      className={`${inputCls} w-28`}
-                    />
-                    <input
-                      value={m.maxTokens}
-                      onChange={(e) => patchModel(i, { maxTokens: e.target.value })}
-                      disabled={saving}
-                      placeholder={t('settings.customProviderModelMaxPlaceholder')}
-                      className={`${inputCls} w-28`}
-                    />
-                    <button
-                      onClick={() =>
-                        setForm((f) => (f ? { ...f, models: f.models.filter((_, j) => j !== i) } : f))
-                      }
-                      disabled={saving || form.models.length <= 1}
-                      className="shrink-0 text-cream-faint transition-colors hover:text-red-500 disabled:opacity-40"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  onClick={() =>
-                    setForm((f) =>
-                      f
-                        ? {
-                            ...f,
-                            models: [...f.models, { id: '', name: '', contextWindow: '', maxTokens: '' }]
-                          }
-                        : f
-                    )
-                  }
+              <div>
+                <textarea
+                  value={form.modelsText}
+                  onChange={(e) => patchForm({ modelsText: e.target.value })}
                   disabled={saving}
-                  className={buttonCls}
-                >
-                  <Plus size={12} />
-                  {t('settings.customProviderModelAdd')}
-                </button>
+                  rows={4}
+                  placeholder={t('settings.customProviderModelsPlaceholder')}
+                  className={`${inputCls} h-auto w-full py-2 font-mono leading-6`}
+                />
+                <p className="mt-1 text-[11px] text-cream-faint">
+                  {t('settings.customProviderModelsHint')}
+                </p>
               </div>
             )}
 

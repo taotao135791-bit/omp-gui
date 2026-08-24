@@ -164,8 +164,13 @@ export function sanitizeCustomProviderSpec(raw: unknown): CustomProviderSpec | n
     for (const m of s.models.slice(0, MAX_MODELS)) {
       if (!m || typeof m !== 'object') return null
       const o = m as Record<string, unknown>
-      if (typeof o.id !== 'string' || typeof o.name !== 'string') return null
-      const entry: CustomProviderModelSpec = { id: o.id, name: o.name }
+      if (typeof o.id !== 'string') return null
+      // name is optional — falls back to the id downstream; a non-string name is not.
+      if (o.name !== undefined && typeof o.name !== 'string') return null
+      const entry: CustomProviderModelSpec = {
+        id: o.id,
+        name: typeof o.name === 'string' ? o.name : ''
+      }
       if (o.contextWindow !== undefined) {
         if (typeof o.contextWindow !== 'number' || !Number.isFinite(o.contextWindow)) return null
         entry.contextWindow = o.contextWindow
@@ -203,7 +208,7 @@ function validateSpec(spec: CustomProviderSpec, hasExistingKey: boolean): Custom
     if (spec.models.length === 0) return 'invalid-models'
     for (const m of spec.models) {
       if (!m.id.trim() || m.id.length > MAX_MODEL_FIELD || CONTROL_RE.test(m.id)) return 'invalid-models'
-      if (!m.name.trim() || m.name.length > MAX_MODEL_FIELD) return 'invalid-models'
+      if (m.name.length > MAX_MODEL_FIELD) return 'invalid-models'
       if (m.contextWindow !== undefined && (!Number.isInteger(m.contextWindow) || m.contextWindow <= 0)) {
         return 'invalid-models'
       }
@@ -232,7 +237,7 @@ function buildEntry(spec: CustomProviderSpec, existingKey?: string): Record<stri
     entry.models = spec.models.map((m) => {
       const out: Record<string, unknown> = {
         id: m.id.trim(),
-        name: m.name.trim(),
+        name: m.name.trim() || m.id.trim(),
         reasoning: false,
         input: ['text']
       }

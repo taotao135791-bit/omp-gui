@@ -95,6 +95,17 @@ describe('save → list round-trip', () => {
     expect(JSON.stringify(list.providers)).not.toContain('sk-test-123')
   })
 
+  it('defaults a missing model name to the id', async () => {
+    const r = await saveCustomProvider(
+      spec({ models: [{ id: 'model-b', name: '' }] }),
+      { modelsFile, runner: verifyRunner(['my-gateway']) }
+    )
+    expect(r).toEqual({ ok: true, verified: true })
+    expect(readDoc()['my-gateway'].models).toEqual([
+      { id: 'model-b', name: 'model-b', reasoning: false, input: ['text'] }
+    ])
+  })
+
   it('round-trips a no-key local provider with discovery', async () => {
     const r = await saveCustomProvider(
       spec({ id: 'local-llm', baseUrl: 'http://127.0.0.1:8080/v1', apiKey: undefined, authNone: true, discovery: true, models: [] }),
@@ -162,7 +173,6 @@ describe('spec validation', () => {
     ['no models without discovery', spec({ models: [] }), 'invalid-models'],
     ['discovery AND models', spec({ discovery: true, models: [{ id: 'a', name: 'A' }] }), 'invalid-models'],
     ['model without id', spec({ models: [{ id: ' ', name: 'A' }] }), 'invalid-models'],
-    ['model without name', spec({ models: [{ id: 'a', name: '' }] }), 'invalid-models'],
     ['zero contextWindow', spec({ models: [{ id: 'a', name: 'A', contextWindow: 0 }] }), 'invalid-models'],
     ['negative maxTokens', spec({ models: [{ id: 'a', name: 'A', maxTokens: -1 }] }), 'invalid-models'],
     ['fractional contextWindow', spec({ models: [{ id: 'a', name: 'A', contextWindow: 1.5 }] }), 'invalid-models']
@@ -301,9 +311,13 @@ describe('sanitizeCustomProviderSpec (IPC boundary)', () => {
     expect(sanitizeCustomProviderSpec('x')).toBeNull()
     expect(sanitizeCustomProviderSpec({ id: 1, baseUrl: 'https://x' })).toBeNull()
     expect(sanitizeCustomProviderSpec({ id: 'a', baseUrl: 'https://x', api: 'nope' })).toBeNull()
+    // name is optional (falls back to the id) — but a non-string name is not.
+    expect(
+      sanitizeCustomProviderSpec({ id: 'a', baseUrl: 'https://x', api: 'openai-completions', models: [{ id: 'm', name: 1 }] })
+    ).toBeNull()
     expect(
       sanitizeCustomProviderSpec({ id: 'a', baseUrl: 'https://x', api: 'openai-completions', models: [{ id: 'm' }] })
-    ).toBeNull()
+    ).toMatchObject({ models: [{ id: 'm', name: '' }] })
     expect(
       sanitizeCustomProviderSpec({
         id: 'a',
