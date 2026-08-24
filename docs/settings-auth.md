@@ -16,11 +16,15 @@ RPC wire protocol lives in `docs/protocol-facts.md`.
 | Enabled models | `omp config enabledModels` (separate allow-list, not modified by OMP GUI) | — |
 | Default thinking | `omp config defaultThinkingLevel` (enum: auto/minimal/low/medium/high/xhigh/max) | `settings.json` `defaultThinkingLevel` |
 | Machine skills | `omp config skills.enableAgentsUser` (boolean; unknown ≠ enabled) | `settings.json` `skills` override list |
+| Custom providers | `~/.omp/agent/models.yml` (GUI-managed: baseUrl + key + models; every write is verified against `omp models --json` and rolled back when omp does not recognize the provider) | — |
 | GUI settings | electron-store (theme, language, notifications, …) — GUI-owned | same |
 
 The GUI never writes `auth.json`/`settings.json` for the current runtime,
 and never reads `agent.db`/`models.db`/`config.yml` directly — storage
-location is not a public API.
+location is not a public API. The one deliberate exception is
+`models.yml`, which IS omp's public interface for custom providers
+(docs/models.md): the GUI writes it atomically and verifies every change
+against the real runtime.
 
 ## Authentication flow (current)
 

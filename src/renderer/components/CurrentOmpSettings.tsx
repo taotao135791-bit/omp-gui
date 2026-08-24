@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import RuntimeModelSection from './RuntimeModelSection'
+import CustomProvidersSection from './CustomProvidersSection'
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -89,6 +90,8 @@ export default function CurrentOmpSettings() {
   return (
     <>
       <RuntimeModelSection />
+
+      <CustomProvidersSection />
 
       <Section title={t('settings.skills')}>
         <Row label={t('settings.machineSkills')}>

@@ -22,7 +22,10 @@ import {
   SubagentTranscriptSelector,
   WorkspaceGrant,
   RecentWorkspaceDescriptor,
-  PluginScaffoldSpec
+  PluginScaffoldSpec,
+  CustomProvidersListResult,
+  CustomProviderSaveResult,
+  CustomProviderDeleteResult
 } from '../shared/types'
 import {
   detectCli,
@@ -93,6 +96,12 @@ import {
 import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
 import { listOmpModelCatalog } from './omp/settings/OmpModelCatalog'
+import {
+  deleteCustomProvider,
+  listCustomProviders,
+  sanitizeCustomProviderSpec,
+  saveCustomProvider
+} from './customProviders'
 import { sanitizeImages } from './imageValidation'
 import { RecentWorkspaceRegistry, WorkspaceGrantManager } from './workspaceGrant'
 
@@ -628,6 +637,32 @@ export function registerIpc() {
     IPC_CHANNELS.RUNTIME_SET_MACHINE_SKILLS,
     async (_event, enabled: unknown) => {
       return runtimeSettings.setMachineSkills(enabled === true)
+    }
+  )
+
+  // ------------------------------------------------------- custom providers
+  // opencode-style custom providers via omp's models.yml (current profile
+  // only — legacy pi has no models.yml semantics and the UI hides the
+  // section there). Writes are runtime-verified with rollback in main.
+
+  ipcMain.handle(IPC_CHANNELS.CUSTOM_PROVIDERS_LIST, async (): Promise<CustomProvidersListResult> => {
+    return listCustomProviders()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.CUSTOM_PROVIDERS_SAVE,
+    async (_event, raw: unknown): Promise<CustomProviderSaveResult> => {
+      const spec = sanitizeCustomProviderSpec(raw)
+      if (!spec) return { ok: false, error: 'invalid-spec' }
+      return saveCustomProvider(spec)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.CUSTOM_PROVIDERS_DELETE,
+    async (_event, id: unknown): Promise<CustomProviderDeleteResult> => {
+      if (typeof id !== 'string' || !PROVIDER_ID_PATTERN.test(id)) return { ok: false }
+      return deleteCustomProvider(id)
     }
   )
 

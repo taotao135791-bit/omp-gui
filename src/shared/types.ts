@@ -348,6 +348,73 @@ export interface ModelConfig {
   authProviders: string[]
 }
 
+// ---------------------------------------------------------------------------
+// Custom providers (~/.omp/agent/models.yml — current Oh My Pi profile only)
+// ---------------------------------------------------------------------------
+
+/** Provider API dialects the GUI exposes (omp supports more; these cover the common cases). */
+export type CustomProviderApi = 'openai-completions' | 'openai-responses' | 'anthropic-messages'
+
+/** One manually-declared model of a custom provider. */
+export interface CustomProviderModelSpec {
+  id: string
+  name: string
+  contextWindow?: number
+  maxTokens?: number
+}
+
+/** Write spec for a custom provider (renderer → main, sanitized + revalidated in main). */
+export interface CustomProviderSpec {
+  id: string
+  baseUrl: string
+  api: CustomProviderApi
+  /** New API key. Omitted when editing keeps the key already in models.yml. */
+  apiKey?: string
+  /** No-key local server (models.yml `auth: none`). */
+  authNone: boolean
+  /** Auto-discover models via GET <baseUrl>/models; mutually exclusive with models. */
+  discovery: boolean
+  models: CustomProviderModelSpec[]
+}
+
+/**
+ * A custom provider as listed to the renderer. NEVER carries key material —
+ * `hasKey` is all the UI gets to know.
+ */
+export interface CustomProviderInfo {
+  id: string
+  baseUrl: string
+  api: string
+  hasKey: boolean
+  authNone: boolean
+  discovery: boolean
+  /** Manual models with full detail, so the edit form can round-trip them. */
+  models: { id: string; name: string; contextWindow?: number; maxTokens?: number }[]
+  source: 'custom'
+}
+
+export type CustomProvidersListResult =
+  | { ok: true; providers: CustomProviderInfo[] }
+  | { ok: false; error: 'parse' | 'read'; detail?: string }
+
+export type CustomProviderError =
+  | 'invalid-spec'
+  | 'invalid-id'
+  | 'invalid-base-url'
+  | 'invalid-api'
+  | 'invalid-api-key'
+  | 'invalid-models'
+  | 'parse'
+  | 'read'
+  | 'write-failed'
+  | 'verify-failed'
+
+export type CustomProviderSaveResult =
+  | { ok: true; verified: boolean }
+  | { ok: false; error: CustomProviderError; detail?: string }
+
+export type CustomProviderDeleteResult = { ok: boolean; error?: 'parse' | 'read' | 'write-failed' }
+
 /**
  * A model pi can actually use (credentials present), as returned by the RPC
  * `get_available_models` command — only the fields the GUI needs.

@@ -39,7 +39,11 @@ import {
   RecentWorkspaceDescriptor,
   PluginScaffoldSpec,
   PluginScaffoldResult,
-  KanbanBoard
+  KanbanBoard,
+  CustomProviderSpec,
+  CustomProvidersListResult,
+  CustomProviderSaveResult,
+  CustomProviderDeleteResult
 } from '../shared/types'
 import { KanbanSaveResult } from '../shared/boards'
 
@@ -203,6 +207,12 @@ export interface ElectronAPI {
   runtimeSetDefaultThinking: (level: string) => Promise<{ ok: boolean; error?: string }>
   /** Toggle machine-local skills via the runtime config (current profile). */
   runtimeSetMachineSkills: (enabled: boolean) => Promise<{ ok: boolean; error?: string }>
+  /** List custom providers from models.yml (never carries key material). */
+  customProvidersList: () => Promise<CustomProvidersListResult>
+  /** Upsert a custom provider; runtime-verified, rolled back when omp rejects it. */
+  customProvidersSave: (spec: CustomProviderSpec) => Promise<CustomProviderSaveResult>
+  /** Remove a custom provider from models.yml. */
+  customProvidersDelete: (id: string) => Promise<CustomProviderDeleteResult>
   /** Start the runtime's native login flow; progress rides onLoginState. */
   authStartLogin: (providerId: string) => Promise<{ ok: boolean; error?: string }>
   /** Set a provider's API key directly (paste-key form, provider-validated). */
@@ -375,6 +385,11 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_SET_DEFAULT_THINKING, level),
   runtimeSetMachineSkills: (enabled: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.RUNTIME_SET_MACHINE_SKILLS, enabled),
+  customProvidersList: () => ipcRenderer.invoke(IPC_CHANNELS.CUSTOM_PROVIDERS_LIST),
+  customProvidersSave: (spec: CustomProviderSpec) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CUSTOM_PROVIDERS_SAVE, spec),
+  customProvidersDelete: (id: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.CUSTOM_PROVIDERS_DELETE, id),
   authStartLogin: (providerId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.AUTH_START_LOGIN, providerId),
   authSetApiKey: (providerId: string, key: string) =>

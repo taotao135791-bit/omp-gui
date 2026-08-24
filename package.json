@@ -35,13 +35,14 @@
     "electron-store": "^8.2.0",
     "electron-updater": "^6.8.9",
     "lucide-react": "^0.454.0",
+    "mermaid": "11.16.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-markdown": "^9.0.1",
     "react-router-dom": "^6.27.0",
     "remark-gfm": "^4.0.0",
-    "zustand": "^5.0.0",
-    "mermaid": "11.16.1"
+    "yaml": "^2.9.0",
+    "zustand": "^5.0.0"
   },
   "packageManager": "pnpm@11.5.2+sha512.71c631e382066efc25625d5cf029075de07b61b37f6e27350fbd84b1bda5864c8c1967adc280776b45c30a715c0359a3be08fef42d5bb09e2b99029979692916"
 }
