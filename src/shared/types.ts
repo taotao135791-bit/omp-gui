@@ -699,6 +699,40 @@ export type PluginScaffoldResult =
   | { ok: true; dir: string; files: string[] }
   | { ok: false; error: PluginScaffoldError; detail?: string }
 
+// ---------------------------------------------------------------------------
+// Kanban boards (local-only, persisted under userData/kanban-boards.json)
+// ---------------------------------------------------------------------------
+
+export interface KanbanCard {
+  id: string
+  title: string
+  note?: string
+  createdAt: number
+}
+
+export interface KanbanColumn {
+  id: string
+  /**
+   * Template-provided columns store an i18n key (`boards.col.*`) that the
+   * renderer translates at display time; user-renamed/added columns store
+   * raw text. Card content is always raw user data, never translated.
+   */
+  title: string
+  cards: KanbanCard[]
+}
+
+export type KanbanTemplateId = 'task' | 'bug' | 'release' | 'blank'
+
+export interface KanbanBoard {
+  id: string
+  name: string
+  /** Template the board was created from (informational, free-form string). */
+  template: string
+  columns: KanbanColumn[]
+  createdAt: number
+  updatedAt: number
+}
+
 export type Language = 'zh' | 'en'
 
 export interface AppSettings {

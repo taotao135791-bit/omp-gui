@@ -8,6 +8,7 @@ import ChatPage from './pages/ChatPage'
 import PackagesPage from './pages/PackagesPage'
 import PluginAuthorPage from './pages/PluginAuthorPage'
 import SettingsPage from './pages/SettingsPage'
+import BoardsPage from './pages/BoardsPage'
 import SetupWizard from './pages/SetupWizard'
 
 interface RendererErrorBoundaryProps {
@@ -172,6 +173,7 @@ function App() {
           <Route path="/" element={<ChatPage />} />
           <Route path="/plugins" element={<PackagesPage />} />
           <Route path="/plugins/new" element={<PluginAuthorPage />} />
+          <Route path="/boards" element={<BoardsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </Layout>

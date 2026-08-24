@@ -4,6 +4,7 @@ import {
   SquarePen,
   MessageSquare,
   Puzzle,
+  SquareKanban,
   FolderOpen,
   AlertCircle,
   Trash2,
@@ -527,6 +528,13 @@ export default function Sidebar() {
         >
           <Puzzle size={14} className="shrink-0" />
           {t('sidebar.plugins')}
+        </button>
+        <button
+          onClick={() => navigate('/boards')}
+          className={navRow(location.pathname === '/boards')}
+        >
+          <SquareKanban size={14} className="shrink-0" />
+          {t('sidebar.boards')}
         </button>
         <button onClick={() => setRightPanelOpen(!rightPanelOpen)} className={navRow(rightPanelOpen)}>
           <PanelRight size={14} className="shrink-0" />

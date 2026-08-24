@@ -38,8 +38,10 @@ import {
   WorkspaceGrant,
   RecentWorkspaceDescriptor,
   PluginScaffoldSpec,
-  PluginScaffoldResult
+  PluginScaffoldResult,
+  KanbanBoard
 } from '../shared/types'
+import { KanbanSaveResult } from '../shared/boards'
 
 export interface ElectronAPI {
   detectCli: (force?: boolean) => Promise<CliInfo>
@@ -100,6 +102,11 @@ export interface ElectronAPI {
   revealPath: (target: string) => Promise<boolean>
   getStore: <K extends keyof AppSettings>(key: K) => Promise<AppSettings[K]>
   setStore: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => Promise<boolean>
+  /** Kanban boards (local-only, validated in main on every read/write). */
+  listBoards: () => Promise<KanbanBoard[]>
+  /** Whole-board upsert; rejects structurally invalid boards. */
+  saveBoard: (board: KanbanBoard) => Promise<KanbanSaveResult>
+  deleteBoard: (id: string) => Promise<KanbanSaveResult>
   selectFolder: () => Promise<string | null>
   selectFile: (filters?: { name: string; extensions: string[] }[]) => Promise<string | null>
   /** Pick an image file; resolves its base64 bytes (null when cancelled). */
@@ -275,6 +282,9 @@ const api: ElectronAPI = {
   getStore: (key: keyof AppSettings) => ipcRenderer.invoke(IPC_CHANNELS.STORE_GET, key),
   setStore: (key: keyof AppSettings, value: unknown) =>
     ipcRenderer.invoke(IPC_CHANNELS.STORE_SET, key, value),
+  listBoards: () => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_LIST),
+  saveBoard: (board: KanbanBoard) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_SAVE, board),
+  deleteBoard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DELETE, id),
   selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FOLDER),
   selectFile: (filters?: { name: string; extensions: string[] }[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FILE, filters),

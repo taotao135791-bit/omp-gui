@@ -74,6 +74,7 @@ import {
 } from './checkpoints'
 import { getGitInfo, getFileDiff } from './gitinfo'
 import { listSessionHistory, deleteSessionFile } from './sessionHistory'
+import { deleteBoard, listBoards, saveBoard } from './boards'
 import { defaultExportFileName } from './exportPath'
 import { listProjectFiles } from './projectFiles'
 import { maybeNotifyTurnFinished, maybeNotifyUiRequest } from './notify'
@@ -966,6 +967,21 @@ export function registerIpc() {
       setStore('permissionMode', value)
     }
     return true
+  })
+
+  // Kanban boards — dedicated module, never the generic store:set. The board
+  // payload crosses the trust boundary as `unknown`; structural validation
+  // (shapes, length/count limits) happens inside boards.ts via validateBoard.
+  ipcMain.handle(IPC_CHANNELS.BOARDS_LIST, async () => {
+    return listBoards()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.BOARDS_SAVE, async (_event, board: unknown) => {
+    return saveBoard(board)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.BOARDS_DELETE, async (_event, id: unknown) => {
+    return deleteBoard(id)
   })
 
   ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_FOLDER, async () => {
