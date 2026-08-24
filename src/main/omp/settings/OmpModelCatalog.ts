@@ -17,11 +17,6 @@ import { detectCli } from '../OmpCapabilities'
 
 let catalogCache: RuntimeModelInfo[] | null = null
 
-/** Drop the cached catalog (rarely needed — it only changes on omp upgrade). */
-export function invalidateOmpModelCatalog(): void {
-  catalogCache = null
-}
-
 interface CatalogEntry {
   id?: unknown
   name?: unknown

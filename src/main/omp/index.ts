@@ -15,7 +15,6 @@ import {
   SessionThinkingLevel,
   SubagentMessagesResult,
   SubagentSnapshot,
-  SubagentSubscriptionLevel,
   SubagentTranscriptSelector,
   RpcOutcome,
   HistoricalAgentRecord
@@ -47,22 +46,7 @@ export {
   executableSearchDirs,
   getCapabilities
 } from './OmpCapabilities'
-export {
-  drainLines,
-  serializeCommand,
-  LineReader,
-  RpcFrameDecoder,
-  RpcFrameError,
-  MAX_LINE_BYTES,
-  MAX_RPC_FRAME_BYTES,
-  MAX_RPC_REASSEMBLED_BYTES
-} from './OmpTransport'
-export { OmpHandshake, GUI_SUPPORTED_PROTOCOLS, parseReadyFrame } from './OmpHandshake'
-export type { HandshakeOutcome, RuntimeProfile } from './OmpHandshake'
-export { parseRpcLine, normalizeRpcFrame, extensionUiCancel, extensionUiResponse } from './OmpProtocol'
-export type { RpcParseResult, ExtensionUiMethod } from './OmpProtocol'
-export { OmpSession } from './OmpSession'
-export type { OmpProcessLike, OmpSessionOptions } from './OmpSession'
+export { drainLines } from './OmpTransport'
 
 const sessions = new Map<string, OmpSession>()
 
@@ -207,21 +191,6 @@ export function respondExtensionUi(
 /** Hot-switch the model of a live session via the RPC set_model command. */
 export function setSessionModel(sessionId: string, provider: string, modelId: string): boolean {
   return sessions.get(sessionId)?.setModel(provider, modelId) ?? false
-}
-
-/**
- * Enable/disable the subagent event subscription on a live session. Returns
- * false when the session is missing, dead, or the runtime rejected it (the
- * capability is still recorded from the real outcome).
- */
-export async function setSubagentSubscription(
-  sessionId: string,
-  level: SubagentSubscriptionLevel
-): Promise<boolean> {
-  const outcome = await (sessions.get(sessionId)?.setSubagentSubscription(level) ??
-    Promise.resolve<RpcOutcome<{ level: SubagentSubscriptionLevel }>>({ kind: 'unknown' }))
-  noteSubagentCapabilityOutcome('subagentProgress', outcome)
-  return outcome.kind === 'success'
 }
 
 /**

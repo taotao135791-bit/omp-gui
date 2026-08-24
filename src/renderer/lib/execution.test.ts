@@ -8,12 +8,7 @@ import {
   foldUserSteer,
   normalizeOmpAgentStatus,
   classifyToolCall,
-  orderedAgents,
-  rootView,
-  deriveRootAgentStatus,
-  agentHubSummary,
-  currentTurn,
-  sessionToolTotals
+  currentTurn
 } from './execution'
 
 function subagent(
@@ -80,7 +75,6 @@ describe('multi-turn execution projection', () => {
     expect(p.turns['turn-1'].trajectory.some((e) => e.kind === 'reasoning')).toBe(true)
     expect(p.turns['turn-2'].tools).toMatchObject({ edit: 1, read: 0, command: 0 })
     expect(p.turns['turn-2'].trajectory.some((e) => e.kind === 'reasoning')).toBe(true)
-    expect(sessionToolTotals(p)).toMatchObject({ read: 1, command: 1, edit: 1 })
     expect(p.turns['turn-2'].startedAt).toBe(5)
   })
 
@@ -94,15 +88,6 @@ describe('multi-turn execution projection', () => {
 })
 
 describe('agent graph (flat roster)', () => {
-  it('orders children by index (root is a separate view)', () => {
-    let p = emptyProjection(S)
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
-    p = foldExecutionEvent(p, subagent(S, { id: 'b', agent: 'review', index: 2 }), 1)
-    p = foldExecutionEvent(p, subagent(S, { id: 'a', agent: 'explore', index: 1 }), 1)
-    const ordered = orderedAgents(p)
-    expect(ordered.map((n) => n.id)).toEqual(['a', 'b'])
-  })
-
   it('handles out-of-order completion', () => {
     let p = emptyProjection(S)
     p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
@@ -132,21 +117,6 @@ describe('agent graph (flat roster)', () => {
     expect(p.agents.x.status).toBe('completed')
   })
 
-  it('reports agent hub counts (running/done/failed) — subagents only, turn end leaves them untouched', () => {
-    let p = emptyProjection(S)
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
-    p = foldExecutionEvent(p, subagent(S, { id: 'A', status: 'running' }), 1)
-    p = foldExecutionEvent(p, subagent(S, { id: 'B', status: 'completed' }), 1)
-    p = foldExecutionEvent(p, subagent(S, { id: 'C', status: 'aborted' }), 1)
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 2)
-
-    const hub = agentHubSummary(p)
-    expect(hub.total).toBe(3) // subagents only — the main agent is a graph root, not a roster entry
-    expect(hub.running).toBe(1) // A is STILL running: turn end never mutates agent status
-    expect(hub.done).toBe(1) // B
-    expect(hub.failed).toBe(1) // C aborted
-  })
-
   it('turn end leaves a running subagent running (detached subagent)', () => {
     let p = emptyProjection(S)
     p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
@@ -167,30 +137,6 @@ describe('steer', () => {
     p = foldUserSteer(p, 'Focus only on runtime layer')
     expect(p.turnOrder).toEqual(['turn-1'])
     expect(currentTurn(p)?.trajectory.some((e) => e.kind === 'steer')).toBe(true)
-  })
-})
-
-describe('root agent lifecycle (session, not a child task)', () => {
-  it('derives idle → active → idle across a turn', () => {
-    let p = emptyProjection(S)
-    expect(deriveRootAgentStatus(p)).toBe('idle')
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'working' }, 0)
-    expect(deriveRootAgentStatus(p)).toBe('active')
-    p = foldExecutionEvent(p, { type: 'status', sessionId: S, status: 'idle', isTerminal: true }, 1)
-    expect(deriveRootAgentStatus(p)).toBe('idle')
-  })
-
-  it('derives waiting when a dialog is pending', () => {
-    let p = emptyProjection(S)
-    p = foldExecutionEvent(p, { type: 'ui_request', sessionId: S, id: 'u1', method: 'confirm', title: 'Allow?' }, 0)
-    expect(deriveRootAgentStatus(p)).toBe('waiting')
-    expect(rootView(p).status).toBe('waiting')
-  })
-
-  it('derives disconnected on closed and never uses completed/failed/aborted', () => {
-    let p = emptyProjection(S)
-    p = foldExecutionEvent(p, { type: 'closed', sessionId: S }, 0)
-    expect(deriveRootAgentStatus(p)).toBe('disconnected')
   })
 })
 

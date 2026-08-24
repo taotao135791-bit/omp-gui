@@ -15,8 +15,7 @@ import {
   restoreCheckpoint,
   saveCheckpoint,
   listCheckpoints,
-  getCheckpoint,
-  deleteCheckpointsForSession
+  getCheckpoint
 } from '../checkpoints'
 import { CheckpointInfo } from '../../shared/types'
 
@@ -134,7 +133,7 @@ describe('persistence', () => {
     }
   }
 
-  it('saves, lists, gets and deletes checkpoints per session', () => {
+  it('saves, lists and gets checkpoints per session', () => {
     saveCheckpoint(entry('c1', 's1'), storeFile)
     saveCheckpoint(entry('c2', 's1'), storeFile)
     saveCheckpoint(entry('c3', 's2'), storeFile)
@@ -142,10 +141,6 @@ describe('persistence', () => {
     expect(listCheckpoints('s1', storeFile).map((c) => c.id)).toEqual(['c1', 'c2'])
     expect(getCheckpoint('c3', storeFile)?.sessionId).toBe('s2')
     expect(getCheckpoint('missing', storeFile)).toBeNull()
-
-    deleteCheckpointsForSession('s1', storeFile)
-    expect(listCheckpoints('s1', storeFile)).toEqual([])
-    expect(listCheckpoints('s2', storeFile).map((c) => c.id)).toEqual(['c3'])
   })
 
   it('returns empty results when the store file is missing or corrupt', () => {

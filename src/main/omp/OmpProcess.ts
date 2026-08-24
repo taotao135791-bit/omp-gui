@@ -9,11 +9,6 @@ import { buildLanguageArgs } from '../languageArgs'
 import { executableSearchDirs } from './OmpCapabilities'
 import { EnvMode, resolveSubprocessEnv } from './env'
 
-// The stderr ring buffer lives in OmpTransport (pure, stream-level utility)
-// so OmpSession's module graph stays electron-free and unit-testable; it is
-// re-exported here because stderr capture is a process-assembly concern.
-export { StderrRing } from './OmpTransport'
-
 /**
  * Process assembly for `pi --mode rpc` sessions: CLI argument construction
  * (permission-mode flags, approval extension, session resume, language

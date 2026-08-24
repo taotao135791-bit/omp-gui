@@ -160,9 +160,6 @@ function isTerminalAgent(status: AgentStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'aborted'
 }
 
-function isBusyAgent(status: AgentStatus): boolean {
-  return status === 'pending' || status === 'running'
-}
 // --------------------------------------------------------------------- fold
 
 /**
@@ -513,60 +510,6 @@ function historicalToAgentNode(r: HistoricalAgentRecord): AgentNode {
 
 // ------------------------------------------------------------------ selectors
 
-/**
- * The root agent is the LIVING SESSION, not a one-shot child task. Its status is
- * derived from the session runtime state + turn + interaction state — never
- * `completed`/`failed`/`aborted` (those are child task statuses).
- */
-export type RootAgentStatus = 'active' | 'idle' | 'waiting' | 'error' | 'disconnected'
-
-export interface RootAgentView {
-  id: string
-  agent: string
-  status: RootAgentStatus
-}
-
-export function deriveRootAgentStatus(projection: ExecutionProjection): RootAgentStatus {
-  if (projection.sessionStatus === 'closed') return 'disconnected'
-  if (projection.sessionStatus === 'failed') return 'error'
-  if (projection.pendingUi > 0) return 'waiting'
-  if (projection.currentTurnId) return 'active'
-  return 'idle'
-}
-
-export function rootView(projection: ExecutionProjection): RootAgentView {
-  return {
-    id: projection.rootAgentId,
-    agent: 'main',
-    status: deriveRootAgentStatus(projection)
-  }
-}
-
-/** Child subagents ordered by spawn index (flat roster — no guessed tree). */
-export function orderedAgents(projection: ExecutionProjection): AgentNode[] {
-  return Object.values(projection.agents).sort(
-    (a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id.localeCompare(b.id)
-  )
-}
-
-export interface AgentHubSummary {
-  running: number
-  done: number
-  failed: number
-  total: number
-}
-
-export function agentHubSummary(projection: ExecutionProjection): AgentHubSummary {
-  // Subagents only — the main agent is a graph root, not a roster entry.
-  const nodes = Object.values(projection.agents)
-  return {
-    running: nodes.filter((n) => isBusyAgent(n.status)).length,
-    done: nodes.filter((n) => n.status === 'completed').length,
-    failed: nodes.filter((n) => n.status === 'failed' || n.status === 'aborted').length,
-    total: nodes.length
-  }
-}
-
 /** The current (in-flight) turn, or undefined. */
 export function currentTurn(projection: ExecutionProjection): TurnProjection | undefined {
   return projection.currentTurnId ? projection.turns[projection.currentTurnId] : undefined
@@ -586,17 +529,6 @@ export function turnElapsedMs(turn: TurnProjection): number {
   const start = turn.startedAt ?? turn.endedAt ?? 0
   const end = turn.endedAt ?? start
   return Math.max(0, end - start)
-}
-
-/** Session-wide tool totals DERIVED by summing turns — never a second counter. */
-export function sessionToolTotals(projection: ExecutionProjection): ToolStats {
-  const totals = emptyToolStats()
-  for (const turn of Object.values(projection.turns)) {
-    for (const key of Object.keys(totals) as (keyof ToolStats)[]) {
-      totals[key] += turn.tools[key]
-    }
-  }
-  return totals
 }
 
 // ------------------------------------------------------- presentation selectors

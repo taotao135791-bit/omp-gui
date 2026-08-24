@@ -192,11 +192,3 @@ export function listCheckpoints(sessionId: string, file?: string): CheckpointInf
 export function getCheckpoint(id: string, file?: string): CheckpointInfo | null {
   return readStore(file ?? defaultStoreFile()).find((c) => c.id === id) ?? null
 }
-
-export function deleteCheckpointsForSession(sessionId: string, file?: string): void {
-  const target = file ?? defaultStoreFile()
-  writeStore(
-    target,
-    readStore(target).filter((c) => c.sessionId !== sessionId)
-  )
-}

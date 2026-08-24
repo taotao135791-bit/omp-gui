@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CliRunner, configGet, configList, configSet, configReset, authBrokerLogout } from '../omp/settings/OmpConfigCli'
+import { CliRunner, configGet, configSet, configReset, authBrokerLogout } from '../omp/settings/OmpConfigCli'
 
 /** Fake omp CLI: records argv, answers from a script map. */
 function fakeRunner(script: Record<string, { ok?: boolean; stdout?: string; stderr?: string }>) {
@@ -15,32 +15,6 @@ function fakeRunner(script: Record<string, { ok?: boolean; stdout?: string; stde
 }
 
 describe('OmpConfigCli', () => {
-  it('configList parses the key → entry map', async () => {
-    const { run } = fakeRunner({
-      'config list --json': {
-        stdout: JSON.stringify({
-          defaultThinkingLevel: { value: 'high', type: 'enum', description: 'depth' },
-          enabledModels: { type: 'array' }
-        })
-      }
-    })
-    const list = await configList(run)
-    expect(list?.get('defaultThinkingLevel')).toEqual({
-      key: 'defaultThinkingLevel',
-      value: 'high',
-      type: 'enum',
-      description: 'depth'
-    })
-    expect(list?.get('enabledModels')?.value).toBeUndefined()
-  })
-
-  it('configList returns null on failure and on garbage output', async () => {
-    expect(await configList(fakeRunner({ 'config list --json': { ok: false } }).run)).toBeNull()
-    expect(
-      await configList(fakeRunner({ 'config list --json': { stdout: 'not json' } }).run)
-    ).toBeNull()
-  })
-
   it('configGet parses a single entry', async () => {
     const { run } = fakeRunner({
       'config get defaultThinkingLevel --json': {

@@ -1,5 +1,3 @@
-export const APP_NAME = 'OMP GUI'
-
 export const IPC_CHANNELS = {
   OMP_DETECT: 'omp:detect',
   OMP_CAPABILITIES: 'omp:capabilities',
@@ -88,6 +86,3 @@ export const IPC_CHANNELS = {
   AUTH_OPEN_LOGIN_URL: 'auth:open-login-url',
   AUTH_LOGIN_STATE: 'auth:login-state'
 } as const
-
-export const OMP_GLOBAL_DIR = '.omp'
-export const PI_GLOBAL_DIR = '.pi'

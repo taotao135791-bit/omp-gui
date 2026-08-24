@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PermissionMode, PiModel, PromptImage, HistorySessionInfo, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord, WorkspaceGrant, RecentWorkspaceDescriptor } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PermissionMode, PiModel, PromptImage, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord, WorkspaceGrant, RecentWorkspaceDescriptor } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer, applyHistoricalAgents } from '../lib/execution'
@@ -128,12 +128,8 @@ interface AppState {
   composerDrafts: ComposerDrafts
   /** Sidebar: recent project folders, MRU first (persisted in electron-store). */
   recentProjects: string[]
-  /** True once the persisted recent-projects list has been hydrated. */
-  recentProjectsLoaded: boolean
   /** Main-issued descriptors used to activate recent workspaces by opaque id. */
   recentWorkspaces: RecentWorkspaceDescriptor[]
-  /** Persisted session files of the current project (pi history), newest first. */
-  historySessions: HistorySessionInfo[]
   /** True while the history list is being (re)loaded; entries may be stale. */
   historyLoading: boolean
   /** Runtime-reported settings overview (profile/capabilities/providers/defaults). */
@@ -225,7 +221,6 @@ interface AppState {
   /** Archive/unarchive a session and persist the new list. */
   setSessionArchived: (sessionId: string, archived: boolean) => void
   markSessionUnread: (sessionId: string) => void
-  clearSessionUnread: (sessionId: string) => void
   setComposerPrefill: (text: string | null) => void
   setComposerDraft: (sessionId: string, draft: SessionComposerDraft) => void
   clearComposerDraft: (sessionId: string) => void
@@ -331,9 +326,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   composerPrefill: null,
   composerDrafts: {},
   recentProjects: [],
-  recentProjectsLoaded: false,
   recentWorkspaces: [],
-  historySessions: [],
   historyLoading: false,
   runtimeOverview: null,
   runtimeModels: [],
@@ -360,11 +353,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setCurrentWorkspace: (grant) =>
     set((state) => {
-      // A workspace switch invalidates the persisted-history list immediately —
-      // the Sidebar's async reload refills it; until then no stale entry from
-      // the previous project may render (a click would resume it under the
-      // NEW grant).
-      if (!grant) return { currentWorkspace: null, currentSessionId: null, historySessions: [] }
+      if (!grant) return { currentWorkspace: null, currentSessionId: null }
       // The MRU stores the grant's canonical realPath — that is what Main
       // persists for sessions (session.cwd), so display-spelling variants of
       // the same folder can't produce duplicate entries or orphan groups.
@@ -379,7 +368,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return {
         currentWorkspace: grant,
         recentProjects,
-        ...(workspaceChanged ? { currentSessionId: null, historySessions: [] } : {})
+        ...(workspaceChanged ? { currentSessionId: null } : {})
       }
     }),
   activateRecentWorkspace: async (recentId) => {
@@ -766,8 +755,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }),
   markSessionUnread: (sessionId) =>
     set((state) => ({ unreadSessionIds: { ...state.unreadSessionIds, [sessionId]: true } })),
-  clearSessionUnread: (sessionId) =>
-    set((state) => ({ unreadSessionIds: { ...state.unreadSessionIds, [sessionId]: false } })),
   setComposerPrefill: (composerPrefill) => set({ composerPrefill }),
   setComposerDraft: (sessionId, draft) =>
     set((state) => ({
@@ -775,12 +762,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
   clearComposerDraft: (sessionId) =>
     set((state) => ({ composerDrafts: clearComposerDraft(state.composerDrafts, sessionId) })),
-  setRecentProjects: (recentProjects) => set({ recentProjects, recentProjectsLoaded: true }),
+  setRecentProjects: (recentProjects) => set({ recentProjects }),
   setRecentWorkspaces: (recentWorkspaces) =>
     set({
       recentWorkspaces,
-      recentProjects: recentWorkspaces.map((entry) => entry.displayPath),
-      recentProjectsLoaded: true
+      recentProjects: recentWorkspaces.map((entry) => entry.displayPath)
     }),
   removeRecentProject: (displayPath) => {
     void window.electronAPI.removeRecentWorkspace(displayPath)
@@ -791,7 +777,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   loadHistorySessions: async (grantId) => {
     if (!grantId) {
-      set({ historySessions: [], historyLoading: false })
+      set({ historyLoading: false })
       return
     }
     set({ historyLoading: true })
@@ -801,7 +787,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (get().currentWorkspace?.id === grantId) {
       const workspaceRealPath = get().currentWorkspace?.realPath
       set((state) => ({
-        historySessions: list,
         sessionRecords: workspaceRealPath
           ? replaceHistoricalSessionRecords(state.sessionRecords, workspaceRealPath, list)
           : state.sessionRecords,
@@ -811,7 +796,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   removeHistorySession: (filePath) =>
     set((state) => ({
-      historySessions: state.historySessions.filter((h) => h.filePath !== filePath),
       sessionRecords: removeHistoryRecord(state.sessionRecords, filePath)
     })),
   setSessionTitle: (sessionId, title) =>

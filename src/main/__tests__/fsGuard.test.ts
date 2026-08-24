@@ -110,26 +110,6 @@ describe('FsGuard', () => {
     expect(guard.isAllowed(fileLink)).toBe(true)
   })
 
-  it('allows creating new files inside the project (write check)', () => {
-    expect(guard.isWriteAllowed(path.join(root, 'new.txt'))).toBe(true)
-    expect(guard.isWriteAllowed(path.join(root, 'newdir', 'deep.txt'))).toBe(true)
-    expect(guard.isWriteAllowed(path.join(root, 'file.txt'))).toBe(true)
-  })
-
-  it('denies creating files through a symlinked directory pointing outside', () => {
-    const link = path.join(root, 'linkdir')
-    fs.symlinkSync(outside, link)
-    expect(guard.isWriteAllowed(path.join(link, 'evil.txt'))).toBe(false)
-    expect(guard.isWriteAllowed(path.join(link, 'deep', 'evil.txt'))).toBe(false)
-  })
-
-  it('denies writing to an existing file outside the root, also via symlink', () => {
-    expect(guard.isWriteAllowed(path.join(outside, 'secret.txt'))).toBe(false)
-    const link = path.join(root, 'link.txt')
-    fs.symlinkSync(path.join(outside, 'secret.txt'), link)
-    expect(guard.isWriteAllowed(link)).toBe(false)
-  })
-
   it('supports a root that is itself a symlink', () => {
     const real = path.join(base, 'realproj')
     fs.mkdirSync(real)
@@ -140,8 +120,6 @@ describe('FsGuard', () => {
     const g = new FsGuard()
     g.addRoot(rootLink)
     expect(g.isAllowed(path.join(rootLink, 'file.txt'))).toBe(true)
-    expect(g.isWriteAllowed(path.join(rootLink, 'new.txt'))).toBe(true)
-    expect(g.getRoots()).toEqual([fs.realpathSync(real)])
 
     // An escape from inside the symlinked root is still denied.
     fs.symlinkSync(outside, path.join(real, 'escape'))
@@ -170,6 +148,5 @@ describe('FsGuard', () => {
   it('denies everything without registered roots', () => {
     const g = new FsGuard()
     expect(g.isAllowed(path.join(root, 'file.txt'))).toBe(false)
-    expect(g.isWriteAllowed(path.join(root, 'new.txt'))).toBe(false)
   })
 })

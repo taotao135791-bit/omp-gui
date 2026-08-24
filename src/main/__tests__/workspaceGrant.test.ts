@@ -141,23 +141,4 @@ describe('WorkspaceGrantManager', () => {
     const grant = await registry.activate(after.id)
     expect(grant?.realPath).toBe(fs.realpathSync(replacement))
   })
-
-  it('activateSessionPath creates a session-source grant', async () => {
-    const dir = path.join(base, 'session-cwd')
-    fs.mkdirSync(dir)
-    const grant = await manager.activateSessionPath(dir)
-    expect(grant).not.toBeNull()
-    expect(grant?.source).toBe('session')
-  })
-
-  it('resolve returns the real path for a known grant', async () => {
-    const dir = path.join(base, 'workspace')
-    fs.mkdirSync(dir)
-    const grant = await manager.createGrant(dir, 'dialog')
-    expect(manager.resolve(grant!.id)).toBe(grant!.realPath)
-  })
-
-  it('resolve returns null for an unknown grant id', () => {
-    expect(manager.resolve('not-a-grant')).toBeNull()
-  })
 })

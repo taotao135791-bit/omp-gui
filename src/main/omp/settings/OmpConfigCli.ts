@@ -76,25 +76,6 @@ function parseJson(raw: string): unknown | null {
   }
 }
 
-/** `omp config list --json` → key → entry. Null on failure. */
-export async function configList(run: CliRunner): Promise<Map<string, OmpConfigEntry> | null> {
-  const res = await run(['config', 'list', '--json'])
-  if (!res.ok) return null
-  const parsed = parseJson(res.stdout)
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
-  const out = new Map<string, OmpConfigEntry>()
-  for (const [key, entry] of Object.entries(parsed as Record<string, unknown>)) {
-    const e = entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : {}
-    out.set(key, {
-      key,
-      value: 'value' in e ? e.value : undefined,
-      type: typeof e.type === 'string' ? e.type : undefined,
-      description: typeof e.description === 'string' ? e.description : undefined
-    })
-  }
-  return out
-}
-
 /** `omp config get <key> --json` → entry. Null on failure/unknown key. */
 export async function configGet(run: CliRunner, key: string): Promise<OmpConfigEntry | null> {
   const res = await run(['config', 'get', key, '--json'])

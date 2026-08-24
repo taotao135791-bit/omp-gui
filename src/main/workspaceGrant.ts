@@ -148,19 +148,9 @@ export class WorkspaceGrantManager {
     return grant
   }
 
-  /** Re-create a grant from an existing session's durable cwd (used on resume). */
-  async activateSessionPath(cwd: string): Promise<WorkspaceGrant | null> {
-    return this.createGrant(cwd, 'session')
-  }
-
   /** Look up a grant by id. */
   get(id: string): WorkspaceGrant | undefined {
     return this.grants.get(id)
-  }
-
-  /** Resolve a grant id to its canonical realPath, or null if unknown. */
-  resolve(id: string): string | null {
-    return this.grants.get(id)?.realPath ?? null
   }
 
   /** All active grants. */

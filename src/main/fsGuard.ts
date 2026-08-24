@@ -57,36 +57,4 @@ export class FsGuard {
     }
     return this.isWithinRoots(real)
   }
-
-  /**
-   * Write check. An existing target is verified by its real path, exactly
-   * like a read. A missing target is verified by its nearest existing
-   * ancestor: the ancestor's real path must be inside a root, which permits
-   * creating new files inside the project but rejects creating them through
-   * a symlinked directory that points outside it. The segments below the
-   * ancestor do not exist yet, so they cannot smuggle a symlink back in.
-   */
-  isWriteAllowed(target: string): boolean {
-    const resolved = path.resolve(target)
-    try {
-      return this.isWithinRoots(fs.realpathSync(resolved))
-    } catch {
-      // Target does not exist (or is a broken symlink) — check the ancestry.
-    }
-    let dir = resolved
-    for (;;) {
-      const parent = path.dirname(dir)
-      if (parent === dir) return false
-      dir = parent
-      try {
-        return this.isWithinRoots(fs.realpathSync(dir))
-      } catch {
-        // Keep walking up to the nearest existing ancestor.
-      }
-    }
-  }
-
-  getRoots(): string[] {
-    return Array.from(this.roots)
-  }
 }

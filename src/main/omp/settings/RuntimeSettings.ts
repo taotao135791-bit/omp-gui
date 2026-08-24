@@ -1,5 +1,4 @@
 import {
-  CapabilityState,
   CliInfo,
   DefaultThinkingLevel,
   MachineSkillsState,
@@ -423,13 +422,6 @@ export class RuntimeSettings {
     return out
   }
 }
-
-/** Capabilities helper for tests. */
-export function capabilitiesForTest(patch: Partial<RuntimeCapabilities>): RuntimeCapabilities {
-  return currentCapabilities(patch)
-}
-
-export type { CapabilityState }
 
 // Re-export the single model-selector validator + provider-id shape so
 // existing consumers keep a stable import surface (`./RuntimeSettings`)

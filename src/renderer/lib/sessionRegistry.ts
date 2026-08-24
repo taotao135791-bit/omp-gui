@@ -136,10 +136,6 @@ export function removeLiveSessionRecords(records: SessionRecord[], liveSessionId
   return records.filter((record) => !record.isLive || !record.runtimeSessionId || liveSessionIds.has(record.runtimeSessionId))
 }
 
-export function removeSessionRecord(records: SessionRecord[], sessionId: string): SessionRecord[] {
-  return records.filter((record) => record.runtimeSessionId !== sessionId)
-}
-
 export function removeHistoryRecord(records: SessionRecord[], filePath: string): SessionRecord[] {
   return records.filter((record) => record.history?.filePath !== filePath || record.isLive)
 }
