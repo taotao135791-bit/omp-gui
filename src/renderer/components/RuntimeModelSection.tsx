@@ -49,14 +49,11 @@ export default function RuntimeModelSection() {
   useEffect(() => {
     setModel(defaultModel)
     setThinking(defaultThinking)
+    // Seed the provider from the persisted model's provider (never overwrite
+    // a provider the user already picked).
     const defaultProvider = defaultModel.split('/')[0]
     if (defaultProvider) setProvider((p) => p || defaultProvider)
   }, [defaultModel, defaultThinking])
-
-  // Seed the provider from the persisted model's provider when set.
-  useEffect(() => {
-    if (!provider && defaultModel) setProvider(defaultModel.split('/')[0])
-  }, [provider, defaultModel])
 
   // Load the full static catalog once (concrete models, key-independent).
   useEffect(() => {
@@ -239,14 +236,18 @@ export default function RuntimeModelSection() {
                   <KeyRound size={12} />
                   {t('settings.saveKey')}
                 </button>
-                <button
-                  onClick={removeKey}
-                  disabled={keyBusy}
-                  title={t('settings.clearKey')}
-                  className="flex items-center gap-1 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500 disabled:opacity-40"
-                >
-                  <Trash2 size={12} />
-                </button>
+                {/* Removing a credential only makes sense when the runtime
+                    reports one; hiding it avoids guaranteed-failing logouts. */}
+                {providers.find((p) => p.id === provider)?.authenticated && (
+                  <button
+                    onClick={removeKey}
+                    disabled={keyBusy}
+                    title={t('settings.clearKey')}
+                    className="flex items-center gap-1 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition-colors hover:border-red-500/40 hover:text-red-500 disabled:opacity-40"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
               </>
             ) : (
               <span className="text-xs text-cream-faint">{t('settings.selectProviderFirst')}</span>
