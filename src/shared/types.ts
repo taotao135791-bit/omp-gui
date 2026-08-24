@@ -526,6 +526,9 @@ export interface RuntimeModelInfo {
   reasoning: boolean
   /** Per-model supported thinking levels (off is universal); empty = unknown. */
   thinking: string[]
+  /** Provider endpoint metadata (catalog only) — used for live key checks. */
+  baseUrl?: string
+  api?: string
 }
 
 /** Runtime-resolved default model/thinking state (new sessions). */

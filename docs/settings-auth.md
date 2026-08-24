@@ -28,8 +28,17 @@ against the real runtime.
 
 ## Authentication flow (current)
 
-All providers authenticate by **API key** — there is no OAuth/browser login
-step. `login {providerId}` over RPC (verified live):
+**API-key saves go through `models.yml` override entries** (`providers.<id>.apiKey`),
+not the RPC login flow. omp's auth resolution ranks this above env vars and the
+vault, and an override-only `{apiKey}` entry suffices for built-in providers
+(verified live, omp 17.2.7). Every save is verified twice: presence via
+`omp models --json` (the provider's models appear only when omp accepted the
+entry AND resolved a credential) and, when the endpoint is known, a live
+401/403 probe against the provider's model-list endpoint — both roll the file
+back on failure. Removal clears the override entry and best-effort the vault
+(`omp auth-broker logout`).
+
+The interactive RPC `login` flow remains for `AUTH_START_LOGIN` only:
 
 ```
 login

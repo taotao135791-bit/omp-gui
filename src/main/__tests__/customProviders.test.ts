@@ -13,10 +13,12 @@ vi.mock('../omp', () => ({
 }))
 
 import {
+  clearProviderKey,
   deleteCustomProvider,
   listCustomProviders,
   sanitizeCustomProviderSpec,
-  saveCustomProvider
+  saveCustomProvider,
+  saveProviderKey
 } from '../customProviders'
 
 let dir: string
@@ -328,3 +330,141 @@ describe('sanitizeCustomProviderSpec (IPC boundary)', () => {
     ).toBeNull()
   })
 })
+
+describe('saveProviderKey / clearProviderKey', () => {
+  /** Runner that serves both `models --json` verification and logout cleanup. */
+  function keyRunner(providers: string[], calls: string[][]): CliRunner {
+    return async (args) => {
+      calls.push(args)
+      if (args[0] === 'auth-broker') return { ok: true, stdout: '', stderr: '' }
+      return {
+        ok: true,
+        stdout: JSON.stringify({ models: providers.map((p) => ({ provider: p, id: 'm' })) }),
+        stderr: ''
+      }
+    }
+  }
+
+  it('writes an override-only apiKey entry for a built-in provider', async () => {
+    const r = await saveProviderKey('deepseek', 'sk-live-1', {
+      modelsFile,
+      runner: keyRunner(['deepseek'], [])
+    })
+    expect(r).toEqual({ ok: true, verified: true })
+    expect(readDoc().deepseek).toEqual({ apiKey: 'sk-live-1' })
+  })
+
+  it('preserves a custom provider’s other fields when setting its key', async () => {
+    await saveCustomProvider(spec(), { modelsFile, runner: verifyRunner(['my-gateway']) })
+    const r = await saveProviderKey('my-gateway', 'sk-new', {
+      modelsFile,
+      runner: keyRunner(['my-gateway'], [])
+    })
+    expect(r.ok).toBe(true)
+    const entry = readDoc()['my-gateway']
+    expect(entry.apiKey).toBe('sk-new')
+    expect(entry.baseUrl).toBe('https://api.example.com/v1')
+    expect(entry.models).toHaveLength(1)
+  })
+
+  it('replaces a keyless marker with the real key', async () => {
+    await saveCustomProvider(spec({ apiKey: undefined, authNone: true }), {
+      modelsFile,
+      runner: verifyRunner(['my-gateway'])
+    })
+    await saveProviderKey('my-gateway', 'sk-new', { modelsFile, runner: keyRunner(['my-gateway'], []) })
+    const entry = readDoc()['my-gateway']
+    expect(entry.apiKey).toBe('sk-new')
+    expect(entry.auth).toBeUndefined()
+  })
+
+  it('rolls back when the runtime does not recognize the credential', async () => {
+    const r = await saveProviderKey('deepseek', 'sk-x', { modelsFile, runner: keyRunner([], []) })
+    expect(r).toMatchObject({ ok: false, error: 'verify-failed' })
+    expect(existsSync(modelsFile)).toBe(false)
+  })
+
+  it('rejects invalid input without touching disk', async () => {
+    expect(await saveProviderKey('BAD ID', 'sk', { modelsFile, runner: null })).toMatchObject({
+      ok: false,
+      error: 'invalid-id'
+    })
+    expect(await saveProviderKey('deepseek', '  ', { modelsFile, runner: null })).toMatchObject({
+      ok: false,
+      error: 'invalid-api-key'
+    })
+    expect(existsSync(modelsFile)).toBe(false)
+  })
+
+  it('clear removes the key and drops an entry that held nothing else', async () => {
+    const calls: string[][] = []
+    await saveProviderKey('deepseek', 'sk-live-1', { modelsFile, runner: keyRunner(['deepseek'], calls) })
+    const r = await clearProviderKey('deepseek', { modelsFile, runner: keyRunner([], calls) })
+    expect(r.ok).toBe(true)
+    expect(readDoc().deepseek).toBeUndefined()
+    // Vault cleanup ran too (earlier login flows may have stored a credential).
+    expect(calls.some((c) => c[0] === 'auth-broker' && c[1] === 'logout' && c[2] === 'deepseek')).toBe(true)
+  })
+
+  it('clear keeps a custom provider entry, minus the key', async () => {
+    await saveCustomProvider(spec(), { modelsFile, runner: verifyRunner(['my-gateway']) })
+    const r = await clearProviderKey('my-gateway', { modelsFile, runner: keyRunner([], []) })
+    expect(r.ok).toBe(true)
+    const entry = readDoc()['my-gateway']
+    expect(entry.apiKey).toBeUndefined()
+    expect(entry.baseUrl).toBe('https://api.example.com/v1')
+  })
+
+  it('clear is a no-op when nothing is stored', async () => {
+    const r = await clearProviderKey('deepseek', { modelsFile, runner: keyRunner([], []) })
+    expect(r.ok).toBe(true)
+  })
+})
+
+describe('live key check', () => {
+  const fetchAs = (status: number): typeof fetch =>
+    (() => Promise.resolve({ status })) as unknown as typeof fetch
+
+  it('rejects a key the provider actively refuses, rolling the file back', async () => {
+    await saveCustomProvider(spec(), { modelsFile, runner: verifyRunner(['my-gateway']) })
+    const before = readFileSync(modelsFile, 'utf-8')
+    const r = await saveProviderKey('my-gateway', 'sk-wrong', {
+      modelsFile,
+      runner: keyRunnerForLive(['my-gateway']),
+      fetchImpl: fetchAs(401)
+    })
+    expect(r).toMatchObject({ ok: false, error: 'invalid-api-key' })
+    expect(readFileSync(modelsFile, 'utf-8')).toBe(before)
+  })
+
+  it('saves when the provider answers 200', async () => {
+    await saveCustomProvider(spec(), { modelsFile, runner: verifyRunner(['my-gateway']) })
+    const r = await saveProviderKey('my-gateway', 'sk-right', {
+      modelsFile,
+      runner: keyRunnerForLive(['my-gateway']),
+      fetchImpl: fetchAs(200)
+    })
+    expect(r).toEqual({ ok: true, verified: true })
+    expect(readDoc()['my-gateway'].apiKey).toBe('sk-right')
+  })
+
+  it('never false-negatives: a network error during the live check still saves', async () => {
+    await saveCustomProvider(spec(), { modelsFile, runner: verifyRunner(['my-gateway']) })
+    const r = await saveProviderKey('my-gateway', 'sk-maybe', {
+      modelsFile,
+      runner: keyRunnerForLive(['my-gateway']),
+      fetchImpl: (() => Promise.reject(new Error('network down'))) as unknown as typeof fetch
+    })
+    expect(r.ok).toBe(true)
+    expect(readDoc()['my-gateway'].apiKey).toBe('sk-maybe')
+  })
+})
+
+/** Runner for live-check tests (models verification only). */
+function keyRunnerForLive(providers: string[]): CliRunner {
+  return async () => ({
+    ok: true,
+    stdout: JSON.stringify({ models: providers.map((p) => ({ provider: p, id: 'm' })) }),
+    stderr: ''
+  })
+}

@@ -15,6 +15,7 @@ import { defaultPiAgentDir } from './piSettings'
 import { detectCli } from './omp'
 import { CliRunner, makeExecRunner } from './omp/settings/OmpConfigCli'
 import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
+import { listOmpModelCatalog } from './omp/settings/OmpModelCatalog'
 
 /**
  * Custom provider management via omp's official `~/.omp/agent/models.yml`
@@ -45,6 +46,8 @@ export interface CustomProvidersDeps {
    * `null` to explicitly skip verification (degraded mode).
    */
   runner?: CliRunner | null
+  /** fetch implementation for the live key check (tests inject a stub). */
+  fetchImpl?: typeof fetch
 }
 
 export const CUSTOM_PROVIDER_APIS: readonly CustomProviderApi[] = [
@@ -264,6 +267,45 @@ async function verifyWithRuntime(run: CliRunner, providerId: string): Promise<bo
   }
 }
 
+/**
+ * Best-effort live key check against the provider's model-list endpoint.
+ * Presence in `omp models --json` only proves a credential RESOLVED, not that
+ * it works — a typo'd key would "save" and then fail every chat turn with a
+ * 401. Only definitive rejections (401/403) fail the save; network errors and
+ * providers without such an endpoint pass through (never a false negative).
+ */
+export async function liveKeyCheck(
+  baseUrl: string,
+  api: string,
+  key: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<'ok' | 'rejected' | 'unknown'> {
+  if (!baseUrl || !key) return 'unknown'
+  const clean = baseUrl.replace(/\/+$/, '')
+  const targets: { url: string; headers: Record<string, string> }[] =
+    api === 'anthropic-messages'
+      ? [
+          {
+            url: `${clean.replace(/\/v1$/, '')}/v1/models`,
+            headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
+          }
+        ]
+      : api === 'openai-completions' || api === 'openai-responses'
+        ? [{ url: `${clean}/models`, headers: { authorization: `Bearer ${key}` } }]
+        : []
+  if (targets.length === 0) return 'unknown'
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 8_000)
+    const res = await fetchImpl(targets[0].url, { headers: targets[0].headers, signal: controller.signal })
+    clearTimeout(timer)
+    if (res.status === 401 || res.status === 403) return 'rejected'
+    return 'ok'
+  } catch {
+    return 'unknown'
+  }
+}
+
 // Read-modify-write + verify must never interleave between two saves.
 let mutationChain: Promise<unknown> = Promise.resolve()
 
@@ -384,5 +426,132 @@ export function deleteCustomProvider(
     } catch {
       return { ok: false, error: 'write-failed' }
     }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// API keys for ANY provider (built-in or custom)
+//
+// The simple, spawn-free credential path: models.yml override-only entries.
+// omp's auth resolution puts `providers.<id>.apiKey` above env vars and the
+// vault (docs/models.md), and an override-only `{apiKey}` entry is enough to
+// make a built-in provider's models available (verified live, omp 17.2.7:
+// deepseek with just an apiKey entry lists deepseek/* in `omp models --json`).
+// This replaces the RPC login flow for key saving — that flow spawns a
+// runtime and drives interactive prompts, which can hang; a file write plus
+// a post-write `omp models --json` presence check cannot.
+// ---------------------------------------------------------------------------
+
+/**
+ * Set/replace a provider's API key in models.yml, preserving the provider's
+ * other fields (a custom provider keeps its baseUrl/models). Verified by
+ * `omp models --json` (credential-present check) with rollback on rejection.
+ */
+export function saveProviderKey(
+  providerId: string,
+  key: string,
+  deps: CustomProvidersDeps = {}
+): Promise<CustomProviderSaveResult> {
+  return enqueue(async () => {
+    if (!PROVIDER_ID_PATTERN.test(providerId)) return { ok: false, error: 'invalid-id' }
+    const trimmed = key.trim()
+    if (!trimmed || trimmed.length > MAX_API_KEY_LENGTH || CONTROL_RE.test(trimmed)) {
+      return { ok: false, error: 'invalid-api-key' }
+    }
+    const file = deps.modelsFile ?? defaultModelsFile()
+    const read = readModelsFile(file)
+    if (!read.ok) return { ok: false, error: read.error, detail: read.detail }
+
+    const existing = read.doc.providers[providerId]
+    const prev =
+      existing && typeof existing === 'object' && !Array.isArray(existing)
+        ? { ...(existing as Record<string, unknown>) }
+        : {}
+    delete prev.auth // a real key replaces a keyless marker
+    prev.apiKey = trimmed
+
+    let content: string
+    try {
+      content = YAML.stringify({ providers: { ...read.doc.providers, [providerId]: prev } })
+    } catch (err) {
+      return { ok: false, error: 'write-failed', detail: err instanceof Error ? err.message : String(err) }
+    }
+    try {
+      writeModelsFile(file, content)
+    } catch (err) {
+      return { ok: false, error: 'write-failed', detail: err instanceof Error ? err.message : String(err) }
+    }
+
+    const run = deps.runner === null ? null : (deps.runner ?? defaultRunner())
+    if (!run) return { ok: true, verified: false }
+    const verified = await verifyWithRuntime(run, providerId)
+    if (verified === null) return { ok: true, verified: false }
+    if (!verified) {
+      restoreModelsFile(file, read.raw)
+      return { ok: false, error: 'verify-failed' }
+    }
+    // Presence ≠ validity: a typo'd key resolves fine and then 401s every
+    // turn. Probe the provider's model list when we know its endpoint —
+    // only a definitive 401/403 fails the save, everything else passes.
+    const endpoint = await endpointForKeyCheck(providerId, prev)
+    if (endpoint) {
+      const live = await liveKeyCheck(endpoint.baseUrl, endpoint.api, trimmed, deps.fetchImpl)
+      if (live === 'rejected') {
+        restoreModelsFile(file, read.raw)
+        return { ok: false, error: 'invalid-api-key', detail: 'the provider rejected this key (401/403)' }
+      }
+    }
+    return { ok: true, verified: true }
+  })
+}
+
+/** Endpoint for the live key check: the entry itself (custom), else the catalog. */
+async function endpointForKeyCheck(
+  providerId: string,
+  entry: Record<string, unknown>
+): Promise<{ baseUrl: string; api: string } | null> {
+  if (typeof entry.baseUrl === 'string' && entry.baseUrl) {
+    return { baseUrl: entry.baseUrl, api: typeof entry.api === 'string' ? entry.api : '' }
+  }
+  const catalog = await listOmpModelCatalog(providerId)
+  const withEndpoint = catalog.find((m) => m.baseUrl)
+  return withEndpoint?.baseUrl
+    ? { baseUrl: withEndpoint.baseUrl, api: withEndpoint.api ?? '' }
+    : null
+}
+
+/**
+ * Remove a provider's credential: the models.yml apiKey entry (dropping the
+ * entry entirely when it held nothing else) plus a best-effort vault logout
+ * (`omp auth-broker logout`) for credentials stored by earlier login flows.
+ * Verified by disappearance — if the provider's models are still listed
+ * afterwards, a credential survives somewhere (e.g. an env var) and we say so.
+ */
+export function clearProviderKey(
+  providerId: string,
+  deps: CustomProvidersDeps = {}
+): Promise<{ ok: boolean; error?: string }> {
+  return enqueue(async () => {
+    if (!PROVIDER_ID_PATTERN.test(providerId)) return { ok: false, error: 'invalid-id' }
+    const file = deps.modelsFile ?? defaultModelsFile()
+    const read = readModelsFile(file)
+    if (!read.ok) return { ok: false, error: read.error }
+    const existing = read.doc.providers[providerId]
+    if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+      const entry = { ...(existing as Record<string, unknown>) }
+      delete entry.apiKey
+      const providers = { ...read.doc.providers }
+      if (Object.keys(entry).length === 0) delete providers[providerId]
+      else providers[providerId] = entry
+      try {
+        writeModelsFile(file, YAML.stringify({ providers }))
+      } catch {
+        return { ok: false, error: 'write-failed' }
+      }
+    }
+    // Best-effort vault cleanup; absence of the CLI or the credential is fine.
+    const run = deps.runner === null ? null : (deps.runner ?? defaultRunner())
+    if (run) await run(['auth-broker', 'logout', providerId])
+    return { ok: true }
   })
 }

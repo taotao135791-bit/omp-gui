@@ -35,6 +35,8 @@ interface CatalogEntry {
   name?: unknown
   provider?: unknown
   reasoning?: unknown
+  baseUrl?: unknown
+  api?: unknown
   thinking?: { efforts?: unknown }
 }
 
@@ -141,7 +143,9 @@ function parseCatalogFile(file: string): RuntimeModelInfo[] | null {
         reasoning: e.reasoning === true,
         thinking: Array.isArray(efforts)
           ? (efforts as unknown[]).filter((t): t is string => typeof t === 'string')
-          : []
+          : [],
+        baseUrl: typeof e.baseUrl === 'string' ? e.baseUrl : undefined,
+        api: typeof e.api === 'string' ? e.api : undefined
       })
     }
   }

@@ -97,10 +97,12 @@ import { PROVIDER_ID_PATTERN } from './omp/settings/modelSelector'
 import { OmpLoginFlow } from './omp/settings/OmpLoginFlow'
 import { listOmpModelCatalog, refreshModelCatalog } from './omp/settings/OmpModelCatalog'
 import {
+  clearProviderKey,
   deleteCustomProvider,
   listCustomProviders,
   sanitizeCustomProviderSpec,
-  saveCustomProvider
+  saveCustomProvider,
+  saveProviderKey
 } from './customProviders'
 import { sanitizeImages } from './imageValidation'
 import { RecentWorkspaceRegistry, WorkspaceGrantManager } from './workspaceGrant'
@@ -720,25 +722,14 @@ export function registerIpc() {
       if (typeof key !== 'string' || !key.trim()) {
         return { ok: false, error: 'invalid api key' }
       }
-      if (loginFlow?.active) {
-        return { ok: false, error: 'a login flow is already running' }
-      }
-      const cli = detectCli()
-      const flow = new OmpLoginFlow({
-        cli,
-        onState: broadcastLoginState,
-        onOpenUrl: () => {}
-      })
-      loginFlow = flow
-      try {
-        const state = await flow.setApiKey(providerId, key.trim())
-        runtimeSettings.invalidate()
-        return state.status === 'connected'
-          ? { ok: true }
-          : { ok: false, error: 'message' in state ? state.message : 'failed' }
-      } finally {
-        if (loginFlow === flow) loginFlow = null
-      }
+      // models.yml override — the spawn-free credential path. The RPC login
+      // flow stays available for interactive login (AUTH_START_LOGIN) but is
+      // not used here: it can hang on prompt drift and leave the UI stuck.
+      const result = await saveProviderKey(providerId, key)
+      if (result.ok) runtimeSettings.invalidate()
+      return result.ok
+        ? { ok: true }
+        : { ok: false, error: 'detail' in result ? (result.detail ?? result.error) : result.error }
     }
   )
 
@@ -762,7 +753,10 @@ export function registerIpc() {
     if (typeof providerId !== 'string' || !PROVIDER_ID_PATTERN.test(providerId)) {
       return { ok: false, error: 'invalid provider id' }
     }
-    return runtimeSettings.logout(providerId)
+    // Clears both the models.yml override and any vault credential.
+    const result = await clearProviderKey(providerId)
+    if (result.ok) runtimeSettings.invalidate()
+    return result
   })
 
   ipcMain.handle(IPC_CHANNELS.APP_VERSION, async () => {

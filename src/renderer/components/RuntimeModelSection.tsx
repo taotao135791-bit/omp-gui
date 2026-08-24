@@ -166,14 +166,20 @@ export default function RuntimeModelSection() {
     if (!provider || !keyInput.trim() || keyBusy) return
     setKeyBusy(true)
     setError(null)
-    const res = await setRuntimeApiKey(provider, keyInput.trim())
-    setKeyBusy(false)
-    if (res.ok) {
-      setKeyInput('')
-      flashSaved()
-      await loadRuntimeModels()
-    } else {
-      setError(res.error ?? 'failed')
+    try {
+      const res = await setRuntimeApiKey(provider, keyInput.trim())
+      if (res.ok) {
+        setKeyInput('')
+        flashSaved()
+        await loadRuntimeModels()
+      } else {
+        setError(res.error ?? 'failed')
+      }
+    } catch (err) {
+      // A thrown IPC call must never leave the button spinning forever.
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setKeyBusy(false)
     }
   }
 
@@ -181,10 +187,15 @@ export default function RuntimeModelSection() {
     if (!providerId || keyBusy) return
     setKeyBusy(true)
     setError(null)
-    const res = await logoutProvider(providerId)
-    setKeyBusy(false)
-    if (!res.ok) setError(res.error ?? 'failed')
-    else flashSaved()
+    try {
+      const res = await logoutProvider(providerId)
+      if (!res.ok) setError(res.error ?? 'failed')
+      else flashSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setKeyBusy(false)
+    }
   }
 
   const selectCls =
