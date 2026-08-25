@@ -106,6 +106,157 @@ export function createWidget(
 }
 
 // ---------------------------------------------------------------------------
+// Board composition — the "describe your board" dialog: deterministic,
+// local-only keyword matching onto a handful of presets (no AI, no network).
+// Display text (board names, widget titles, labels, todo items) comes from
+// the caller's translator at creation time and is stored as plain strings.
+// ---------------------------------------------------------------------------
+
+/** Translator shape the presets need; the renderer passes its i18n `t`. */
+export type BoardText = (key: string) => string
+
+export type BoardPresetId = 'ads' | 'finance' | 'daily' | 'blank'
+
+export interface ComposedBoard {
+  name: string
+  widgets: BoardWidget[]
+}
+
+// ASCII keywords match on word boundaries so "tt" doesn't fire inside
+// "button"; CJK keywords match as plain substrings.
+const ADS_KEYWORDS = [
+  '广告',
+  '投放',
+  '谷歌',
+  '消耗',
+  'google',
+  'fb',
+  'facebook',
+  'meta',
+  'tiktok',
+  'tt',
+  'roas'
+]
+const FINANCE_KEYWORDS = ['财经', '股票', 'clock', 'stock']
+
+function matchesKeyword(text: string, keyword: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x20-\x7e]+$/.test(keyword)) return new RegExp(`\\b${keyword}\\b`).test(text)
+  return text.includes(keyword)
+}
+
+/** Pick a preset from a free-form description; anything unknown falls back to daily. */
+export function detectPreset(description: string): BoardPresetId {
+  const text = description.toLowerCase()
+  if (ADS_KEYWORDS.some((k) => matchesKeyword(text, k))) return 'ads'
+  if (FINANCE_KEYWORDS.some((k) => matchesKeyword(text, k))) return 'finance'
+  return 'daily'
+}
+
+function presetWidget(
+  type: WidgetType,
+  title: string,
+  layout: BoardWidgetLayout,
+  config: Record<string, unknown>
+): BoardWidget {
+  return { id: crypto.randomUUID(), type, title, layout, config }
+}
+
+/**
+ * Overseas ad-ops board: a row of zeroed KPI counters, daily-spend trend and
+ * per-channel comparison charts, then budget pacing, an optimization
+ * checklist and a notes pad. All values are placeholders the user edits.
+ */
+export function overseasAdsPreset(t: BoardText): BoardWidget[] {
+  const kpi = (titleKey: string, x: number): BoardWidget =>
+    presetWidget('counter', t(titleKey), { x, y: 0, w: 3, h: 3 }, { value: 0 })
+  return [
+    kpi('boards.preset.ads.kpiSpend', 0),
+    kpi('boards.preset.ads.kpiImpressions', 3),
+    kpi('boards.preset.ads.kpiClicks', 6),
+    kpi('boards.preset.ads.kpiConversions', 9),
+    presetWidget(
+      'chart-line',
+      t('boards.preset.ads.trend'),
+      { x: 0, y: 3, w: 6, h: 6 },
+      { points: [320, 410, 380, 460, 520, 490, 560], labels: [] }
+    ),
+    presetWidget(
+      'chart-bar',
+      t('boards.preset.ads.channels'),
+      { x: 6, y: 3, w: 6, h: 6 },
+      { points: [1240, 980, 640], labels: ['Google', 'Meta', 'TikTok'] }
+    ),
+    presetWidget(
+      'gauge',
+      t('boards.preset.ads.budget'),
+      { x: 0, y: 9, w: 4, h: 5 },
+      { value: 0, label: t('boards.preset.ads.budgetLabel') }
+    ),
+    presetWidget(
+      'todo',
+      t('boards.preset.ads.todo'),
+      { x: 4, y: 9, w: 4, h: 6 },
+      {
+        items: [
+          'boards.preset.ads.todoSearchTerms',
+          'boards.preset.ads.todoCreatives',
+          'boards.preset.ads.todoBudget',
+          'boards.preset.ads.todoTracking'
+        ].map((key) => ({ id: crypto.randomUUID(), text: t(key), done: false }))
+      }
+    ),
+    presetWidget('note', t('boards.preset.ads.note'), { x: 8, y: 9, w: 4, h: 5 }, { text: '' })
+  ]
+}
+
+/** Market-watch board: clock, a "latest price" KPI and a price-trend chart. */
+export function financePreset(t: BoardText): BoardWidget[] {
+  return [
+    presetWidget('clock', t('boards.widget.clock'), { x: 0, y: 0, w: 3, h: 3 }, { showSeconds: true }),
+    presetWidget('counter', t('boards.preset.finance.kpi'), { x: 3, y: 0, w: 3, h: 3 }, { value: 0 }),
+    presetWidget(
+      'chart-line',
+      t('boards.preset.finance.trend'),
+      { x: 6, y: 0, w: 6, h: 5 },
+      { points: [12.4, 12.1, 12.6, 12.3, 12.9, 13.2, 13.0], labels: [] }
+    )
+  ]
+}
+
+/** Everyday board: clock, a blank note and an empty todo list. */
+export function dailyPreset(t: BoardText): BoardWidget[] {
+  return [
+    presetWidget('clock', t('boards.widget.clock'), { x: 0, y: 0, w: 3, h: 3 }, { showSeconds: true }),
+    presetWidget('note', t('boards.widget.note'), { x: 3, y: 0, w: 3, h: 3 }, { text: '' }),
+    presetWidget('todo', t('boards.widget.todo'), { x: 6, y: 0, w: 4, h: 5 }, { items: [] })
+  ]
+}
+
+/**
+ * Deterministically compose a new board from a free-form description. A
+ * chip-selected `preset` skips keyword detection entirely. The caller turns
+ * the result into a real board via `createBoard` and switches to it.
+ */
+export function composeBoard(
+  description: string,
+  t: BoardText,
+  preset?: BoardPresetId
+): ComposedBoard {
+  const id = preset ?? detectPreset(description)
+  switch (id) {
+    case 'ads':
+      return { name: t('boards.preset.ads'), widgets: overseasAdsPreset(t) }
+    case 'finance':
+      return { name: t('boards.preset.finance'), widgets: financePreset(t) }
+    case 'blank':
+      return { name: t('boards.preset.blank'), widgets: [] }
+    default:
+      return { name: t('boards.preset.daily'), widgets: dailyPreset(t) }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Layout helpers — pure geometry on the 12-column grid.
 // ---------------------------------------------------------------------------
 

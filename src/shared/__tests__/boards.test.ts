@@ -5,11 +5,14 @@ import {
   WIDGET_DEFAULT_SIZES,
   WIDGET_TYPES,
   compactWidgets,
+  composeBoard,
   createBoard,
   createWidget,
   defaultWidgetConfig,
+  detectPreset,
   findFreeSlot,
   migrateBoard,
+  overseasAdsPreset,
   reflowWidgets,
   validateBoard
 } from '../boards'
@@ -234,6 +237,157 @@ describe('factories', () => {
       expect(validateBoard(board)).not.toBeNull()
       expect(validateBoard(board)?.widgets[0].type).toBe(type)
     }
+  })
+})
+
+describe('composeBoard + presets', () => {
+  // Identity translator: display text is asserted as the i18n keys themselves.
+  const t = (key: string) => key
+
+  it('matches every ads keyword variant, case-insensitively', () => {
+    const variants = [
+      '广告',
+      '投放',
+      '谷歌',
+      '消耗',
+      'google trends',
+      'Google',
+      'fb account',
+      'FB',
+      'facebook',
+      'FACEBOOK pixel',
+      'meta',
+      'META campaigns',
+      'tiktok',
+      'TikTok Shop',
+      'tt ads',
+      'TT',
+      'roas',
+      'ROAS 目标'
+    ]
+    for (const text of variants) {
+      expect(detectPreset(text), text).toBe('ads')
+      expect(composeBoard(text, t).name).toBe('boards.preset.ads')
+    }
+  })
+
+  it('does not match short tokens inside other words', () => {
+    expect(detectPreset('a little button collection')).toBe('daily')
+    expect(detectPreset('my fbbbbb board')).toBe('daily')
+  })
+
+  it('matches finance keywords', () => {
+    for (const text of ['财经', '股票', 'stock market', 'Stock', 'clock', 'a CLOCK widget']) {
+      expect(detectPreset(text), text).toBe('finance')
+      expect(composeBoard(text, t).name).toBe('boards.preset.finance')
+    }
+  })
+
+  it('falls back to the daily preset for unknown or empty descriptions', () => {
+    expect(composeBoard('一个记录生活的看板', t).name).toBe('boards.preset.daily')
+    expect(composeBoard('', t).name).toBe('boards.preset.daily')
+    expect(composeBoard('   ', t).name).toBe('boards.preset.daily')
+  })
+
+  it('lets a chip-selected preset bypass keyword detection', () => {
+    expect(composeBoard('股票行情', t, 'ads').name).toBe('boards.preset.ads')
+    expect(composeBoard('广告投放', t, 'finance').name).toBe('boards.preset.finance')
+    expect(composeBoard('google ads', t, 'daily').name).toBe('boards.preset.daily')
+    const blank = composeBoard('广告', t, 'blank')
+    expect(blank.name).toBe('boards.preset.blank')
+    expect(blank.widgets).toEqual([])
+  })
+
+  it('composes boards that survive validateBoard intact', () => {
+    for (const description of ['广告投放', '股票', 'anything else', '']) {
+      const composed = composeBoard(description, t)
+      const board = { ...createBoard(composed.name, 1), widgets: composed.widgets }
+      const validated = validateBoard(board)
+      expect(validated).not.toBeNull()
+      expect(validated?.widgets).toHaveLength(composed.widgets.length)
+    }
+  })
+})
+
+describe('overseasAdsPreset', () => {
+  const t = (key: string) => key
+
+  it('builds nine widgets of the expected types and passes validation', () => {
+    const widgets = overseasAdsPreset(t)
+    expect(widgets.map((w) => w.type)).toEqual([
+      'counter',
+      'counter',
+      'counter',
+      'counter',
+      'chart-line',
+      'chart-bar',
+      'gauge',
+      'todo',
+      'note'
+    ])
+    const board = { ...createBoard('Ads', 1), widgets }
+    expect(validateBoard(board)?.widgets).toHaveLength(9)
+  })
+
+  it('lays out four zeroed KPI counters across the top row', () => {
+    const counters = overseasAdsPreset(t).filter((w) => w.type === 'counter')
+    expect(counters).toHaveLength(4)
+    expect(counters.map((w) => w.layout)).toEqual([
+      { x: 0, y: 0, w: 3, h: 3 },
+      { x: 3, y: 0, w: 3, h: 3 },
+      { x: 6, y: 0, w: 3, h: 3 },
+      { x: 9, y: 0, w: 3, h: 3 }
+    ])
+    for (const counter of counters) {
+      expect(counter.config).toEqual({ value: 0 })
+    }
+    expect(counters.map((w) => w.title)).toEqual([
+      'boards.preset.ads.kpiSpend',
+      'boards.preset.ads.kpiImpressions',
+      'boards.preset.ads.kpiClicks',
+      'boards.preset.ads.kpiConversions'
+    ])
+  })
+
+  it('seeds the line chart with seven placeholder points', () => {
+    const line = overseasAdsPreset(t).find((w) => w.type === 'chart-line')
+    expect(line?.title).toBe('boards.preset.ads.trend')
+    expect(line?.config.points).toHaveLength(7)
+    expect(line?.layout).toEqual({ x: 0, y: 3, w: 6, h: 6 })
+  })
+
+  it('compares the three ad channels in the bar chart', () => {
+    const bar = overseasAdsPreset(t).find((w) => w.type === 'chart-bar')
+    expect(bar?.title).toBe('boards.preset.ads.channels')
+    expect(bar?.config.labels).toEqual(['Google', 'Meta', 'TikTok'])
+    expect(bar?.config.points).toHaveLength(3)
+    expect(bar?.layout).toEqual({ x: 6, y: 3, w: 6, h: 6 })
+  })
+
+  it('zeroes the budget gauge with an i18n label', () => {
+    const gauge = overseasAdsPreset(t).find((w) => w.type === 'gauge')
+    expect(gauge?.title).toBe('boards.preset.ads.budget')
+    expect(gauge?.config).toEqual({ value: 0, label: 'boards.preset.ads.budgetLabel' })
+    expect(gauge?.layout).toEqual({ x: 0, y: 9, w: 4, h: 5 })
+  })
+
+  it('seeds the optimization checklist and an empty note', () => {
+    const widgets = overseasAdsPreset(t)
+    const todo = widgets.find((w) => w.type === 'todo')
+    expect(todo?.title).toBe('boards.preset.ads.todo')
+    expect(todo?.layout).toEqual({ x: 4, y: 9, w: 4, h: 6 })
+    const items = todo?.config.items as { id: string; text: string; done: boolean }[]
+    expect(items.map((i) => i.text)).toEqual([
+      'boards.preset.ads.todoSearchTerms',
+      'boards.preset.ads.todoCreatives',
+      'boards.preset.ads.todoBudget',
+      'boards.preset.ads.todoTracking'
+    ])
+    expect(items.every((i) => i.done === false && i.id.length > 0)).toBe(true)
+    const note = widgets.find((w) => w.type === 'note')
+    expect(note?.title).toBe('boards.preset.ads.note')
+    expect(note?.config).toEqual({ text: '' })
+    expect(note?.layout).toEqual({ x: 8, y: 9, w: 4, h: 5 })
   })
 })
 

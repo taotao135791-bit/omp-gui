@@ -17,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   Settings2,
+  Sparkles,
   SquareKanban,
   StickyNote,
   Trash2,
@@ -29,10 +30,12 @@ import {
   GRID_COLS,
   WIDGET_DEFAULT_SIZES,
   compactWidgets,
+  composeBoard,
   createBoard,
   createWidget,
   findFreeSlot,
-  reflowWidgets
+  reflowWidgets,
+  type BoardPresetId
 } from '@shared/boards'
 import { useT, I18nKey } from '../i18n'
 import { WidgetBody } from './boards/WidgetBody'
@@ -43,9 +46,9 @@ import 'react-resizable/css/styles.css'
 /**
  * Widget-grid boards page. Local-first: every committed mutation is
  * persisted immediately as a whole-board upsert (boards are small; drag and
- * resize hover never save — only dragStop/resizeStop do). The bottom capsule
- * toolbar mirrors the reference recording: edit toggle, add widget, tidy,
- * refresh, fullscreen, more.
+ * resize hover never save — only dragStop/resizeStop do). Widgets are always
+ * draggable/resizable. The bottom capsule toolbar mirrors the reference
+ * recording: describe-a-board, add widget, tidy, refresh, fullscreen, more.
  */
 
 const Grid = WidthProvider(GridLayout)
@@ -96,9 +99,10 @@ export default function BoardsPage() {
   const t = useT()
   const [boards, setBoards] = useState<KanbanBoard[] | null>(null)
   const [currentId, setCurrentId] = useState<string | null>(null)
-  const [editing, setEditing] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newBoardName, setNewBoardName] = useState('')
+  const [composeOpen, setComposeOpen] = useState(false)
+  const [composeText, setComposeText] = useState('')
   const [boardMenuOpen, setBoardMenuOpen] = useState(false)
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
   const [galleryOpen, setGalleryOpen] = useState(false)
@@ -184,7 +188,6 @@ export default function BoardsPage() {
 
   const switchBoard = (id: string) => {
     closeMenus()
-    setEditing(false)
     setConfigWidgetId(null)
     setCurrentId(id)
   }
@@ -197,6 +200,17 @@ export default function BoardsPage() {
     setNewBoardName('')
     if (!name) return
     const board = createBoard(name)
+    setBoards((prev) => [...(prev ?? []), board])
+    setCurrentId(board.id)
+    persist(board)
+  }
+
+  /** Describe-a-board submit: deterministic local preset, added as a new board. */
+  const handleCompose = (preset?: BoardPresetId) => {
+    const composed = composeBoard(composeText.trim(), (key) => t(key as I18nKey), preset)
+    const board = { ...createBoard(composed.name), widgets: composed.widgets }
+    setComposeOpen(false)
+    setComposeText('')
     setBoards((prev) => [...(prev ?? []), board])
     setCurrentId(board.id)
     persist(board)
@@ -358,9 +372,7 @@ export default function BoardsPage() {
   const renderWidget = (widget: BoardWidget) => (
     <div
       key={widget.id}
-      className={`group/widget relative flex flex-col overflow-hidden rounded-[16px] border bg-ink-850 shadow-card ${
-        editing ? 'border-ink-600' : 'border-line'
-      }`}
+      className="group/widget relative flex flex-col overflow-hidden rounded-[16px] border border-line bg-ink-850 shadow-card"
     >
       <div className="flex shrink-0 items-center gap-1 px-3 pb-0.5 pt-2">
         <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.1em] text-cream-faint">
@@ -513,14 +525,14 @@ export default function BoardsPage() {
           ) : (
             <div className="px-4 pb-24 pt-4">
               <Grid
-                className={`layout ${editing ? '[&_.react-grid-item]:cursor-move' : ''}`}
+                className="layout"
                 layout={gridLayout}
                 cols={GRID_COLS}
                 rowHeight={48}
                 margin={[12, 12]}
                 compactType="vertical"
-                isDraggable={editing}
-                isResizable={editing}
+                isDraggable
+                isResizable
                 draggableCancel="input, textarea, select, a, button, .widget-config"
                 onDragStop={handleLayoutStop}
                 onResizeStop={handleLayoutStop}
@@ -600,11 +612,13 @@ export default function BoardsPage() {
             )}
             <div className="flex items-center gap-0.5 rounded-full border border-line bg-ink-900/95 p-1 shadow-pop backdrop-blur">
               <ToolButton
-                title={editing ? t('boards.exitEdit') : t('boards.edit')}
-                active={editing}
-                onClick={() => setEditing(!editing)}
+                title={t('boards.compose.open')}
+                onClick={() => {
+                  closeMenus()
+                  setComposeOpen(true)
+                }}
               >
-                <Pencil size={14} />
+                <Sparkles size={14} />
               </ToolButton>
               <ToolButton
                 title={t('boards.addWidget')}
@@ -704,6 +718,70 @@ export default function BoardsPage() {
               >
                 <Check size={11} />
                 {t('boards.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {composeOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setComposeOpen(false)}
+        >
+          <div
+            className="fade-in w-full max-w-[400px] rounded-2xl border border-line bg-ink-900 p-5 shadow-pop"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[14px] font-semibold text-cream">{t('boards.compose.title')}</span>
+              <button
+                onClick={() => setComposeOpen(false)}
+                title={t('boards.cancel')}
+                className="rounded-md p-1 text-cream-faint transition hover:bg-overlay hover:text-cream"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <textarea
+              autoFocus
+              value={composeText}
+              onChange={(e) => setComposeText(e.target.value)}
+              rows={4}
+              maxLength={BOARD_LIMITS.maxDescriptionLength}
+              placeholder={t('boards.compose.placeholder')}
+              className="mt-4 w-full resize-none rounded-lg border border-line bg-ink-850 px-2.5 py-1.5 text-[12px] leading-5 text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/50"
+            />
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {(
+                [
+                  { preset: 'ads', label: t('boards.preset.ads') },
+                  { preset: 'daily', label: t('boards.preset.daily') },
+                  { preset: 'blank', label: t('boards.compose.chipBlank') }
+                ] as { preset: BoardPresetId; label: string }[]
+              ).map((chip) => (
+                <button
+                  key={chip.preset}
+                  onClick={() => handleCompose(chip.preset)}
+                  className="rounded-full border border-line px-3 py-1 text-[12px] text-cream-dim transition hover:border-accent/50 hover:text-cream"
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setComposeOpen(false)}
+                className="rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition hover:border-ink-600 hover:text-cream"
+              >
+                {t('boards.cancel')}
+              </button>
+              <button
+                onClick={() => handleCompose()}
+                className="flex items-center gap-1 rounded-full bg-cream px-3 py-1.5 text-[12px] font-medium text-ink-950 transition hover:opacity-90"
+              >
+                <Sparkles size={11} />
+                {t('boards.compose.generate')}
               </button>
             </div>
           </div>
