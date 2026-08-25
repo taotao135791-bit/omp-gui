@@ -794,35 +794,43 @@ export type PluginScaffoldResult =
   | { ok: false; error: PluginScaffoldError; detail?: string }
 
 // ---------------------------------------------------------------------------
-// Kanban boards (local-only, persisted under userData/kanban-boards.json)
+// Kanban boards v2 — local-only widget-grid dashboards, persisted under
+// userData/kanban-boards.json (v1 column/card files are migrated on read,
+// see migrateBoard in shared/boards.ts).
 // ---------------------------------------------------------------------------
 
-export interface KanbanCard {
-  id: string
-  title: string
-  note?: string
-  createdAt: number
+export type WidgetType =
+  | 'clock'
+  | 'note'
+  | 'counter'
+  | 'gauge'
+  | 'chart-line'
+  | 'chart-bar'
+  | 'todo'
+  | 'link'
+
+export interface BoardWidgetLayout {
+  /** Grid units on a 12-column grid: x 0-11, w 1-12 (x + w ≤ 12), h 1-20, y ≥ 0. */
+  x: number
+  y: number
+  w: number
+  h: number
 }
 
-export interface KanbanColumn {
+export interface BoardWidget {
   id: string
-  /**
-   * Template-provided columns store an i18n key (`boards.col.*`) that the
-   * renderer translates at display time; user-renamed/added columns store
-   * raw text. Card content is always raw user data, never translated.
-   */
+  type: WidgetType
   title: string
-  cards: KanbanCard[]
+  layout: BoardWidgetLayout
+  /** Type-specific settings, whitelisted per widget type (see shared/boards). */
+  config: Record<string, unknown>
 }
-
-export type KanbanTemplateId = 'task' | 'bug' | 'release' | 'blank'
 
 export interface KanbanBoard {
   id: string
   name: string
-  /** Template the board was created from (informational, free-form string). */
-  template: string
-  columns: KanbanColumn[]
+  description?: string
+  widgets: BoardWidget[]
   createdAt: number
   updatedAt: number
 }

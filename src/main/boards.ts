@@ -2,14 +2,16 @@ import { app } from 'electron'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { KanbanBoard } from '../shared/types'
-import { BOARD_LIMITS, KanbanSaveResult, validateBoard } from '../shared/boards'
+import { BOARD_LIMITS, KanbanSaveResult, migrateBoard, validateBoard } from '../shared/boards'
 
 /**
- * Kanban board persistence — a single JSON document at
+ * Widget board persistence — a single JSON document at
  * userData/kanban-boards.json, written atomically (tmp + rename, same as
  * writePiSettings). Deliberately NOT the generic store:set IPC: board data
  * crosses the trust boundary as `unknown` and is re-validated on every read
- * and write here (validateBoard); corrupt files fall back to an empty list.
+ * and write here; corrupt files fall back to an empty list. Reads also run
+ * v1 kanban entries (columns/cards) through migrateBoard, so old files show
+ * up as v2 widget boards and are written back as v2 on the next save.
  */
 
 function defaultBoardsFile(): string {
@@ -22,7 +24,7 @@ function readBoards(file: string): KanbanBoard[] {
     if (!Array.isArray(raw)) return []
     const boards: KanbanBoard[] = []
     for (const entry of raw) {
-      const board = validateBoard(entry)
+      const board = migrateBoard(entry)
       if (board) boards.push(board)
     }
     return boards

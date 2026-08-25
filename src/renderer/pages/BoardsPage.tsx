@@ -1,47 +1,121 @@
-import { useEffect, useRef, useState } from 'react'
-import { SquareKanban, Plus, Trash2, MoreHorizontal, Check } from 'lucide-react'
-import { KanbanBoard, KanbanCard, KanbanColumn, KanbanTemplateId } from '@shared/types'
-import { BOARD_TEMPLATES, boardCardCount, createBoardFromTemplate } from '@shared/boards'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import GridLayout, { Layout, WidthProvider } from 'react-grid-layout'
+import {
+  ChartBar,
+  ChartLine,
+  Check,
+  Clock,
+  Gauge,
+  Hash,
+  LayoutGrid,
+  Link2,
+  ListTodo,
+  Maximize,
+  Minimize,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Settings2,
+  SquareKanban,
+  StickyNote,
+  Trash2,
+  X,
+  type LucideIcon
+} from 'lucide-react'
+import { BoardWidget, KanbanBoard, WidgetType } from '@shared/types'
+import {
+  BOARD_LIMITS,
+  GRID_COLS,
+  WIDGET_DEFAULT_SIZES,
+  compactWidgets,
+  createBoard,
+  createWidget,
+  findFreeSlot,
+  reflowWidgets
+} from '@shared/boards'
 import { useT, I18nKey } from '../i18n'
+import { WidgetBody } from './boards/WidgetBody'
+import { WidgetConfigPanel } from './boards/WidgetConfigPanel'
+import 'react-grid-layout/css/styles.css'
+import 'react-resizable/css/styles.css'
 
 /**
- * Kanban boards page. Local-first: every committed mutation is persisted
- * immediately as a whole-board upsert (boards are small; drag-hover never
- * saves — only the drop does).
+ * Widget-grid boards page. Local-first: every committed mutation is
+ * persisted immediately as a whole-board upsert (boards are small; drag and
+ * resize hover never save — only dragStop/resizeStop do). The bottom capsule
+ * toolbar mirrors the reference recording: edit toggle, add widget, tidy,
+ * refresh, fullscreen, more.
  */
 
-const CARD_DRAG_TYPE = 'application/x-omp-kanban-card'
+const Grid = WidthProvider(GridLayout)
 
-function hasCardDrag(e: React.DragEvent): boolean {
-  return e.dataTransfer.types.includes(CARD_DRAG_TYPE)
+const WIDGET_GALLERY: { type: WidgetType; Icon: LucideIcon }[] = [
+  { type: 'clock', Icon: Clock },
+  { type: 'note', Icon: StickyNote },
+  { type: 'counter', Icon: Hash },
+  { type: 'gauge', Icon: Gauge },
+  { type: 'chart-line', Icon: ChartLine },
+  { type: 'chart-bar', Icon: ChartBar },
+  { type: 'todo', Icon: ListTodo },
+  { type: 'link', Icon: Link2 }
+]
+
+/** Types that get their config panel opened right after being added. */
+const CONFIG_ON_ADD: readonly WidgetType[] = ['note', 'counter', 'gauge', 'chart-line', 'chart-bar', 'link']
+
+function widgetNameKey(type: WidgetType): I18nKey {
+  return `boards.widget.${type}` as I18nKey
 }
 
-/** Template columns store an i18n key as their title; user text passes through. */
-function useColumnTitle() {
-  const t = useT()
-  return (title: string) => (title.startsWith('boards.col.') ? t(title as I18nKey) : title)
+function ToolButton({
+  title,
+  active,
+  onClick,
+  children
+}: {
+  title: string
+  active?: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`flex h-8 w-8 items-center justify-center rounded-full transition ${
+        active ? 'bg-cream text-ink-950' : 'text-cream-dim hover:bg-overlay hover:text-cream'
+      }`}
+    >
+      {children}
+    </button>
+  )
 }
 
 export default function BoardsPage() {
   const t = useT()
-  const columnTitle = useColumnTitle()
   const [boards, setBoards] = useState<KanbanBoard[] | null>(null)
   const [currentId, setCurrentId] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [confirmDeleteBoardId, setConfirmDeleteBoardId] = useState<string | null>(null)
-  const [menuColId, setMenuColId] = useState<string | null>(null)
-  const [confirmDeleteColId, setConfirmDeleteColId] = useState<string | null>(null)
-  const [renamingColId, setRenamingColId] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
-  const [addingCardColId, setAddingCardColId] = useState<string | null>(null)
-  const [newCardTitle, setNewCardTitle] = useState('')
-  const [editingCardId, setEditingCardId] = useState<string | null>(null)
-  const [editTitle, setEditTitle] = useState('')
-  const [editNote, setEditNote] = useState('')
-  const [overColId, setOverColId] = useState<string | null>(null)
+  const [newBoardName, setNewBoardName] = useState('')
+  const [boardMenuOpen, setBoardMenuOpen] = useState(false)
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false)
+  const [galleryOpen, setGalleryOpen] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [detailName, setDetailName] = useState('')
+  const [detailDesc, setDetailDesc] = useState('')
+  const [configWidgetId, setConfigWidgetId] = useState<string | null>(null)
+  const [confirmDeleteBoard, setConfirmDeleteBoard] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [toast, setToast] = useState<'refreshed' | 'tidied' | null>(null)
+  const [refreshTick, setRefreshTick] = useState(0)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [saveFailed, setSaveFailed] = useState(false)
-  const confirmBoardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const confirmColTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const boardAreaRef = useRef<HTMLDivElement>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const confirmDeleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const confirmClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveFailedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const current = boards?.find((b) => b.id === currentId) ?? null
@@ -59,9 +133,16 @@ export default function BoardsPage() {
   }, [])
 
   useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement !== null)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
+  useEffect(() => {
     return () => {
-      if (confirmBoardTimer.current) clearTimeout(confirmBoardTimer.current)
-      if (confirmColTimer.current) clearTimeout(confirmColTimer.current)
+      if (toastTimer.current) clearTimeout(toastTimer.current)
+      if (confirmDeleteTimer.current) clearTimeout(confirmDeleteTimer.current)
+      if (confirmClearTimer.current) clearTimeout(confirmClearTimer.current)
       if (saveFailedTimer.current) clearTimeout(saveFailedTimer.current)
     }
   }, [])
@@ -70,6 +151,12 @@ export default function BoardsPage() {
     setSaveFailed(true)
     if (saveFailedTimer.current) clearTimeout(saveFailedTimer.current)
     saveFailedTimer.current = setTimeout(() => setSaveFailed(false), 3000)
+  }
+
+  const flashToast = (kind: 'refreshed' | 'tidied') => {
+    setToast(kind)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 2000)
   }
 
   const persist = (board: KanbanBoard) => {
@@ -87,26 +174,63 @@ export default function BoardsPage() {
     persist(next)
   }
 
-  const handleCreate = (templateId: KanbanTemplateId) => {
-    const tpl = BOARD_TEMPLATES.find((x) => x.id === templateId)
-    if (!tpl) return
-    const board = createBoardFromTemplate(templateId, t(tpl.nameKey as I18nKey))
+  const closeMenus = () => {
+    setBoardMenuOpen(false)
+    setToolsMenuOpen(false)
+    setGalleryOpen(false)
+    setConfirmDeleteBoard(false)
+    setConfirmClear(false)
+  }
+
+  const switchBoard = (id: string) => {
+    closeMenus()
+    setEditing(false)
+    setConfigWidgetId(null)
+    setCurrentId(id)
+  }
+
+  // ------------------------------------------------------------------ boards
+
+  const commitCreate = () => {
+    const name = newBoardName.trim()
     setCreating(false)
+    setNewBoardName('')
+    if (!name) return
+    const board = createBoard(name)
     setBoards((prev) => [...(prev ?? []), board])
     setCurrentId(board.id)
     persist(board)
   }
 
-  // Two-stage confirm, same pattern as PackagesPage.handleRemoveClick.
-  const handleDeleteBoard = async (id: string) => {
-    if (confirmDeleteBoardId !== id) {
-      setConfirmDeleteBoardId(id)
-      if (confirmBoardTimer.current) clearTimeout(confirmBoardTimer.current)
-      confirmBoardTimer.current = setTimeout(() => setConfirmDeleteBoardId(null), 3000)
+  const openDetail = () => {
+    if (!current) return
+    setDetailName(current.name)
+    setDetailDesc(current.description ?? '')
+    setBoardMenuOpen(false)
+    setDetailOpen(true)
+  }
+
+  const saveDetail = () => {
+    const name = detailName.trim()
+    if (!name || !current) return
+    const description = detailDesc.trim()
+    mutateBoard(current.id, (b) => ({ ...b, name, description: description || undefined }))
+    setDetailOpen(false)
+  }
+
+  // Two-stage confirm, same pattern as the old page / PackagesPage.
+  const handleDeleteBoard = async () => {
+    if (!current) return
+    if (!confirmDeleteBoard) {
+      setConfirmDeleteBoard(true)
+      if (confirmDeleteTimer.current) clearTimeout(confirmDeleteTimer.current)
+      confirmDeleteTimer.current = setTimeout(() => setConfirmDeleteBoard(false), 3000)
       return
     }
-    setConfirmDeleteBoardId(null)
-    if (confirmBoardTimer.current) clearTimeout(confirmBoardTimer.current)
+    setConfirmDeleteBoard(false)
+    if (confirmDeleteTimer.current) clearTimeout(confirmDeleteTimer.current)
+    setBoardMenuOpen(false)
+    const id = current.id
     const result = await window.electronAPI.deleteBoard(id)
     if (!result.ok) {
       flashSaveFailed()
@@ -114,429 +238,266 @@ export default function BoardsPage() {
     }
     const next = (boards ?? []).filter((b) => b.id !== id)
     setBoards(next)
-    if (currentId === id) setCurrentId(next[0]?.id ?? null)
+    setCurrentId(next[0]?.id ?? null)
   }
 
-  // ------------------------------------------------------------------ cards
+  // ----------------------------------------------------------------- widgets
 
-  const addCard = (colId: string) => {
-    const title = newCardTitle.trim()
-    setNewCardTitle('')
-    setAddingCardColId(null)
-    if (!title || !currentId) return
-    const card: KanbanCard = { id: crypto.randomUUID(), title, createdAt: Date.now() }
-    mutateBoard(currentId, (b) => ({
-      ...b,
-      columns: b.columns.map((c) => (c.id === colId ? { ...c, cards: [...c.cards, card] } : c))
-    }))
+  const addWidget = (type: WidgetType) => {
+    if (!current) return
+    const size = WIDGET_DEFAULT_SIZES[type]
+    const widget = createWidget(type, t(widgetNameKey(type)), findFreeSlot(current.widgets, size.w, size.h))
+    setGalleryOpen(false)
+    mutateBoard(current.id, (b) => ({ ...b, widgets: [...b.widgets, widget] }))
+    if (CONFIG_ON_ADD.includes(type)) setConfigWidgetId(widget.id)
   }
 
-  const deleteCard = (colId: string, cardId: string) => {
+  const removeWidget = (widgetId: string) => {
+    if (!currentId) return
+    setConfigWidgetId((id) => (id === widgetId ? null : id))
+    mutateBoard(currentId, (b) => ({ ...b, widgets: b.widgets.filter((w) => w.id !== widgetId) }))
+  }
+
+  const updateWidgetConfig = (widgetId: string, config: Record<string, unknown>) => {
     if (!currentId) return
     mutateBoard(currentId, (b) => ({
       ...b,
-      columns: b.columns.map((c) =>
-        c.id === colId ? { ...c, cards: c.cards.filter((card) => card.id !== cardId) } : c
-      )
+      widgets: b.widgets.map((w) => (w.id === widgetId ? { ...w, config } : w))
     }))
   }
 
-  const startEditCard = (card: KanbanCard) => {
-    setEditingCardId(card.id)
-    setEditTitle(card.title)
-    setEditNote(card.note ?? '')
-  }
-
-  const commitEditCard = (colId: string, cardId: string) => {
-    const title = editTitle.trim()
-    setEditingCardId(null)
-    if (!title || !currentId) return
-    const note = editNote.trim()
+  const saveWidgetConfig = (
+    widgetId: string,
+    patch: { title: string; config: Record<string, unknown> }
+  ) => {
+    if (!currentId) return
+    setConfigWidgetId(null)
     mutateBoard(currentId, (b) => ({
       ...b,
-      columns: b.columns.map((c) =>
-        c.id === colId
-          ? {
-              ...c,
-              cards: c.cards.map((card) =>
-                card.id === cardId ? { ...card, title, ...(note ? { note } : { note: undefined }) } : card
-              )
-            }
-          : c
+      widgets: b.widgets.map((w) =>
+        w.id === widgetId ? { ...w, title: patch.title, config: patch.config } : w
       )
     }))
   }
 
-  const moveCard = (fromColId: string, toColId: string, cardId: string) => {
-    if (!currentId || fromColId === toColId) return
-    mutateBoard(currentId, (b) => {
-      const from = b.columns.find((c) => c.id === fromColId)
-      const card = from?.cards.find((x) => x.id === cardId)
-      if (!from || !card) return b
-      return {
-        ...b,
-        columns: b.columns.map((c) => {
-          if (c.id === fromColId) return { ...c, cards: c.cards.filter((x) => x.id !== cardId) }
-          if (c.id === toColId) return { ...c, cards: [...c.cards, card] }
-          return c
-        })
+  /** RGL fires this with the full layout on drag/resize stop; persist only real changes. */
+  const handleLayoutStop = (layout: Layout[]) => {
+    if (!current) return
+    const byId = new Map(layout.map((l) => [l.i, l]))
+    let changed = false
+    const widgets = current.widgets.map((w) => {
+      const l = byId.get(w.id)
+      if (!l) return w
+      if (l.x === w.layout.x && l.y === w.layout.y && l.w === w.layout.w && l.h === w.layout.h) {
+        return w
       }
+      changed = true
+      return { ...w, layout: { x: l.x, y: l.y, w: l.w, h: l.h } }
     })
+    if (!changed) return
+    const next = { ...current, widgets, updatedAt: Date.now() }
+    setBoards((prev) => (prev ?? []).map((b) => (b.id === next.id ? next : b)))
+    persist(next)
   }
 
-  // ---------------------------------------------------------------- columns
+  // ----------------------------------------------------------------- toolbar
 
-  const addColumn = (afterColId?: string) => {
-    if (!currentId) return
-    const column: KanbanColumn = { id: crypto.randomUUID(), title: t('boards.newColumn'), cards: [] }
-    mutateBoard(currentId, (b) => {
-      if (!afterColId) return { ...b, columns: [...b.columns, column] }
-      const index = b.columns.findIndex((c) => c.id === afterColId)
-      if (index === -1) return { ...b, columns: [...b.columns, column] }
-      const columns = [...b.columns]
-      columns.splice(index + 1, 0, column)
-      return { ...b, columns }
-    })
+  const handleTidy = () => {
+    if (!current) return
+    mutateBoard(current.id, (b) => ({ ...b, widgets: compactWidgets(b.widgets) }))
+    flashToast('tidied')
   }
 
-  const commitRenameColumn = (colId: string) => {
-    const title = renameValue.trim()
-    setRenamingColId(null)
-    if (!title || !currentId) return
-    mutateBoard(currentId, (b) => ({
-      ...b,
-      columns: b.columns.map((c) => (c.id === colId ? { ...c, title } : c))
-    }))
+  const handleRefresh = () => {
+    setRefreshTick((n) => n + 1)
+    flashToast('refreshed')
   }
 
-  const handleDeleteColumn = (colId: string) => {
-    // A board must keep at least one column — an empty columns array would
-    // be rejected by the main-process validation anyway.
-    const board = boards?.find((b) => b.id === currentId)
-    if (!board || board.columns.length <= 1) return
-    if (confirmDeleteColId !== colId) {
-      setConfirmDeleteColId(colId)
-      if (confirmColTimer.current) clearTimeout(confirmColTimer.current)
-      confirmColTimer.current = setTimeout(() => setConfirmDeleteColId(null), 3000)
+  const handleResetLayout = () => {
+    if (!current) return
+    setToolsMenuOpen(false)
+    mutateBoard(current.id, (b) => ({ ...b, widgets: reflowWidgets(b.widgets) }))
+  }
+
+  const handleClearWidgets = () => {
+    if (!current) return
+    if (!confirmClear) {
+      setConfirmClear(true)
+      if (confirmClearTimer.current) clearTimeout(confirmClearTimer.current)
+      confirmClearTimer.current = setTimeout(() => setConfirmClear(false), 3000)
       return
     }
-    setConfirmDeleteColId(null)
-    setMenuColId(null)
-    if (confirmColTimer.current) clearTimeout(confirmColTimer.current)
-    if (!currentId) return
-    mutateBoard(currentId, (b) => ({
-      ...b,
-      columns: b.columns.filter((c) => c.id !== colId)
-    }))
+    setConfirmClear(false)
+    if (confirmClearTimer.current) clearTimeout(confirmClearTimer.current)
+    setToolsMenuOpen(false)
+    setConfigWidgetId(null)
+    mutateBoard(current.id, (b) => ({ ...b, widgets: [] }))
+  }
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen()
+    else void boardAreaRef.current?.requestFullscreen()
   }
 
   // ------------------------------------------------------------------ render
 
-  const boardRow = (board: KanbanBoard) => {
-    const active = board.id === currentId
-    const confirming = confirmDeleteBoardId === board.id
-    return (
-      <div
-        key={board.id}
-        onClick={() => setCurrentId(board.id)}
-        className={`group flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-[6px] transition-all duration-150 ease-standard ${
-          active ? 'border-line bg-ink-850 shadow-card' : 'border-transparent hover:bg-overlay'
-        }`}
-      >
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] leading-5 text-cream">{board.name}</div>
-          <div className="text-[11px] leading-4 text-cream-faint">
-            {t('boards.cardCount', { count: boardCardCount(board) })}
-          </div>
-        </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            void handleDeleteBoard(board.id)
-          }}
-          title={confirming ? t('boards.deleteConfirm') : t('boards.deleteBoard')}
-          className={
-            confirming
-              ? 'shrink-0 rounded-md bg-red-500/15 p-1 text-red-500 transition-all'
-              : 'shrink-0 rounded-md p-1 text-cream-faint opacity-0 transition-all hover:bg-red-500/15 hover:text-red-500 group-hover:opacity-100'
-          }
-        >
-          <Trash2 size={12} />
-        </button>
-      </div>
-    )
-  }
+  const gridLayout: Layout[] = useMemo(
+    () =>
+      (current?.widgets ?? []).map((w) => ({
+        i: w.id,
+        x: w.layout.x,
+        y: w.layout.y,
+        w: w.layout.w,
+        h: w.layout.h,
+        minW: 2,
+        minH: 2
+      })),
+    [current]
+  )
 
-  const renderCard = (col: KanbanColumn, card: KanbanCard) => {
-    if (editingCardId === card.id) {
-      return (
-        <div key={card.id} className="space-y-2 rounded-xl border border-accent/50 bg-ink-900 p-2.5">
-          <input
-            autoFocus
-            value={editTitle}
-            onChange={(e) => setEditTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitEditCard(col.id, card.id)
-              if (e.key === 'Escape') setEditingCardId(null)
-            }}
-            placeholder={t('boards.cardTitlePlaceholder')}
-            className="w-full rounded-lg border border-line bg-ink-850 px-2.5 py-1.5 text-[12.5px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50"
-          />
-          <textarea
-            value={editNote}
-            onChange={(e) => setEditNote(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setEditingCardId(null)
-            }}
-            placeholder={t('boards.cardNotePlaceholder')}
-            rows={3}
-            className="w-full resize-none rounded-lg border border-line bg-ink-850 px-2.5 py-1.5 text-[12px] leading-5 text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50"
-          />
-          <div className="flex justify-end gap-1.5">
-            <button
-              onClick={() => setEditingCardId(null)}
-              className="rounded-full border border-line px-2.5 py-1 text-[11px] text-cream-dim transition hover:border-ink-600 hover:text-cream"
-            >
-              {t('boards.cancel')}
-            </button>
-            <button
-              onClick={() => commitEditCard(col.id, card.id)}
-              disabled={!editTitle.trim()}
-              className="flex items-center gap-1 rounded-full bg-cream px-2.5 py-1 text-[11px] font-medium text-ink-950 transition hover:opacity-90 disabled:opacity-40"
-            >
-              <Check size={10} />
-              {t('boards.done')}
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return (
-      <div
-        key={card.id}
-        draggable
-        onDragStart={(e) => {
-          e.dataTransfer.setData(CARD_DRAG_TYPE, JSON.stringify({ cardId: card.id, fromColId: col.id }))
-          e.dataTransfer.effectAllowed = 'move'
-        }}
-        onClick={() => startEditCard(card)}
-        className="group cursor-pointer rounded-xl border border-line bg-ink-900 p-2.5 transition hover:border-ink-600 hover:shadow-card"
-      >
-        <div className="flex items-start gap-1.5">
-          <div className="min-w-0 flex-1 break-words text-[12.5px] leading-5 text-cream">
-            {card.title}
-          </div>
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              deleteCard(col.id, card.id)
-            }}
-            title={t('boards.deleteCard')}
-            className="shrink-0 rounded-md p-0.5 text-cream-faint opacity-0 transition-all hover:bg-red-500/15 hover:text-red-500 group-hover:opacity-100"
-          >
-            <Trash2 size={11} />
-          </button>
-        </div>
-        {card.note && (
-          <div className="mt-1 line-clamp-2 break-words text-[11px] leading-4 text-cream-faint">
-            {card.note}
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  const renderColumn = (col: KanbanColumn) => (
+  const renderWidget = (widget: BoardWidget) => (
     <div
-      key={col.id}
-      onDragOver={(e) => {
-        if (!hasCardDrag(e)) return
-        e.preventDefault()
-        e.dataTransfer.dropEffect = 'move'
-        setOverColId(col.id)
-      }}
-      onDragLeave={() => setOverColId((currentOver) => (currentOver === col.id ? null : currentOver))}
-      onDrop={(e) => {
-        setOverColId(null)
-        if (!hasCardDrag(e)) return
-        e.preventDefault()
-        try {
-          const payload = JSON.parse(e.dataTransfer.getData(CARD_DRAG_TYPE)) as {
-            cardId?: unknown
-            fromColId?: unknown
-          }
-          if (typeof payload.cardId === 'string' && typeof payload.fromColId === 'string') {
-            moveCard(payload.fromColId, col.id, payload.cardId)
-          }
-        } catch {
-          // Malformed drag payload — ignore.
-        }
-      }}
-      className={`flex max-h-full w-72 shrink-0 flex-col rounded-[16px] border bg-ink-850 shadow-card transition ${
-        overColId === col.id ? 'border-accent/60' : 'border-line'
+      key={widget.id}
+      className={`group/widget relative flex flex-col overflow-hidden rounded-[16px] border bg-ink-850 shadow-card ${
+        editing ? 'border-ink-600' : 'border-line'
       }`}
     >
-      <div className="relative flex items-center gap-1.5 px-3 pt-3">
-        {renamingColId === col.id ? (
-          <input
-            autoFocus
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onBlur={() => commitRenameColumn(col.id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitRenameColumn(col.id)
-              if (e.key === 'Escape') setRenamingColId(null)
-            }}
-            className="min-w-0 flex-1 rounded-lg border border-line bg-ink-900 px-2 py-1 text-[12.5px] text-cream outline-none focus:border-accent/50"
-          />
-        ) : (
-          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-cream">
-            {columnTitle(col.title)}
-          </span>
-        )}
-        <span className="rounded-full bg-overlay-strong px-1.5 py-0.5 font-mono text-[10px] text-cream-dim">
-          {col.cards.length}
+      <div className="flex shrink-0 items-center gap-1 px-3 pb-0.5 pt-2">
+        <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.1em] text-cream-faint">
+          {widget.title || t(widgetNameKey(widget.type))}
         </span>
-        <button
-          onClick={() => {
-            setMenuColId(menuColId === col.id ? null : col.id)
-            setConfirmDeleteColId(null)
-          }}
-          title={t('boards.columnMenu')}
-          className="shrink-0 rounded-md p-1 text-cream-faint transition hover:bg-overlay hover:text-cream"
-        >
-          <MoreHorizontal size={13} />
-        </button>
-        {menuColId === col.id && (
-          <>
-            <div className="fixed inset-0 z-10" onClick={() => setMenuColId(null)} />
-            <div className="absolute right-2 top-9 z-20 w-44 rounded-xl border border-line bg-ink-900 p-1 shadow-pop">
-              <button
-                onClick={() => {
-                  setMenuColId(null)
-                  setRenamingColId(col.id)
-                  setRenameValue(columnTitle(col.title))
-                }}
-                className="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[12px] text-cream-dim transition hover:bg-overlay hover:text-cream"
-              >
-                {t('boards.renameColumn')}
-              </button>
-              <button
-                onClick={() => {
-                  setMenuColId(null)
-                  addColumn(col.id)
-                }}
-                className="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[12px] text-cream-dim transition hover:bg-overlay hover:text-cream"
-              >
-                {t('boards.addColumnRight')}
-              </button>
-              <button
-                onClick={() => handleDeleteColumn(col.id)}
-                disabled={current !== null && current.columns.length <= 1}
-                className={`flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[12px] transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                  confirmDeleteColId === col.id
-                    ? 'bg-red-500/15 text-red-500'
-                    : 'text-red-500/80 hover:bg-red-500/10 hover:text-red-500'
-                }`}
-              >
-                {confirmDeleteColId === col.id ? t('boards.deleteColumnConfirm') : t('boards.deleteColumn')}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-      <div className="flex-1 space-y-2 overflow-y-auto p-3">
-        {col.cards.map((card) => renderCard(col, card))}
-      </div>
-      <div className="px-3 pb-3">
-        {addingCardColId === col.id ? (
-          <input
-            autoFocus
-            value={newCardTitle}
-            onChange={(e) => setNewCardTitle(e.target.value)}
-            onBlur={() => addCard(col.id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') addCard(col.id)
-              if (e.key === 'Escape') {
-                setNewCardTitle('')
-                setAddingCardColId(null)
-              }
-            }}
-            placeholder={t('boards.cardTitlePlaceholder')}
-            className="w-full rounded-lg border border-line bg-ink-900 px-2.5 py-1.5 text-[12.5px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50"
-          />
-        ) : (
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover/widget:opacity-100">
           <button
-            onClick={() => setAddingCardColId(col.id)}
-            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12px] text-cream-faint transition hover:bg-overlay hover:text-cream-dim"
+            onClick={() => setConfigWidgetId(widget.id)}
+            title={t('boards.widgetSettings')}
+            className="rounded-md p-1 text-cream-faint transition hover:bg-overlay hover:text-cream"
           >
-            <Plus size={12} />
-            {t('boards.addCard')}
+            <Settings2 size={11} />
           </button>
-        )}
+          <button
+            onClick={() => removeWidget(widget.id)}
+            title={t('boards.deleteWidget')}
+            className="rounded-md p-1 text-cream-faint transition hover:bg-red-500/15 hover:text-red-500"
+          >
+            <X size={11} />
+          </button>
+        </div>
       </div>
+      <div className="min-h-0 flex-1 px-3 pb-2.5 pt-0.5">
+        <WidgetBody
+          key={`${widget.id}:${refreshTick}`}
+          widget={widget}
+          onConfigChange={(config) => updateWidgetConfig(widget.id, config)}
+        />
+      </div>
+      {configWidgetId === widget.id && (
+        <WidgetConfigPanel
+          key={widget.id}
+          widget={widget}
+          onClose={() => setConfigWidgetId(null)}
+          onSave={(patch) => saveWidgetConfig(widget.id, patch)}
+        />
+      )}
     </div>
   )
 
+  const menuItemClass =
+    'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition'
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      <header className="app-drag flex h-12 shrink-0 items-center justify-between border-b border-line px-4">
-        <div className="flex items-center gap-2.5">
-          <SquareKanban size={15} className="text-accent" />
-          <span className="text-[13px] font-medium text-cream">{t('boards.title')}</span>
-          <span className="text-xs text-cream-faint">{t('boards.subtitle')}</span>
-        </div>
-        {saveFailed && (
-          <span className="text-[11px] text-red-500">{t('boards.saveFailed')}</span>
-        )}
-      </header>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* Board list */}
-        <aside className="flex w-52 shrink-0 flex-col border-r border-line">
-          <div className="flex items-center justify-between px-3.5 pb-2 pt-3.5">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-cream-faint">
-              {t('boards.myBoards')}
-            </span>
+      <header className="app-drag relative z-30 flex h-12 shrink-0 items-center gap-2 border-b border-line px-4">
+        <SquareKanban size={15} className="shrink-0 text-accent" />
+        <span className="shrink-0 text-[13px] font-medium text-cream">{t('boards.title')}</span>
+        <div className="app-no-drag ml-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {(boards ?? []).map((b) => (
             <button
-              onClick={() => setCreating(!creating)}
-              title={t('boards.new')}
-              className="rounded-md p-1 text-cream-faint transition hover:bg-overlay hover:text-cream"
+              key={b.id}
+              onClick={() => switchBoard(b.id)}
+              className={`flex max-w-[160px] shrink-0 items-center rounded-full border px-3 py-1 text-[12px] transition ${
+                b.id === currentId
+                  ? 'border-line bg-ink-850 text-cream shadow-card'
+                  : 'border-transparent text-cream-faint hover:bg-overlay hover:text-cream-dim'
+              }`}
+            >
+              <span className="truncate">{b.name}</span>
+            </button>
+          ))}
+          {creating ? (
+            <input
+              autoFocus
+              value={newBoardName}
+              onChange={(e) => setNewBoardName(e.target.value)}
+              onBlur={commitCreate}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitCreate()
+                if (e.key === 'Escape') {
+                  setCreating(false)
+                  setNewBoardName('')
+                }
+              }}
+              maxLength={BOARD_LIMITS.maxNameLength}
+              placeholder={t('boards.newBoardPlaceholder')}
+              className="w-32 shrink-0 rounded-full border border-line bg-ink-850 px-3 py-1 text-[12px] text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/50"
+            />
+          ) : (
+            <button
+              onClick={() => setCreating(true)}
+              title={t('boards.newTab')}
+              className="shrink-0 rounded-full p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream"
             >
               <Plus size={13} />
             </button>
-          </div>
-          {creating && (
-            <div className="mx-2 mb-2 rounded-xl border border-line bg-ink-850 p-1.5 shadow-card">
-              <div className="px-1.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wider text-cream-faint">
-                {t('boards.pickTemplate')}
-              </div>
-              {BOARD_TEMPLATES.map((tpl) => (
-                <button
-                  key={tpl.id}
-                  onClick={() => handleCreate(tpl.id)}
-                  className="flex w-full flex-col rounded-lg px-1.5 py-1.5 text-left transition hover:bg-overlay"
-                >
-                  <span className="text-[12.5px] text-cream">{t(tpl.nameKey as I18nKey)}</span>
-                  <span className="text-[10.5px] leading-4 text-cream-faint">
-                    {t(tpl.descKey as I18nKey)}
-                  </span>
-                </button>
-              ))}
-            </div>
           )}
-          <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
-            {(boards ?? []).map(boardRow)}
+        </div>
+        {saveFailed && (
+          <span className="shrink-0 text-[11px] text-red-500">{t('boards.saveFailed')}</span>
+        )}
+        {current && (
+          <div className="app-no-drag relative shrink-0">
+            <button
+              onClick={() => {
+                closeMenus()
+                setBoardMenuOpen(!boardMenuOpen)
+              }}
+              title={t('boards.boardMenu')}
+              className="rounded-md p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream"
+            >
+              <MoreHorizontal size={14} />
+            </button>
+            {boardMenuOpen && (
+              <div className="absolute right-0 top-9 z-30 w-44 rounded-xl border border-line bg-ink-900 p-1 shadow-pop">
+                <button
+                  onClick={openDetail}
+                  className={`${menuItemClass} text-cream-dim hover:bg-overlay hover:text-cream`}
+                >
+                  <Pencil size={12} />
+                  {t('boards.editDetail')}
+                </button>
+                <button
+                  onClick={() => void handleDeleteBoard()}
+                  className={`${menuItemClass} ${
+                    confirmDeleteBoard
+                      ? 'bg-red-500/15 text-red-500'
+                      : 'text-red-500/80 hover:bg-red-500/10 hover:text-red-500'
+                  }`}
+                >
+                  <Trash2 size={12} />
+                  {confirmDeleteBoard ? t('boards.deleteBoardConfirm') : t('boards.deleteBoard')}
+                </button>
+              </div>
+            )}
           </div>
-        </aside>
+        )}
+      </header>
 
-        {/* Board content */}
-        <main className="flex-1 overflow-x-auto overflow-y-hidden">
+      <div ref={boardAreaRef} className="relative flex-1 overflow-hidden bg-ink-950">
+        <div className="h-full overflow-y-auto">
           {boards === null ? (
             <div className="flex h-full items-center justify-center text-sm text-cream-faint">
               {t('app.loading')}
             </div>
-          ) : current === null ? (
+          ) : !current ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
               <SquareKanban size={28} className="text-cream-faint" />
               <div className="text-sm text-cream-dim">{t('boards.empty')}</div>
@@ -546,31 +507,208 @@ export default function BoardsPage() {
                 className="mt-1 flex items-center gap-1.5 rounded-full bg-cream px-4 py-2 text-[12px] font-medium text-ink-950 transition hover:opacity-90"
               >
                 <Plus size={12} />
-                {t('boards.create')}
+                {t('boards.newTab')}
               </button>
             </div>
           ) : (
-            <div className="flex h-full flex-col">
-              <div className="flex items-center gap-2.5 px-4 pb-1 pt-4">
-                <span className="truncate text-[15px] font-semibold text-cream">{current.name}</span>
-                <span className="rounded-full bg-accent-soft px-2 py-0.5 font-mono text-[10px] text-accent">
-                  {t('boards.cardCount', { count: boardCardCount(current) })}
-                </span>
-              </div>
-              <div className="flex flex-1 items-start gap-3 overflow-x-auto p-4">
-                {current.columns.map(renderColumn)}
-                <button
-                  onClick={() => addColumn()}
-                  className="flex h-9 w-40 shrink-0 items-center justify-center gap-1.5 rounded-[16px] border border-dashed border-line text-[12px] text-cream-faint transition hover:border-accent/60 hover:text-cream-dim"
-                >
-                  <Plus size={12} />
-                  {t('boards.addColumn')}
-                </button>
-              </div>
+            <div className="px-4 pb-24 pt-4">
+              <Grid
+                className={`layout ${editing ? '[&_.react-grid-item]:cursor-move' : ''}`}
+                layout={gridLayout}
+                cols={GRID_COLS}
+                rowHeight={48}
+                margin={[12, 12]}
+                compactType="vertical"
+                isDraggable={editing}
+                isResizable={editing}
+                draggableCancel="input, textarea, select, a, button, .widget-config"
+                onDragStop={handleLayoutStop}
+                onResizeStop={handleLayoutStop}
+              >
+                {current.widgets.map(renderWidget)}
+              </Grid>
+              {current.widgets.length === 0 && (
+                <div className="flex h-[55vh] flex-col items-center justify-center gap-3 text-center">
+                  <LayoutGrid size={26} className="text-cream-faint" />
+                  <div className="text-sm text-cream-dim">{t('boards.noWidgets')}</div>
+                  <button
+                    onClick={() => setGalleryOpen(true)}
+                    className="mt-1 flex items-center gap-1.5 rounded-full bg-cream px-4 py-2 text-[12px] font-medium text-ink-950 transition hover:opacity-90"
+                  >
+                    <Plus size={12} />
+                    {t('boards.addWidget')}
+                  </button>
+                </div>
+              )}
             </div>
           )}
-        </main>
+        </div>
+
+        {toast && current && (
+          <div className="fade-in absolute left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-line bg-ink-900 px-3 py-1.5 shadow-pop">
+            <Check size={12} className="text-green-500" />
+            <span className="text-[12px] text-cream">
+              {toast === 'refreshed' ? t('boards.refreshed') : t('boards.tidied')}
+            </span>
+          </div>
+        )}
+
+        {current && (
+          <div className="absolute bottom-4 left-1/2 z-30 -translate-x-1/2">
+            {galleryOpen && (
+              <div className="fade-in absolute bottom-full left-1/2 mb-2 w-[300px] -translate-x-1/2 rounded-2xl border border-line bg-ink-900 p-2 shadow-pop">
+                <div className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-cream-faint">
+                  {t('boards.addWidget')}
+                </div>
+                <div className="grid grid-cols-2 gap-0.5">
+                  {WIDGET_GALLERY.map(({ type, Icon }) => (
+                    <button
+                      key={type}
+                      onClick={() => addWidget(type)}
+                      className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-overlay"
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
+                        <Icon size={13} />
+                      </span>
+                      <span className="truncate text-[12px] text-cream">{t(widgetNameKey(type))}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {toolsMenuOpen && (
+              <div className="fade-in absolute bottom-full right-0 mb-2 w-44 rounded-xl border border-line bg-ink-900 p-1 shadow-pop">
+                <button
+                  onClick={handleResetLayout}
+                  className={`${menuItemClass} text-cream-dim hover:bg-overlay hover:text-cream`}
+                >
+                  <LayoutGrid size={12} />
+                  {t('boards.resetLayout')}
+                </button>
+                <button
+                  onClick={handleClearWidgets}
+                  className={`${menuItemClass} ${
+                    confirmClear
+                      ? 'bg-red-500/15 text-red-500'
+                      : 'text-red-500/80 hover:bg-red-500/10 hover:text-red-500'
+                  }`}
+                >
+                  <Trash2 size={12} />
+                  {confirmClear ? t('boards.clearConfirm') : t('boards.clearWidgets')}
+                </button>
+              </div>
+            )}
+            <div className="flex items-center gap-0.5 rounded-full border border-line bg-ink-900/95 p-1 shadow-pop backdrop-blur">
+              <ToolButton
+                title={editing ? t('boards.exitEdit') : t('boards.edit')}
+                active={editing}
+                onClick={() => setEditing(!editing)}
+              >
+                <Pencil size={14} />
+              </ToolButton>
+              <ToolButton
+                title={t('boards.addWidget')}
+                onClick={() => {
+                  setToolsMenuOpen(false)
+                  setGalleryOpen(!galleryOpen)
+                }}
+              >
+                <Plus size={15} />
+              </ToolButton>
+              <ToolButton title={t('boards.tidy')} onClick={handleTidy}>
+                <LayoutGrid size={14} />
+              </ToolButton>
+              <ToolButton title={t('boards.refresh')} onClick={handleRefresh}>
+                <RefreshCw size={14} />
+              </ToolButton>
+              <ToolButton
+                title={isFullscreen ? t('boards.exitFullscreen') : t('boards.fullscreen')}
+                onClick={toggleFullscreen}
+              >
+                {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+              </ToolButton>
+              <ToolButton
+                title={t('boards.more')}
+                onClick={() => {
+                  setGalleryOpen(false)
+                  setConfirmClear(false)
+                  setToolsMenuOpen(!toolsMenuOpen)
+                }}
+              >
+                <MoreHorizontal size={14} />
+              </ToolButton>
+            </div>
+          </div>
+        )}
       </div>
+
+      {(boardMenuOpen || toolsMenuOpen || galleryOpen) && (
+        <div className="fixed inset-0 z-20" onClick={closeMenus} />
+      )}
+
+      {detailOpen && current && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setDetailOpen(false)}
+        >
+          <div
+            className="fade-in w-full max-w-[400px] rounded-2xl border border-line bg-ink-900 p-5 shadow-pop"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[14px] font-semibold text-cream">{t('boards.detail.title')}</span>
+              <button
+                onClick={() => setDetailOpen(false)}
+                title={t('boards.cancel')}
+                className="rounded-md p-1 text-cream-faint transition hover:bg-overlay hover:text-cream"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="mt-4 space-y-3">
+              <label className="block">
+                <span className="mb-1 block text-[11px] text-cream-faint">{t('boards.detail.name')}</span>
+                <input
+                  autoFocus
+                  value={detailName}
+                  onChange={(e) => setDetailName(e.target.value)}
+                  maxLength={BOARD_LIMITS.maxNameLength}
+                  className="w-full rounded-lg border border-line bg-ink-850 px-2.5 py-1.5 text-[12.5px] text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/50"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] text-cream-faint">
+                  {t('boards.detail.description')}
+                </span>
+                <textarea
+                  value={detailDesc}
+                  onChange={(e) => setDetailDesc(e.target.value)}
+                  rows={4}
+                  maxLength={BOARD_LIMITS.maxDescriptionLength}
+                  placeholder={t('boards.detail.descPlaceholder')}
+                  className="w-full resize-none rounded-lg border border-line bg-ink-850 px-2.5 py-1.5 text-[12px] leading-5 text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/50"
+                />
+              </label>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setDetailOpen(false)}
+                className="rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition hover:border-ink-600 hover:text-cream"
+              >
+                {t('boards.cancel')}
+              </button>
+              <button
+                onClick={saveDetail}
+                disabled={!detailName.trim()}
+                className="flex items-center gap-1 rounded-full bg-cream px-3 py-1.5 text-[12px] font-medium text-ink-950 transition hover:opacity-90 disabled:opacity-40"
+              >
+                <Check size={11} />
+                {t('boards.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

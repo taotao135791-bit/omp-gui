@@ -22,12 +22,13 @@ function makeBoard(id: string, name = `Board ${id}`): KanbanBoard {
   return {
     id,
     name,
-    template: 'task',
-    columns: [
+    widgets: [
       {
-        id: `${id}-col-1`,
-        title: 'boards.col.todo',
-        cards: [{ id: `${id}-card-1`, title: 'Task', createdAt: 1000 }]
+        id: `${id}-w1`,
+        type: 'todo',
+        title: 'Todo',
+        layout: { x: 0, y: 0, w: 4, h: 6 },
+        config: { items: [{ id: `${id}-i1`, text: 'Task', done: false }] }
       }
     ],
     createdAt: 1000,
@@ -67,11 +68,60 @@ describe('listBoards', () => {
     )
     expect(listBoards(file).map((b) => b.id)).toEqual(['good', 'good-2'])
   })
+
+  it('migrates v1 kanban files (columns/cards) into v2 widget boards on read', () => {
+    const v1 = {
+      id: 'legacy',
+      name: 'Legacy board',
+      template: 'task',
+      columns: [
+        {
+          id: 'c1',
+          title: 'boards.col.todo',
+          cards: [{ id: 'k1', title: 'Write tests', note: 'unit first', createdAt: 1000 }]
+        },
+        { id: 'c2', title: 'boards.col.done', cards: [] }
+      ],
+      createdAt: 1000,
+      updatedAt: 2000
+    }
+    writeFileSync(file, JSON.stringify([v1]))
+    const boards = listBoards(file)
+    expect(boards).toHaveLength(1)
+    expect(boards[0].id).toBe('legacy')
+    expect(boards[0].widgets).toEqual([
+      {
+        id: 'c1',
+        type: 'todo',
+        title: 'Todo',
+        layout: { x: 0, y: 0, w: 4, h: 6 },
+        config: { items: [{ id: 'k1', text: 'Write tests', done: false }] }
+      },
+      {
+        id: 'c2',
+        type: 'todo',
+        title: 'Done',
+        layout: { x: 4, y: 0, w: 4, h: 6 },
+        config: { items: [] }
+      }
+    ])
+    // Saving the migrated board writes the v2 shape back to disk.
+    expect(saveBoard(boards[0], file)).toEqual({ ok: true })
+    const raw = JSON.parse(readFileSync(file, 'utf-8'))
+    expect(raw[0].widgets).toBeDefined()
+    expect(raw[0].columns).toBeUndefined()
+  })
 })
 
 describe('saveBoard', () => {
   it('round-trips a board through listBoards', () => {
     const board = makeBoard('b1')
+    expect(saveBoard(board, file)).toEqual({ ok: true })
+    expect(listBoards(file)).toEqual([board])
+  })
+
+  it('round-trips a board with no widgets (cleared board)', () => {
+    const board = { ...makeBoard('empty'), widgets: [] }
     expect(saveBoard(board, file)).toEqual({ ok: true })
     expect(listBoards(file)).toEqual([board])
   })

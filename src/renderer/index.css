@@ -208,3 +208,22 @@
     30% { opacity: 1; }
   }
 }
+
+/* react-grid-layout overrides — unlayered on purpose so they beat the vendor
+   stylesheet (imported by BoardsPage) regardless of bundle order. */
+.react-grid-item.react-grid-placeholder {
+  border-radius: 16px;
+  background: rgb(var(--accent)) !important;
+  opacity: 0.18;
+}
+.react-grid-item.react-draggable-dragging {
+  z-index: 20;
+}
+.react-grid-item > .react-resizable-handle {
+  z-index: 30;
+}
+.react-grid-item > .react-resizable-handle::after {
+  width: 8px;
+  height: 8px;
+  border-color: rgb(var(--text-faint));
+}
