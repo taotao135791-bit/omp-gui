@@ -114,16 +114,27 @@ export function binaryAvailable(bin: string): boolean {
 }
 
 /**
- * Fail fast when `OMP_REQUIRED=1` is set and the binary is absent. This turns
- * the optional local smoke test into a hard release-compatibility gate in CI.
+ * Fail fast only for explicitly required runtimes. `OMP_REQUIRED=1` keeps the
+ * historical "every suite is mandatory" behavior; a comma-separated list
+ * (for example `OMP_REQUIRED=omp`) makes just those binaries release gates.
+ * This lets CI require the pinned current OMP while keeping the separately
+ * installed legacy-Pi suite an honest, visible skip.
  */
 export function requireBinary(bin: string): void {
   if (!binaryAvailable(bin)) {
-    const message = `Required OMP binary '${bin}' not found (OMP_REQUIRED=1)`
-    if (process.env.OMP_REQUIRED === '1') {
-      throw new Error(message)
+    const requirement = process.env.OMP_REQUIRED?.trim()
+    const requiredBins = new Set(
+      requirement && requirement !== '1'
+        ? requirement
+            .split(',')
+            .map((name) => name.trim())
+            .filter(Boolean)
+        : []
+    )
+    if (requirement === '1' || requiredBins.has(bin)) {
+      throw new Error(`Required OMP binary '${bin}' not found (OMP_REQUIRED=${requirement})`)
     }
-    console.warn(`[test:omp] ${message.split('(')[0].trim()} — skipping suite`)
+    console.warn(`[test:omp] Required OMP binary '${bin}' not found — skipping suite`)
   }
 }
 

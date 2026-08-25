@@ -95,7 +95,9 @@ jobs:
 
       - name: OMP compatibility suite
         env:
-          OMP_REQUIRED: 1
+          # The tag must pass against the pinned current OMP. Legacy Pi is
+          # independently optional because this release job installs only omp.
+          OMP_REQUIRED: omp
         run: pnpm test:omp
 
       - name: Build app

@@ -97,7 +97,9 @@ jobs:
           fi
       - name: Compatibility suite
         env:
-          OMP_REQUIRED: 1
+          # Current OMP is the release gate; legacy Pi remains an explicit
+          # optional compatibility lane when its binary is installed.
+          OMP_REQUIRED: omp
         run: pnpm test:omp
 
   # Latest-canary early-warning job. Uses the most recent release; failures do
