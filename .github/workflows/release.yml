@@ -32,6 +32,13 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # OMP 17.2+ dispatches its CLI through Bun; keep this minimum runtime
+      # explicit so a clean macOS runner cannot install `omp` yet fail to run it.
+      - name: Set up Bun for OMP
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
       - name: Verify tag matches package version
         shell: bash
         run: |

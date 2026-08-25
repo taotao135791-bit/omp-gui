@@ -71,6 +71,11 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # Current OMP releases dispatch their CLI through Bun.
+      - name: Set up Bun for OMP
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
       - name: Install project dependencies
         run: pnpm install --frozen-lockfile
       - name: Read pinned OMP version
@@ -108,6 +113,11 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # Current OMP releases dispatch their CLI through Bun.
+      - name: Set up Bun for OMP
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
       - name: Install project dependencies
         run: pnpm install --frozen-lockfile
       - name: Install latest OMP
