@@ -219,6 +219,76 @@ describe('validateBoard', () => {
     expect(withWidget(widgetOf('clock', { showSeconds: 'yes' }))?.widgets).toHaveLength(0)
     expect(withWidget(widgetOf('clock', {}))?.widgets).toHaveLength(1)
   })
+
+  it('validates the dataset source branch of counter configs', () => {
+    const ok = withWidget(
+      widgetOf('counter', { source: 'dataset', datasetId: 'ds-1', metric: '消耗', op: 'sum' })
+    )
+    expect(ok?.widgets[0].config).toEqual({
+      source: 'dataset',
+      datasetId: 'ds-1',
+      metric: '消耗',
+      op: 'sum'
+    })
+    // Binding fields survive alongside manual ones when toggling sources.
+    const both = withWidget(
+      widgetOf('counter', { value: 5, source: 'manual', datasetId: 'ds-1', metric: '消耗', op: 'avg' })
+    )
+    expect(both?.widgets[0].config).toEqual({
+      value: 5,
+      source: 'manual',
+      datasetId: 'ds-1',
+      metric: '消耗',
+      op: 'avg'
+    })
+  })
+
+  it('rejects bad source enums and incomplete dataset bindings', () => {
+    expect(withWidget(widgetOf('counter', { source: 'auto' }))?.widgets).toHaveLength(0)
+    // source 'dataset' requires datasetId + metric + op …
+    expect(withWidget(widgetOf('counter', { source: 'dataset' }))?.widgets).toHaveLength(0)
+    expect(
+      withWidget(widgetOf('counter', { source: 'dataset', datasetId: 'd', metric: 'm' }))?.widgets
+    ).toHaveLength(0)
+    expect(
+      withWidget(widgetOf('counter', { source: 'dataset', datasetId: 'd', metric: 'm', op: 'median' }))
+        ?.widgets
+    ).toHaveLength(0)
+    // … and charts additionally require a dimension.
+    expect(
+      withWidget(widgetOf('chart-line', { source: 'dataset', datasetId: 'd', metric: 'm', op: 'sum' }))
+        ?.widgets
+    ).toHaveLength(0)
+    expect(
+      withWidget(
+        widgetOf('chart-bar', { source: 'dataset', datasetId: 'd', metric: 'm', op: 'sum', dimension: '渠道' })
+      )?.widgets
+    ).toHaveLength(1)
+  })
+
+  it('enforces field limits and control chars on the dataset binding', () => {
+    const longId = 'x'.repeat(101)
+    expect(
+      withWidget(widgetOf('counter', { source: 'dataset', datasetId: longId, metric: 'm', op: 'sum' }))
+        ?.widgets
+    ).toHaveLength(0)
+    const longColumn = 'x'.repeat(201)
+    expect(
+      withWidget(widgetOf('counter', { source: 'dataset', datasetId: 'd', metric: longColumn, op: 'sum' }))
+        ?.widgets
+    ).toHaveLength(0)
+    expect(
+      withWidget(
+        widgetOf('chart-line', { source: 'dataset', datasetId: 'd', metric: 'm', op: 'sum', dimension: longColumn })
+      )?.widgets
+    ).toHaveLength(0)
+    expect(withWidget(widgetOf('counter', { datasetId: 'd\nx' }))?.widgets).toHaveLength(0)
+  })
+
+  it('strips dataset keys from types without a source branch (gauge)', () => {
+    const board = withWidget(widgetOf('gauge', { value: 10, source: 'dataset', datasetId: 'd' }))
+    expect(board?.widgets[0].config).toEqual({ value: 10 })
+  })
 })
 
 describe('factories', () => {

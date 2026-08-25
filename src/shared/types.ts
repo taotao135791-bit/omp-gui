@@ -835,6 +835,26 @@ export interface KanbanBoard {
   updatedAt: number
 }
 
+// ---------------------------------------------------------------------------
+// Board datasets — imported ad-backend CSV/XLSX exports that counter/chart
+// widgets can bind to. Persisted under userData/board-datasets.json; parsing
+// and aggregation live in shared/datasets.ts.
+// ---------------------------------------------------------------------------
+
+export interface BoardDatasetColumn {
+  name: string
+  type: 'number' | 'date' | 'text'
+}
+
+export interface BoardDataset {
+  id: string
+  name: string
+  columns: BoardDatasetColumn[]
+  /** Parsed values; number columns hold numbers, everything else strings. */
+  rows: (string | number)[][]
+  createdAt: number
+}
+
 export type Language = 'zh' | 'en'
 
 export interface AppSettings {

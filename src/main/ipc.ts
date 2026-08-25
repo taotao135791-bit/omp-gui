@@ -80,6 +80,7 @@ import {
 import { getGitInfo, getFileDiff } from './gitinfo'
 import { listSessionHistory, deleteSessionFile } from './sessionHistory'
 import { deleteBoard, listBoards, saveBoard } from './boards'
+import { deleteDataset, importDataset, listDatasets, renameDataset } from './boardDatasets'
 import { defaultExportFileName } from './exportPath'
 import { listProjectFiles } from './projectFiles'
 import { maybeNotifyTurnFinished, maybeNotifyUiRequest } from './notify'
@@ -1040,6 +1041,28 @@ export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.BOARDS_DELETE, async (_event, id: unknown) => {
     return deleteBoard(id)
   })
+
+  // Board datasets — same trust model as boards: the filePath/id/name payloads
+  // arrive as `unknown` and are validated inside boardDatasets.ts (extension
+  // whitelist, existence/size checks, parse errors surfaced as stable codes).
+  ipcMain.handle(IPC_CHANNELS.BOARDS_DATASETS_LIST, async () => {
+    return listDatasets()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.BOARDS_DATASETS_IMPORT, async (_event, filePath: unknown) => {
+    return importDataset(filePath)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.BOARDS_DATASETS_DELETE, async (_event, id: unknown) => {
+    return deleteDataset(id)
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.BOARDS_DATASETS_RENAME,
+    async (_event, id: unknown, name: unknown) => {
+      return renameDataset(id, name)
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.DIALOG_SELECT_FOLDER, async () => {
     const result = await dialog.showOpenDialog({

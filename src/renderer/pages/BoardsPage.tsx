@@ -5,6 +5,9 @@ import {
   ChartLine,
   Check,
   Clock,
+  Database,
+  FileSpreadsheet,
+  FileUp,
   Gauge,
   Hash,
   LayoutGrid,
@@ -24,7 +27,7 @@ import {
   X,
   type LucideIcon
 } from 'lucide-react'
-import { BoardWidget, KanbanBoard, WidgetType } from '@shared/types'
+import { BoardDataset, BoardWidget, KanbanBoard, WidgetType } from '@shared/types'
 import {
   BOARD_LIMITS,
   GRID_COLS,
@@ -37,6 +40,7 @@ import {
   reflowWidgets,
   type BoardPresetId
 } from '@shared/boards'
+import { DatasetImportError } from '@shared/datasets'
 import { useT, I18nKey } from '../i18n'
 import { WidgetBody } from './boards/WidgetBody'
 import { WidgetConfigPanel } from './boards/WidgetConfigPanel'
@@ -69,6 +73,22 @@ const CONFIG_ON_ADD: readonly WidgetType[] = ['note', 'counter', 'gauge', 'chart
 
 function widgetNameKey(type: WidgetType): I18nKey {
   return `boards.widget.${type}` as I18nKey
+}
+
+/** Stable dataset-import error codes → i18n (see shared/datasets.ts). */
+const DATASET_ERROR_KEYS: Record<DatasetImportError, I18nKey> = {
+  'invalid-path': 'boards.datasets.error.invalidPath',
+  'unsupported-type': 'boards.datasets.error.unsupportedType',
+  'file-too-large': 'boards.datasets.error.tooLarge',
+  'read-failed': 'boards.datasets.error.readFailed',
+  'parse-failed': 'boards.datasets.error.parseFailed',
+  empty: 'boards.datasets.error.empty',
+  'dataset-limit': 'boards.datasets.error.limit',
+  'write-failed': 'boards.datasets.error.writeFailed'
+}
+
+function hasFileDrag(e: DragEvent): boolean {
+  return e.dataTransfer?.types.includes('Files') ?? false
 }
 
 function ToolButton({
@@ -112,15 +132,23 @@ export default function BoardsPage() {
   const [configWidgetId, setConfigWidgetId] = useState<string | null>(null)
   const [confirmDeleteBoard, setConfirmDeleteBoard] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
-  const [toast, setToast] = useState<'refreshed' | 'tidied' | null>(null)
+  const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [saveFailed, setSaveFailed] = useState(false)
+  const [datasets, setDatasets] = useState<BoardDataset[]>([])
+  const [datasetsOpen, setDatasetsOpen] = useState(false)
+  const [fileDrag, setFileDrag] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [confirmDeleteDatasetId, setConfirmDeleteDatasetId] = useState<string | null>(null)
   const boardAreaRef = useRef<HTMLDivElement>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const confirmDeleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const confirmClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const confirmDatasetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveFailedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fileDragDepth = useRef(0)
 
   const current = boards?.find((b) => b.id === currentId) ?? null
 
@@ -130,6 +158,9 @@ export default function BoardsPage() {
       if (!alive) return
       setBoards(list)
       setCurrentId((id) => (id && list.some((b) => b.id === id) ? id : (list[0]?.id ?? null)))
+    })
+    window.electronAPI.listBoardDatasets().then((list) => {
+      if (alive) setDatasets(list)
     })
     return () => {
       alive = false
@@ -147,6 +178,7 @@ export default function BoardsPage() {
       if (toastTimer.current) clearTimeout(toastTimer.current)
       if (confirmDeleteTimer.current) clearTimeout(confirmDeleteTimer.current)
       if (confirmClearTimer.current) clearTimeout(confirmClearTimer.current)
+      if (confirmDatasetTimer.current) clearTimeout(confirmDatasetTimer.current)
       if (saveFailedTimer.current) clearTimeout(saveFailedTimer.current)
     }
   }, [])
@@ -157,10 +189,10 @@ export default function BoardsPage() {
     saveFailedTimer.current = setTimeout(() => setSaveFailed(false), 3000)
   }
 
-  const flashToast = (kind: 'refreshed' | 'tidied') => {
-    setToast(kind)
+  const flashToast = (text: string, ok = true) => {
+    setToast({ ok, text })
     if (toastTimer.current) clearTimeout(toastTimer.current)
-    toastTimer.current = setTimeout(() => setToast(null), 2000)
+    toastTimer.current = setTimeout(() => setToast(null), 2500)
   }
 
   const persist = (board: KanbanBoard) => {
@@ -319,12 +351,12 @@ export default function BoardsPage() {
   const handleTidy = () => {
     if (!current) return
     mutateBoard(current.id, (b) => ({ ...b, widgets: compactWidgets(b.widgets) }))
-    flashToast('tidied')
+    flashToast(t('boards.tidied'))
   }
 
   const handleRefresh = () => {
     setRefreshTick((n) => n + 1)
-    flashToast('refreshed')
+    flashToast(t('boards.refreshed'))
   }
 
   const handleResetLayout = () => {
@@ -351,6 +383,118 @@ export default function BoardsPage() {
   const toggleFullscreen = () => {
     if (document.fullscreenElement) void document.exitFullscreen()
     else void boardAreaRef.current?.requestFullscreen()
+  }
+
+  // ---------------------------------------------------------------- datasets
+
+  const refreshDatasets = async () => {
+    setDatasets(await window.electronAPI.listBoardDatasets())
+  }
+
+  /** Import one picked/dropped file; the result toast names the outcome. */
+  const importDatasetFile = async (filePath: string) => {
+    const result = await window.electronAPI.importBoardDataset(filePath)
+    if (result.ok) {
+      await refreshDatasets()
+      const rows = result.dataset.rows.length
+      const cols = result.dataset.columns.length
+      flashToast(
+        t('boards.datasets.imported', { name: result.dataset.name, rows, cols }) +
+          (result.truncated ? t('boards.datasets.truncatedNote') : '')
+      )
+    } else {
+      flashToast(t(DATASET_ERROR_KEYS[result.error] ?? 'boards.datasets.error.parseFailed'), false)
+    }
+  }
+
+  const handleImportPick = async () => {
+    setToolsMenuOpen(false)
+    const picked = await window.electronAPI.selectFile([
+      { name: 'CSV / Excel', extensions: ['csv', 'xlsx', 'xls'] }
+    ])
+    if (picked) await importDatasetFile(picked)
+  }
+
+  // Finder file drags get a full-page overlay (same pattern as PackagesPage).
+  useEffect(() => {
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFileDrag(e)) return
+      e.preventDefault()
+      fileDragDepth.current += 1
+      setFileDrag(true)
+    }
+    const onDragOver = (e: DragEvent) => {
+      if (hasFileDrag(e)) e.preventDefault()
+    }
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFileDrag(e)) return
+      fileDragDepth.current = Math.max(0, fileDragDepth.current - 1)
+      if (fileDragDepth.current === 0) setFileDrag(false)
+    }
+    const onDrop = (e: DragEvent) => {
+      if (!hasFileDrag(e)) return
+      e.preventDefault()
+      fileDragDepth.current = 0
+      setFileDrag(false)
+      const files = e.dataTransfer?.files
+      if (!files?.length) return
+      void (async () => {
+        for (const file of Array.from(files)) {
+          const filePath = window.electronAPI.getPathForFile(file)
+          // eslint-disable-next-line no-await-in-loop
+          if (filePath) await importDatasetFile(filePath)
+        }
+      })()
+    }
+    window.addEventListener('dragenter', onDragEnter)
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('dragleave', onDragLeave)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter)
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('dragleave', onDragLeave)
+      window.removeEventListener('drop', onDrop)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const openDatasetsPanel = () => {
+    setToolsMenuOpen(false)
+    setRenamingId(null)
+    setConfirmDeleteDatasetId(null)
+    setDatasetsOpen(true)
+  }
+
+  const commitRenameDataset = async () => {
+    const id = renamingId
+    const name = renameDraft.trim()
+    setRenamingId(null)
+    if (!id || !name) return
+    const result = await window.electronAPI.renameBoardDataset(id, name)
+    if (!result.ok) {
+      flashToast(t('boards.datasets.renameFailed'), false)
+      return
+    }
+    await refreshDatasets()
+  }
+
+  // Two-stage confirm, same as board/widget deletes.
+  const handleDeleteDataset = async (id: string) => {
+    if (confirmDeleteDatasetId !== id) {
+      setConfirmDeleteDatasetId(id)
+      if (confirmDatasetTimer.current) clearTimeout(confirmDatasetTimer.current)
+      confirmDatasetTimer.current = setTimeout(() => setConfirmDeleteDatasetId(null), 3000)
+      return
+    }
+    setConfirmDeleteDatasetId(null)
+    if (confirmDatasetTimer.current) clearTimeout(confirmDatasetTimer.current)
+    const result = await window.electronAPI.deleteBoardDataset(id)
+    if (!result.ok) {
+      flashToast(t('boards.datasets.deleteFailed'), false)
+      return
+    }
+    await refreshDatasets()
   }
 
   // ------------------------------------------------------------------ render
@@ -399,6 +543,7 @@ export default function BoardsPage() {
         <WidgetBody
           key={`${widget.id}:${refreshTick}`}
           widget={widget}
+          datasets={datasets}
           onConfigChange={(config) => updateWidgetConfig(widget.id, config)}
         />
       </div>
@@ -406,6 +551,7 @@ export default function BoardsPage() {
         <WidgetConfigPanel
           key={widget.id}
           widget={widget}
+          datasets={datasets}
           onClose={() => setConfigWidgetId(null)}
           onSave={(patch) => saveWidgetConfig(widget.id, patch)}
         />
@@ -556,12 +702,23 @@ export default function BoardsPage() {
           )}
         </div>
 
-        {toast && current && (
+        {toast && (
           <div className="fade-in absolute left-1/2 top-3 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-line bg-ink-900 px-3 py-1.5 shadow-pop">
-            <Check size={12} className="text-green-500" />
-            <span className="text-[12px] text-cream">
-              {toast === 'refreshed' ? t('boards.refreshed') : t('boards.tidied')}
-            </span>
+            {toast.ok ? (
+              <Check size={12} className="shrink-0 text-green-500" />
+            ) : (
+              <X size={12} className="shrink-0 text-red-500" />
+            )}
+            <span className="text-[12px] text-cream">{toast.text}</span>
+          </div>
+        )}
+
+        {fileDrag && (
+          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-ink-950/40 backdrop-blur-sm">
+            <div className="flex items-center gap-2.5 rounded-xl border-2 border-dashed border-accent bg-ink-850 px-8 py-5 text-sm font-medium text-accent">
+              <FileSpreadsheet size={18} />
+              {t('boards.datasets.dropHint')}
+            </div>
           </div>
         )}
 
@@ -590,6 +747,20 @@ export default function BoardsPage() {
             )}
             {toolsMenuOpen && (
               <div className="fade-in absolute bottom-full right-0 mb-2 w-44 rounded-xl border border-line bg-ink-900 p-1 shadow-pop">
+                <button
+                  onClick={() => void handleImportPick()}
+                  className={`${menuItemClass} text-cream-dim hover:bg-overlay hover:text-cream`}
+                >
+                  <FileUp size={12} />
+                  {t('boards.datasets.import')}
+                </button>
+                <button
+                  onClick={openDatasetsPanel}
+                  className={`${menuItemClass} text-cream-dim hover:bg-overlay hover:text-cream`}
+                >
+                  <Database size={12} />
+                  {t('boards.datasets.manage')}
+                </button>
                 <button
                   onClick={handleResetLayout}
                   className={`${menuItemClass} text-cream-dim hover:bg-overlay hover:text-cream`}
@@ -658,6 +829,105 @@ export default function BoardsPage() {
 
       {(boardMenuOpen || toolsMenuOpen || galleryOpen) && (
         <div className="fixed inset-0 z-20" onClick={closeMenus} />
+      )}
+
+      {datasetsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setDatasetsOpen(false)}
+        >
+          <div
+            className="fade-in w-full max-w-[440px] rounded-2xl border border-line bg-ink-900 p-5 shadow-pop"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[14px] font-semibold text-cream">{t('boards.datasets.title')}</span>
+              <button
+                onClick={() => setDatasetsOpen(false)}
+                title={t('boards.cancel')}
+                className="rounded-md p-1 text-cream-faint transition hover:bg-overlay hover:text-cream"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="mt-4 max-h-[50vh] space-y-1 overflow-y-auto">
+              {datasets.length === 0 && (
+                <p className="px-1 py-3 text-[12px] leading-5 text-cream-faint">
+                  {t('boards.datasets.empty')}
+                </p>
+              )}
+              {datasets.map((d) => (
+                <div
+                  key={d.id}
+                  className="group/ds flex items-center gap-2 rounded-xl px-2 py-2 transition hover:bg-overlay"
+                >
+                  <Database size={13} className="shrink-0 text-accent" />
+                  {renamingId === d.id ? (
+                    <input
+                      autoFocus
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={() => void commitRenameDataset()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void commitRenameDataset()
+                        if (e.key === 'Escape') setRenamingId(null)
+                      }}
+                      maxLength={200}
+                      className="min-w-0 flex-1 rounded-md border border-line bg-ink-850 px-1.5 py-0.5 text-[12px] text-cream outline-none focus:border-accent/50"
+                    />
+                  ) : (
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[12.5px] text-cream">{d.name}</div>
+                      <div className="text-[10.5px] text-cream-faint">
+                        {t('boards.datasets.rowsCols', {
+                          rows: d.rows.length,
+                          cols: d.columns.length
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {renamingId !== d.id && (
+                    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover/ds:opacity-100">
+                      <button
+                        onClick={() => {
+                          setRenamingId(d.id)
+                          setRenameDraft(d.name)
+                        }}
+                        title={t('boards.datasets.rename')}
+                        className="rounded-md p-1 text-cream-faint transition hover:bg-overlay hover:text-cream"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                      <button
+                        onClick={() => void handleDeleteDataset(d.id)}
+                        title={
+                          confirmDeleteDatasetId === d.id
+                            ? t('boards.datasets.deleteConfirm')
+                            : t('boards.datasets.delete')
+                        }
+                        className={`rounded-md p-1 transition ${
+                          confirmDeleteDatasetId === d.id
+                            ? 'bg-red-500/15 text-red-500'
+                            : 'text-cream-faint hover:bg-red-500/15 hover:text-red-500'
+                        }`}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => setDatasetsOpen(false)}
+                className="rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition hover:border-ink-600 hover:text-cream"
+              >
+                {t('boards.cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {detailOpen && current && (

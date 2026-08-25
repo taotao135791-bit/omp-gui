@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Check, ExternalLink, X } from 'lucide-react'
-import { BoardWidget } from '@shared/types'
+import { BoardDataset, BoardWidget } from '@shared/types'
 import { TodoItem, isValidLinkUrl } from '@shared/boards'
+import {
+  DATASET_OPS,
+  DatasetOp,
+  aggregate,
+  columnIndex,
+  groupAggregate
+} from '@shared/datasets'
 import { useAppStore } from '../../store'
 import { useT } from '../../i18n'
 
@@ -11,11 +18,61 @@ import { useT } from '../../i18n'
  * `onConfigChange`, which the page persists immediately as a whole-board
  * upsert. The page remounts bodies (via React key) when the toolbar refresh
  * button is pressed, so live widgets re-render on demand.
+ *
+ * Counter/line/bar widgets can bind to an imported dataset (config.source ===
+ * 'dataset'): the value/labels/points are then computed here from the datasets
+ * the page passes down, using the shared aggregation helpers, and rendered by
+ * the same code path as manual values. A deleted dataset or renamed column
+ * degrades to a small placeholder instead of breaking the board.
  */
 
 export interface WidgetBodyProps {
   widget: BoardWidget
+  datasets: BoardDataset[]
   onConfigChange: (config: Record<string, unknown>) => void
+}
+
+function configOp(value: unknown): DatasetOp {
+  return typeof value === 'string' && (DATASET_OPS as readonly string[]).includes(value)
+    ? (value as DatasetOp)
+    : 'sum'
+}
+
+function configStr(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+/** Outcome of resolving a widget's dataset binding against the loaded datasets. */
+type Binding =
+  | { kind: 'ok'; dataset: BoardDataset; metricIndex: number; dimIndex: number }
+  | { kind: 'missing-dataset' | 'missing-column' | 'incomplete' }
+
+function resolveBinding(widget: BoardWidget, datasets: BoardDataset[], needsDim: boolean): Binding {
+  const datasetId = configStr(widget.config.datasetId)
+  const metric = configStr(widget.config.metric)
+  const dimension = configStr(widget.config.dimension)
+  if (!datasetId || !metric || (needsDim && !dimension)) return { kind: 'incomplete' }
+  const dataset = datasets.find((d) => d.id === datasetId)
+  if (!dataset) return { kind: 'missing-dataset' }
+  const metricIndex = columnIndex(dataset, metric)
+  const dimIndex = needsDim ? columnIndex(dataset, dimension) : -1
+  if (metricIndex < 0 || (needsDim && dimIndex < 0)) return { kind: 'missing-column' }
+  return { kind: 'ok', dataset, metricIndex, dimIndex }
+}
+
+function BindingPlaceholder({ binding }: { binding: Binding }) {
+  const t = useT()
+  const text =
+    binding.kind === 'missing-dataset'
+      ? t('boards.datasets.datasetMissing')
+      : binding.kind === 'missing-column'
+        ? t('boards.datasets.columnMissing')
+        : t('boards.datasets.incomplete')
+  return (
+    <div className="flex h-full items-center justify-center px-2 text-center text-[11px] text-cream-faint">
+      {text}
+    </div>
+  )
 }
 
 function ClockBody({ widget }: { widget: BoardWidget }) {
@@ -61,9 +118,19 @@ function NoteBody({ widget }: { widget: BoardWidget }) {
   )
 }
 
-function CounterBody({ widget }: { widget: BoardWidget }) {
-  const value = typeof widget.config.value === 'number' ? widget.config.value : 0
+function CounterBody({ widget, datasets }: { widget: BoardWidget; datasets: BoardDataset[] }) {
   const label = typeof widget.config.label === 'string' ? widget.config.label : ''
+  let value: number
+  if (widget.config.source === 'dataset') {
+    const binding = resolveBinding(widget, datasets, false)
+    if (binding.kind !== 'ok') return <BindingPlaceholder binding={binding} />
+    value = aggregate(
+      binding.dataset.rows.map((r) => r[binding.metricIndex] ?? ''),
+      configOp(widget.config.op)
+    )
+  } else {
+    value = typeof widget.config.value === 'number' ? widget.config.value : 0
+  }
   return (
     <div className="flex h-full flex-col items-center justify-center gap-1.5">
       <div className="break-all text-center font-mono text-[38px] leading-none tabular-nums text-cream">
@@ -140,16 +207,40 @@ function chartFormat(v: number): string {
 }
 
 /** Hand-rolled SVG line/bar chart with gridlines and min/mid/max readouts. */
-function ChartBody({ widget, bar }: { widget: BoardWidget; bar: boolean }) {
+function ChartBody({
+  widget,
+  bar,
+  datasets
+}: {
+  widget: BoardWidget
+  bar: boolean
+  datasets: BoardDataset[]
+}) {
   const t = useT()
-  const points = Array.isArray(widget.config.points)
-    ? (widget.config.points as unknown[]).filter(
-        (n): n is number => typeof n === 'number' && Number.isFinite(n)
-      )
-    : []
-  const labels = Array.isArray(widget.config.labels)
-    ? (widget.config.labels as unknown[]).filter((s): s is string => typeof s === 'string')
-    : []
+  let points: number[]
+  let labels: string[]
+  if (widget.config.source === 'dataset') {
+    const binding = resolveBinding(widget, datasets, true)
+    if (binding.kind !== 'ok') return <BindingPlaceholder binding={binding} />
+    const grouped = groupAggregate(
+      binding.dataset,
+      binding.dimIndex,
+      binding.metricIndex,
+      configOp(widget.config.op),
+      t('boards.datasets.other')
+    )
+    points = grouped.points
+    labels = grouped.labels
+  } else {
+    points = Array.isArray(widget.config.points)
+      ? (widget.config.points as unknown[]).filter(
+          (n): n is number => typeof n === 'number' && Number.isFinite(n)
+        )
+      : []
+    labels = Array.isArray(widget.config.labels)
+      ? (widget.config.labels as unknown[]).filter((s): s is string => typeof s === 'string')
+      : []
+  }
   if (points.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-[11px] text-cream-faint">
@@ -350,20 +441,20 @@ function LinkBody({ widget }: { widget: BoardWidget }) {
   )
 }
 
-export function WidgetBody({ widget, onConfigChange }: WidgetBodyProps) {
+export function WidgetBody({ widget, datasets, onConfigChange }: WidgetBodyProps) {
   switch (widget.type) {
     case 'clock':
       return <ClockBody widget={widget} />
     case 'note':
       return <NoteBody widget={widget} />
     case 'counter':
-      return <CounterBody widget={widget} />
+      return <CounterBody widget={widget} datasets={datasets} />
     case 'gauge':
       return <GaugeBody widget={widget} />
     case 'chart-line':
-      return <ChartBody widget={widget} bar={false} />
+      return <ChartBody widget={widget} bar={false} datasets={datasets} />
     case 'chart-bar':
-      return <ChartBody widget={widget} bar={true} />
+      return <ChartBody widget={widget} bar={true} datasets={datasets} />
     case 'todo':
       return <TodoBody widget={widget} onConfigChange={onConfigChange} />
     case 'link':

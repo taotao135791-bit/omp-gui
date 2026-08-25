@@ -42,12 +42,14 @@ import {
   PluginScaffoldSpec,
   PluginScaffoldResult,
   KanbanBoard,
+  BoardDataset,
   CustomProviderSpec,
   CustomProvidersListResult,
   CustomProviderSaveResult,
   CustomProviderDeleteResult
 } from '../shared/types'
 import { KanbanSaveResult } from '../shared/boards'
+import { DatasetImportResult, DatasetMutationResult } from '../shared/datasets'
 
 export interface ElectronAPI {
   detectCli: (force?: boolean) => Promise<CliInfo>
@@ -114,6 +116,12 @@ export interface ElectronAPI {
   /** Whole-board upsert; rejects structurally invalid boards. */
   saveBoard: (board: KanbanBoard) => Promise<KanbanSaveResult>
   deleteBoard: (id: string) => Promise<KanbanSaveResult>
+  /** Imported CSV/XLSX datasets board widgets can bind to. */
+  listBoardDatasets: () => Promise<BoardDataset[]>
+  /** Import a CSV/XLSX file as a dataset; errors are stable codes. */
+  importBoardDataset: (filePath: string) => Promise<DatasetImportResult>
+  deleteBoardDataset: (id: string) => Promise<DatasetMutationResult>
+  renameBoardDataset: (id: string, name: string) => Promise<DatasetMutationResult>
   selectFolder: () => Promise<string | null>
   selectFile: (filters?: { name: string; extensions: string[] }[]) => Promise<string | null>
   /** Pick an image file; resolves its base64 bytes (null when cancelled). */
@@ -303,6 +311,12 @@ const api: ElectronAPI = {
   listBoards: () => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_LIST),
   saveBoard: (board: KanbanBoard) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_SAVE, board),
   deleteBoard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DELETE, id),
+  listBoardDatasets: () => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_LIST),
+  importBoardDataset: (filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_IMPORT, filePath),
+  deleteBoardDataset: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_DELETE, id),
+  renameBoardDataset: (id: string, name: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_RENAME, id, name),
   selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FOLDER),
   selectFile: (filters?: { name: string; extensions: string[] }[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.DIALOG_SELECT_FILE, filters),

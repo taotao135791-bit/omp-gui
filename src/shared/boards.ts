@@ -7,6 +7,7 @@
  * (columns of cards) into v2 widget boards.
  */
 import { BoardWidget, BoardWidgetLayout, KanbanBoard, WidgetType } from './types'
+import { DATASET_LIMITS, DATASET_OPS, DatasetOp } from './datasets'
 
 export const BOARD_LIMITS = {
   maxBoards: 50,
@@ -376,6 +377,63 @@ function validateLayout(raw: unknown): BoardWidgetLayout | null {
 }
 
 /**
+ * Dataset-binding branch shared by the counter/chart configs. Binding fields
+ * (datasetId/metric/op/dimension) are validated whenever present so they
+ * survive manual↔dataset toggles; source 'dataset' additionally requires
+ * datasetId/metric/op (and dimension for charts). Returns false to drop the
+ * widget; otherwise whitelisted fields are copied into `config`.
+ */
+function validateSourceBranch(
+  raw: Record<string, unknown>,
+  config: Record<string, unknown>,
+  requireDimension: boolean
+): boolean {
+  const source = raw.source
+  if (source !== undefined && source !== 'manual' && source !== 'dataset') return false
+  let datasetId = ''
+  let metric = ''
+  let dimension = ''
+  let op: DatasetOp | undefined
+  if (raw.datasetId !== undefined) {
+    if (
+      typeof raw.datasetId !== 'string' ||
+      raw.datasetId.length > DATASET_LIMITS.maxIdLength ||
+      CONTROL_RE.test(raw.datasetId)
+    ) {
+      return false
+    }
+    datasetId = raw.datasetId
+  }
+  for (const key of ['metric', 'dimension'] as const) {
+    const value = raw[key]
+    if (value === undefined) continue
+    if (
+      typeof value !== 'string' ||
+      value.length > DATASET_LIMITS.maxColumnNameLength ||
+      CONTROL_RE.test(value)
+    ) {
+      return false
+    }
+    if (key === 'metric') metric = value
+    else dimension = value
+  }
+  if (raw.op !== undefined) {
+    if (typeof raw.op !== 'string' || !DATASET_OPS.includes(raw.op as DatasetOp)) return false
+    op = raw.op as DatasetOp
+  }
+  if (source === 'dataset') {
+    if (!datasetId || !metric || !op) return false
+    if (requireDimension && !dimension) return false
+  }
+  if (source !== undefined) config.source = source
+  if (datasetId) config.datasetId = datasetId
+  if (metric) config.metric = metric
+  if (dimension) config.dimension = dimension
+  if (op) config.op = op
+  return true
+}
+
+/**
  * Per-type config whitelist. Returns a sanitized config (unknown keys
  * stripped, defaults applied for absent keys) or null to drop the widget.
  */
@@ -413,6 +471,7 @@ function validateWidgetConfig(
         if (label === null) return null
         if (label) config.label = label
       }
+      if (!validateSourceBranch(raw, config, false)) return null
       return config
     }
     case 'gauge': {
@@ -456,6 +515,7 @@ function validateWidgetConfig(
         }
         config.labels = labels
       }
+      if (!validateSourceBranch(raw, config, true)) return null
       return config
     }
     case 'todo': {
