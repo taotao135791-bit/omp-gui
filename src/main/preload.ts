@@ -7,10 +7,9 @@ import {
   SessionEvent,
   SessionStats,
   SlashCommand,
-  PackageInfo,
+  PackageDescriptor,
   PackageActionResult,
   PackageManagerCapabilities,
-  PackageScope,
   AppSettings,
   InstallStatus,
   ReadFileResult,
@@ -28,7 +27,7 @@ import {
   SelectImageResult,
   UpdaterStatus,
   ChatMessage,
-  HistorySessionInfo,
+  HistorySessionDescriptor,
   RuntimeOverview,
   RuntimeModelInfo,
   LoginState,
@@ -39,14 +38,17 @@ import {
   HistoricalAgentRecord,
   WorkspaceGrant,
   RecentWorkspaceDescriptor,
-  PluginScaffoldSpec,
+  FileGrant,
+  DirectoryGrant,
+  PluginScaffoldRequest,
   PluginScaffoldResult,
   KanbanBoard,
   BoardDataset,
   CustomProviderSpec,
   CustomProvidersListResult,
   CustomProviderSaveResult,
-  CustomProviderDeleteResult
+  CustomProviderDeleteResult,
+  PackageLocalSourceGrant
 } from '../shared/types'
 import { KanbanSaveResult } from '../shared/boards'
 import { DatasetImportResult, DatasetMutationResult } from '../shared/datasets'
@@ -97,18 +99,31 @@ export interface ElectronAPI {
   revokeWorkspaceGrant: (grantId: string) => Promise<boolean>
   /** List active workspace grants. */
   listWorkspaceGrants: () => Promise<WorkspaceGrant[]>
-  listPackages: () => Promise<PackageInfo[]>
+  /** Path-free, opaque package rows; ids authorize row mutations. */
+  listPackages: () => Promise<PackageDescriptor[]>
   getPackageCapabilities: () => Promise<PackageManagerCapabilities>
   /** Search the npm registry for community pi packages (keyword pi-package). */
   searchPackages: (query: string, curatedOnly?: boolean) => Promise<CommunityPackageInfo[]>
+  /** Native chooser for a local package source; returns no filesystem path. */
+  selectPackageLocalSource: (kind: 'file' | 'directory') => Promise<PackageLocalSourceGrant | null>
+  /** Convert a real Finder-dropped File into a path-free local-source grant. */
+  grantDroppedPackageLocalSource: (file: File) => Promise<PackageLocalSourceGrant | null>
   installPackage: (source: string) => Promise<PackageActionResult>
-  removePackage: (source: string, scope?: PackageScope) => Promise<PackageActionResult>
-  updatePackage: (source: string, scope?: PackageScope) => Promise<PackageActionResult>
-  setPackageEnabled: (source: string, enabled: boolean, scope?: PackageScope) => Promise<PackageActionResult>
-  /** Scaffold a new pi package into <spec.parentDir>/<spec.name>. */
-  scaffoldPlugin: (spec: PluginScaffoldSpec) => Promise<PluginScaffoldResult>
-  /** Reveal a path in the OS file manager (shell.showItemInFolder). */
-  revealPath: (target: string) => Promise<boolean>
+  /** Install the Main-held local source selected above. */
+  installPackageLocalSource: (grantId: string) => Promise<PackageActionResult>
+  removePackage: (packageId: string) => Promise<PackageActionResult>
+  updatePackage: (packageId: string) => Promise<PackageActionResult>
+  setPackageEnabled: (packageId: string, enabled: boolean) => Promise<PackageActionResult>
+  /** Native directory picker for one opaque plugin-scaffold write grant. */
+  selectPluginScaffoldDirectory: () => Promise<DirectoryGrant | null>
+  /** Scaffold a new pi package under the DirectoryGrant selected above. */
+  scaffoldPlugin: (request: PluginScaffoldRequest) => Promise<PluginScaffoldResult>
+  /** Reveal the Main-held directory from a successful plugin scaffold. */
+  revealScaffoldedPlugin: (outputId: string) => Promise<boolean>
+  /** Install the Main-held directory from a successful plugin scaffold. */
+  installScaffoldedPlugin: (outputId: string) => Promise<PackageActionResult>
+  /** Safely open an ordinary HTTP(S) URL in the system browser. */
+  openExternalUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
   getStore: <K extends keyof AppSettings>(key: K) => Promise<AppSettings[K]>
   setStore: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => Promise<boolean>
   /** Kanban boards (local-only, validated in main on every read/write). */
@@ -118,8 +133,12 @@ export interface ElectronAPI {
   deleteBoard: (id: string) => Promise<KanbanSaveResult>
   /** Imported CSV/XLSX datasets board widgets can bind to. */
   listBoardDatasets: () => Promise<BoardDataset[]>
-  /** Import a CSV/XLSX file as a dataset; errors are stable codes. */
-  importBoardDataset: (filePath: string) => Promise<DatasetImportResult>
+  /** Native file picker for one opaque board-dataset import grant. */
+  selectBoardDatasetFile: () => Promise<FileGrant | null>
+  /** Turn a real Finder-dropped File into one opaque board-dataset import grant. */
+  grantDroppedBoardDatasetFile: (file: File) => Promise<FileGrant | null>
+  /** Import a CSV/XLSX dataset through its opaque FileGrant id. */
+  importBoardDataset: (fileGrantId: string) => Promise<DatasetImportResult>
   deleteBoardDataset: (id: string) => Promise<DatasetMutationResult>
   renameBoardDataset: (id: string, name: string) => Promise<DatasetMutationResult>
   selectFolder: () => Promise<string | null>
@@ -147,15 +166,15 @@ export interface ElectronAPI {
   exportHtml: (sessionId: string) => Promise<string | null>
   /** Live RPC get_state snapshot of a session; null when unavailable. */
   getSessionState: (sessionId: string) => Promise<SessionState | null>
-  /** Persisted sessions of a workspace (pi session files), newest first. */
-  listSessionHistory: (grantId: string) => Promise<HistorySessionInfo[]>
-  /** Resume a persisted session file under a workspace grant. */
+  /** Persisted sessions of a workspace, represented by opaque Main-held ids. */
+  listSessionHistory: (grantId: string) => Promise<HistorySessionDescriptor[]>
+  /** Resume an opaque history entry under the workspace grant that listed it. */
   resumeSession: (
     grantId: string,
-    filePath: string
+    historyId: string
   ) => Promise<{ session: Session; messages: ChatMessage[]; historicalAgents: HistoricalAgentRecord[] } | null>
-  /** Delete a persisted session file (guarded to pi's sessions root). */
-  deleteSessionFile: (filePath: string) => Promise<boolean>
+  /** Delete an opaque history entry under the workspace grant that listed it. */
+  deleteSessionFile: (grantId: string, historyId: string) => Promise<boolean>
   /** Set a session's display name (single line, max 60 chars). */
   setSessionName: (sessionId: string, name: string) => Promise<boolean>
   /** Live subagent roster (get_subagents); null when unsupported/unavailable. */
@@ -295,16 +314,31 @@ const api: ElectronAPI = {
   getPackageCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_CAPABILITIES),
   searchPackages: (query: string, curatedOnly?: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SEARCH, query, curatedOnly),
+  selectPackageLocalSource: (kind: 'file' | 'directory') =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SELECT_LOCAL_SOURCE, kind),
+  grantDroppedPackageLocalSource: async (file: File) => {
+    const filePath = webUtils.getPathForFile(file)
+    if (!filePath) return null
+    return ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_GRANT_DROPPED_LOCAL_SOURCE, filePath)
+  },
   installPackage: (source: string) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_INSTALL, source),
-  removePackage: (source: string, scope?: PackageScope) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_REMOVE, source, scope),
-  updatePackage: (source: string, scope?: PackageScope) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_UPDATE, source, scope),
-  setPackageEnabled: (source: string, enabled: boolean, scope?: PackageScope) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SET_ENABLED, source, enabled, scope),
-  scaffoldPlugin: (spec: PluginScaffoldSpec) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_SCAFFOLD, spec),
-  revealPath: (target: string) => ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_REVEAL, target),
+  installPackageLocalSource: (grantId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_INSTALL_LOCAL_SOURCE, grantId),
+  removePackage: (packageId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_REMOVE, packageId),
+  updatePackage: (packageId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_UPDATE, packageId),
+  setPackageEnabled: (packageId: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SET_ENABLED, packageId, enabled),
+  selectPluginScaffoldDirectory: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_SCAFFOLD_SELECT_DIRECTORY),
+  scaffoldPlugin: (request: PluginScaffoldRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_SCAFFOLD, request),
+  revealScaffoldedPlugin: (outputId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_SCAFFOLD_REVEAL, outputId),
+  installScaffoldedPlugin: (outputId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_SCAFFOLD_INSTALL, outputId),
+  openExternalUrl: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.SHELL_OPEN_EXTERNAL_URL, url),
   getStore: (key: keyof AppSettings) => ipcRenderer.invoke(IPC_CHANNELS.STORE_GET, key),
   setStore: (key: keyof AppSettings, value: unknown) =>
     ipcRenderer.invoke(IPC_CHANNELS.STORE_SET, key, value),
@@ -312,8 +346,20 @@ const api: ElectronAPI = {
   saveBoard: (board: KanbanBoard) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_SAVE, board),
   deleteBoard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DELETE, id),
   listBoardDatasets: () => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_LIST),
-  importBoardDataset: (filePath: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_IMPORT, filePath),
+  selectBoardDatasetFile: () => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_SELECT_FILE),
+  grantDroppedBoardDatasetFile: async (file: File) => {
+    // webUtils only accepts a real renderer File object. The raw path stays in
+    // trusted preload and Main mints an opaque grant before the renderer sees it.
+    try {
+      const filePath = webUtils.getPathForFile(file)
+      if (!filePath) return null
+      return await ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_GRANT_DROPPED_FILE, filePath)
+    } catch {
+      return null
+    }
+  },
+  importBoardDataset: (fileGrantId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_IMPORT, fileGrantId),
   deleteBoardDataset: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_DELETE, id),
   renameBoardDataset: (id: string, name: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_RENAME, id, name),
@@ -346,10 +392,10 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SESSION_STATE, sessionId),
   listSessionHistory: (grantId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_LIST_SESSION_HISTORY, grantId),
-  resumeSession: (grantId: string, filePath: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.OMP_RESUME_SESSION, grantId, filePath),
-  deleteSessionFile: (filePath: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.OMP_DELETE_SESSION_FILE, filePath),
+  resumeSession: (grantId: string, historyId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_RESUME_SESSION, grantId, historyId),
+  deleteSessionFile: (grantId: string, historyId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.OMP_DELETE_SESSION_FILE, grantId, historyId),
   setSessionName: (sessionId: string, name: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.OMP_SET_SESSION_NAME, sessionId, name),
   getSubagents: (sessionId: string) =>

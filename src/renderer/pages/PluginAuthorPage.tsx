@@ -11,7 +11,7 @@ import {
   Sparkles,
   Wrench
 } from 'lucide-react'
-import { PluginScaffoldError, PluginTemplate } from '@shared/types'
+import { DirectoryGrant, PluginScaffoldError, PluginScaffoldOutput, PluginTemplate } from '@shared/types'
 import { isValidPackageName, isValidVersion } from '@shared/pluginScaffold'
 import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
@@ -21,10 +21,12 @@ const inputClass =
 
 const ERROR_KEYS: Record<PluginScaffoldError, I18nKey> = {
   'invalid-spec': 'author.error.invalidSpec',
+  'invalid-grant': 'author.error.invalidGrant',
   'invalid-name': 'author.error.invalidName',
   'invalid-version': 'author.error.invalidVersion',
   'no-resources': 'author.error.noResources',
   'dir-missing': 'author.error.dirMissing',
+  'unsafe-path': 'author.error.unsafePath',
   'dir-not-empty': 'author.error.dirNotEmpty',
   'write-failed': 'author.error.writeFailed'
 }
@@ -44,7 +46,7 @@ const TEMPLATES: { key: PluginTemplate; labelKey: I18nKey }[] = [
 ]
 
 interface ScaffoldedPackage {
-  dir: string
+  output: PluginScaffoldOutput
   files: string[]
 }
 
@@ -56,7 +58,7 @@ export default function PluginAuthorPage() {
   const [description, setDescription] = useState('')
   const [version, setVersion] = useState('0.1.0')
   const [author, setAuthor] = useState('')
-  const [parentDir, setParentDir] = useState('')
+  const [parentDirectory, setParentDirectory] = useState<DirectoryGrant | null>(null)
   const [resources, setResources] = useState<Record<ResourceKey, boolean>>({
     extension: true,
     skill: false,
@@ -71,13 +73,13 @@ export default function PluginAuthorPage() {
   const [installLog, setInstallLog] = useState<string | null>(null)
 
   const pickDir = async () => {
-    const picked = await window.electronAPI.selectFolder()
-    if (picked) setParentDir(picked)
+    const grant = await window.electronAPI.selectPluginScaffoldDirectory()
+    if (grant) setParentDirectory(grant)
   }
 
   // Renderer-side checks are UX only — the main process validates again.
   const validate = (): I18nKey | null => {
-    if (!name.trim() || !description.trim() || !parentDir) return 'author.error.required'
+    if (!name.trim() || !description.trim() || !parentDirectory) return 'author.error.required'
     if (!isValidPackageName(name.trim())) return 'author.error.invalidName'
     if (!isValidVersion(version.trim())) return 'author.error.invalidVersion'
     if (!resources.extension && !resources.skill && !resources.prompt) {
@@ -93,6 +95,7 @@ export default function PluginAuthorPage() {
       setError({ key: invalid })
       return
     }
+    if (!parentDirectory) return
     setError(null)
     setSubmitting(true)
     const res = await window.electronAPI.scaffoldPlugin({
@@ -101,7 +104,7 @@ export default function PluginAuthorPage() {
       description: description.trim(),
       version: version.trim(),
       author: author.trim() || undefined,
-      parentDir,
+      parentGrantId: parentDirectory.id,
       extension: resources.extension,
       skill: resources.skill,
       prompt: resources.prompt,
@@ -109,8 +112,12 @@ export default function PluginAuthorPage() {
     })
     setSubmitting(false)
     if (res.ok) {
-      setResult({ dir: res.dir, files: res.files })
+      setResult({ output: res.output, files: res.files })
     } else {
+      // Grants expire/are consumed by Main. Do not leave a visually selected
+      // directory that can only fail again; the error asks the user to pick it
+      // anew and the form returns to its normal required-location state.
+      if (res.error === 'invalid-grant') setParentDirectory(null)
       setError({ key: ERROR_KEYS[res.error] ?? 'author.error.invalidSpec', detail: res.detail })
     }
   }
@@ -119,7 +126,7 @@ export default function PluginAuthorPage() {
     if (!result || installing || installed) return
     setInstalling(true)
     setInstallLog(null)
-    const res = await window.electronAPI.installPackage(result.dir)
+    const res = await window.electronAPI.installScaffoldedPlugin(result.output.id)
     setInstalling(false)
     if (res.ok) {
       setInstalled(true)
@@ -127,6 +134,12 @@ export default function PluginAuthorPage() {
     } else {
       setInstallLog(res.log || 'install failed')
     }
+  }
+
+  const handleReveal = async () => {
+    if (!result) return
+    const revealed = await window.electronAPI.revealScaffoldedPlugin(result.output.id)
+    if (!revealed) setInstallLog(t('author.error.outputUnavailable'))
   }
 
   return (
@@ -154,7 +167,7 @@ export default function PluginAuthorPage() {
                 <span className="text-[13px] font-semibold text-cream">{t('author.done')}</span>
               </div>
               <div className="mt-1.5 font-mono text-[11px] break-all text-cream-faint">
-                {result.dir}
+                {result.output.name}
               </div>
               <div className="mt-3.5 text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
                 {t('author.files')}
@@ -171,7 +184,7 @@ export default function PluginAuthorPage() {
               )}
               <div className="mt-4 flex justify-end gap-2">
                 <button
-                  onClick={() => window.electronAPI.revealPath(result.dir)}
+                  onClick={handleReveal}
                   className="flex items-center gap-1.5 rounded-full border border-line px-3.5 py-2 text-[12px] text-cream-dim transition hover:border-ink-600 hover:text-cream"
                 >
                   <FolderOpen size={12} />
@@ -330,7 +343,7 @@ export default function PluginAuthorPage() {
                 <Field label={t('author.location')} hint={t('author.locationHint')}>
                   <div className="flex gap-2">
                     <div className="min-w-0 flex-1 truncate rounded-lg border border-line bg-ink-900 px-3 py-2 font-mono text-[13px] text-cream-dim">
-                      {parentDir || ' '}
+                      {parentDirectory?.name || ' '}
                     </div>
                     <button
                       onClick={pickDir}

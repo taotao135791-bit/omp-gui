@@ -1,4 +1,5 @@
 import { ExtensionUiAnswer, SessionEvent } from '../../shared/types'
+import { safeExtensionExternalUrl } from './extensionLinks'
 
 /**
  * Semantic normalization for pi/omp `--mode rpc` frames: raw RPC objects in,
@@ -25,7 +26,7 @@ import { ExtensionUiAnswer, SessionEvent } from '../../shared/types'
  *   - input:   title, placeholder?, timeout?
  *   - editor:  title, prefill?
  *   - cancel:  targetId — dismisses a pending interactive dialog
- *   - open_url: url, launchUrl?, instructions? — host must open a browser
+ *   - open_url: url, launchUrl?, instructions? — host presents a user-mediated browser link
  *   - notify / setStatus / setWidget / setTitle / set_editor_text: no response
  * - Unknown frames are ignored by design (forward compatibility), but the
  *   discriminators we do read (`type`, ids) are always validated.
@@ -34,6 +35,52 @@ import { ExtensionUiAnswer, SessionEvent } from '../../shared/types'
  */
 
 export type ExtensionUiMethod = 'select' | 'confirm' | 'input' | 'editor'
+
+/**
+ * Untrusted extensions can send UI frames while a session is running. Keep
+ * their presentation payloads bounded before they ever reach renderer state.
+ * These are deliberately generous enough for an editor request while still
+ * preventing one malformed extension from allocating an unbounded dialog.
+ */
+export const EXTENSION_UI_LIMITS = {
+  requestId: 200,
+  title: 2_000,
+  message: 16_000,
+  optionCount: 100,
+  option: 2_000,
+  prefill: 64_000,
+  timeoutMs: 24 * 60 * 60 * 1_000
+} as const
+
+function boundedText(value: unknown, maxLength: number): string | undefined {
+  return typeof value === 'string' ? value.slice(0, maxLength) : undefined
+}
+
+function validExtensionRequestId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= EXTENSION_UI_LIMITS.requestId &&
+    !/[\x00-\x1f\x7f]/.test(value)
+  )
+}
+
+function boundedOptions(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value
+    .filter((option): option is string => typeof option === 'string')
+    .slice(0, EXTENSION_UI_LIMITS.optionCount)
+    .map((option) => option.slice(0, EXTENSION_UI_LIMITS.option))
+}
+
+function boundedTimeout(value: unknown): number | undefined {
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value > 0 &&
+    value <= EXTENSION_UI_LIMITS.timeoutMs
+    ? Math.floor(value)
+    : undefined
+}
 
 /**
  * Tool results arrive structured: `{content: [{type:'text', text}, ...]}`.
@@ -77,6 +124,10 @@ export type RpcParseResult =
     }
   /** An extension dismissed a pending interactive dialog (method: cancel). */
   | { kind: 'extension_ui_cancel'; targetId: string }
+  /** A malformed extension UI request was rejected before it could block a turn. */
+  | { kind: 'extension_ui_invalid'; reason: string }
+  /** Upstream asked for host UI functionality the desktop host does not implement. */
+  | { kind: 'extension_ui_unsupported'; method: string }
   /** The runtime asks the host to open a URL in the system browser. */
   | { kind: 'open_url'; url: string; launchUrl?: string; instructions?: string }
   /**
@@ -207,25 +258,25 @@ export function normalizeRpcFrame(
       }
 
     case 'extension_ui_request': {
-      const method = String(payload.method ?? '')
+      const method = typeof payload.method === 'string' ? payload.method : ''
       if (method === 'cancel') {
-        return typeof payload.targetId === 'string'
+        return validExtensionRequestId(payload.targetId)
           ? { kind: 'extension_ui_cancel', targetId: payload.targetId }
-          : { kind: 'none' }
+          : { kind: 'extension_ui_invalid', reason: 'The extension sent an invalid dialog cancellation.' }
       }
       if (method === 'open_url') {
-        return typeof payload.url === 'string'
+        const url = safeExtensionExternalUrl(payload.url)
+        return url
           ? {
               kind: 'open_url',
-              url: payload.url,
-              launchUrl: typeof payload.launchUrl === 'string' ? payload.launchUrl : undefined,
-              instructions:
-                typeof payload.instructions === 'string' ? payload.instructions : undefined
+              url,
+              launchUrl: safeExtensionExternalUrl(payload.launchUrl) ?? undefined,
+              instructions: boundedText(payload.instructions, EXTENSION_UI_LIMITS.message)
             }
-          : { kind: 'none' }
+          : { kind: 'extension_ui_invalid', reason: 'The extension requested an invalid external URL.' }
       }
       if (method === 'notify') {
-        return systemMessage(sessionId, String(payload.message ?? ''))
+        return systemMessage(sessionId, boundedText(payload.message, EXTENSION_UI_LIMITS.message) ?? '')
       }
       if (
         method === 'select' ||
@@ -233,23 +284,26 @@ export function normalizeRpcFrame(
         method === 'input' ||
         method === 'editor'
       ) {
+        if (!validExtensionRequestId(payload.id)) {
+          return { kind: 'extension_ui_invalid', reason: 'The extension sent a dialog without a valid id.' }
+        }
         // Interactive requests need a response from the user
         return {
           kind: 'extension_ui',
-          id: String(payload.id ?? ''),
+          id: payload.id,
           method,
-          title: String(payload.title ?? ''),
-          message: typeof payload.message === 'string' ? payload.message : undefined,
-          options: Array.isArray(payload.options)
-            ? payload.options.map((o) => String(o))
-            : undefined,
-          placeholder: typeof payload.placeholder === 'string' ? payload.placeholder : undefined,
-          prefill: typeof payload.prefill === 'string' ? payload.prefill : undefined,
-          timeout: typeof payload.timeout === 'number' ? payload.timeout : undefined
+          title: boundedText(payload.title, EXTENSION_UI_LIMITS.title) ?? '',
+          message: boundedText(payload.message, EXTENSION_UI_LIMITS.message),
+          options: boundedOptions(payload.options),
+          placeholder: boundedText(payload.placeholder, EXTENSION_UI_LIMITS.title),
+          prefill: boundedText(payload.prefill, EXTENSION_UI_LIMITS.prefill),
+          timeout: boundedTimeout(payload.timeout)
         }
       }
-      // setStatus / setWidget / setTitle / set_editor_text — fire and forget
-      return { kind: 'none' }
+      return {
+        kind: 'extension_ui_unsupported',
+        method: method.slice(0, 100) || 'unknown'
+      }
     }
 
     case 'extension_error':

@@ -22,7 +22,7 @@ import {
   ChevronRight,
   Loader2
 } from 'lucide-react'
-import { HistorySessionInfo } from '@shared/types'
+import { HistorySessionDescriptor } from '@shared/types'
 import { useAppStore } from '../store'
 import { useT } from '../i18n'
 import { createSessionForCurrentProject } from '../lib/session'
@@ -76,11 +76,11 @@ export default function Sidebar() {
   const [query, setQuery] = useState('')
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [projectsExpanded, setProjectsExpanded] = useState(false)
-  const [resumingPath, setResumingPath] = useState<string | null>(null)
-  const [restoreFailedPath, setRestoreFailedPath] = useState<string | null>(null)
-  const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null)
+  const [resumingHistoryId, setResumingHistoryId] = useState<string | null>(null)
+  const [restoreFailedHistoryId, setRestoreFailedHistoryId] = useState<string | null>(null)
+  const [confirmDeleteHistoryId, setConfirmDeleteHistoryId] = useState<string | null>(null)
   const [confirmDeleteSessionId, setConfirmDeleteSessionId] = useState<string | null>(null)
-  const [deleteFailedPath, setDeleteFailedPath] = useState<string | null>(null)
+  const [deleteFailedHistoryId, setDeleteFailedHistoryId] = useState<string | null>(null)
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // One-time bootstrap of the most-recent workspace: only before the initial
   // hydration completes. A user explicitly clearing the current workspace must
@@ -134,28 +134,18 @@ export default function Sidebar() {
     void loadHistorySessions(currentWorkspace?.id ?? null)
   }
 
-  const handleResumeHistory = async (info: HistorySessionInfo) => {
+  const handleResumeHistory = async (info: HistorySessionDescriptor) => {
     // While the list is reloading for a new workspace its entries may still
     // belong to the previous project — resuming one would use the new grant.
-    if (resumingPath || historyLoading) return
-    // A history session belongs to a workspace. When none is selected, derive it
-    // from the session itself so clicking always opens the chat (never a
-    // no-op that just stays on the home page).
-    let grant = currentWorkspace
-    if (!grant) {
-      const workspace = recentWorkspaces.find((entry) => entry.displayPath === info.cwd)
-      if (!workspace) return
-      await activateRecentWorkspace(workspace.id)
-      grant = useAppStore.getState().currentWorkspace
-      if (!grant) return
-    }
-    setResumingPath(info.filePath)
-    setRestoreFailedPath(null)
+    if (resumingHistoryId || historyLoading || !currentWorkspace) return
+    const grant = currentWorkspace
+    setResumingHistoryId(info.id)
+    setRestoreFailedHistoryId(null)
     try {
-      const result = await window.electronAPI.resumeSession(grant.id, info.filePath)
+      const result = await window.electronAPI.resumeSession(grant.id, info.id)
       if (!result) {
-        setRestoreFailedPath(info.filePath)
-        console.error('Failed to resume session:', info.filePath)
+        setRestoreFailedHistoryId(info.id)
+        console.error('Failed to resume history session:', info.id)
         return
       }
       const { session, messages: restored, historicalAgents } = result
@@ -168,35 +158,39 @@ export default function Sidebar() {
           : session.title
       addSession({ ...session, title })
       setMessages(session.id, restored)
+      // A resumed session is now represented by its live row. Its old opaque
+      // history capability must not leave a duplicate historical row behind.
+      removeHistorySession(info.id)
       // Fold durable historical agents into the projection — live roster is
       // empty for these. Unknown stays unknown until durable data proves more.
       useAppStore.getState().applyHistoricalAgents(session.id, historicalAgents ?? [])
       setCurrentSessionId(session.id)
       navigate('/')
     } finally {
-      setResumingPath(null)
+      setResumingHistoryId(null)
     }
   }
 
-  const handleDeleteHistory = async (info: HistorySessionInfo) => {
-    if (confirmDeletePath !== info.filePath) {
-      setConfirmDeletePath(info.filePath)
-      setDeleteFailedPath(null)
+  const handleDeleteHistory = async (info: HistorySessionDescriptor) => {
+    if (historyLoading || !currentWorkspace) return
+    if (confirmDeleteHistoryId !== info.id) {
+      setConfirmDeleteHistoryId(info.id)
+      setDeleteFailedHistoryId(null)
       if (confirmTimer.current) clearTimeout(confirmTimer.current)
-      confirmTimer.current = setTimeout(() => setConfirmDeletePath(null), 3000)
+      confirmTimer.current = setTimeout(() => setConfirmDeleteHistoryId(null), 3000)
       return
     }
-    setConfirmDeletePath(null)
+    setConfirmDeleteHistoryId(null)
     if (confirmTimer.current) clearTimeout(confirmTimer.current)
-    const ok = await window.electronAPI.deleteSessionFile(info.filePath)
+    const ok = await window.electronAPI.deleteSessionFile(currentWorkspace.id, info.id)
     // Only the history entry goes away on success — a failed delete keeps the
     // item and surfaces a user-visible error (never silent success).
     if (ok) {
-      setDeleteFailedPath(null)
-      removeHistorySession(info.filePath)
+      setDeleteFailedHistoryId(null)
+      removeHistorySession(info.id)
     } else {
-      setDeleteFailedPath(info.filePath)
-      setTimeout(() => setDeleteFailedPath((p) => (p === info.filePath ? null : p)), 3000)
+      setDeleteFailedHistoryId(info.id)
+      setTimeout(() => setDeleteFailedHistoryId((id) => (id === info.id ? null : id)), 3000)
     }
   }
 
@@ -210,7 +204,7 @@ export default function Sidebar() {
 
   // Sidebar rows are projected from the unified registry, then joined to the
   // live session map for runtime-only fields (busy, queue, approval state).
-  // A historical record therefore upgrades in place when it is resumed.
+  // On resume, the history capability is removed and a live record takes over.
   const scopedLiveSessions = useMemo(() => {
     const liveIds = new Set(
       scopedRecords
@@ -300,7 +294,7 @@ export default function Sidebar() {
   const visibleHistory = useMemo(() => {
     let list = scopedRecords
       .filter((record) => !record.isLive && record.history)
-      .map((record) => record.history as HistorySessionInfo)
+      .map((record) => record.history as HistorySessionDescriptor)
     const q = query.trim().toLowerCase()
     if (q) list = list.filter((h) => h.title.toLowerCase().includes(q))
     return list
@@ -443,15 +437,15 @@ export default function Sidebar() {
     )
   }
 
-  const renderHistoryRow = (info: HistorySessionInfo) => {
-    const resuming = resumingPath === info.filePath
-    const confirming = confirmDeletePath === info.filePath
-    const failed = restoreFailedPath === info.filePath
+  const renderHistoryRow = (info: HistorySessionDescriptor) => {
+    const resuming = resumingHistoryId === info.id
+    const confirming = confirmDeleteHistoryId === info.id
+    const failed = restoreFailedHistoryId === info.id
     return (
       <div
-        key={info.filePath}
+        key={info.id}
         onClick={() => void handleResumeHistory(info)}
-        title={info.filePath}
+        title={info.title}
         className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-[6px] transition-colors duration-150 hover:bg-overlay ${
           resuming ? 'pointer-events-none opacity-60' : ''
         }`}
@@ -462,14 +456,14 @@ export default function Sidebar() {
           </div>
           <div
             className={`truncate text-[11px] leading-4 ${
-              failed || deleteFailedPath === info.filePath
+              failed || deleteFailedHistoryId === info.id
                 ? 'text-red-500'
                 : 'text-cream-faint/70'
             }`}
           >
             {failed
               ? t('history.restoreFailed')
-              : deleteFailedPath === info.filePath
+              : deleteFailedHistoryId === info.id
                 ? t('history.deleteFailed')
                 : formatRelativeTime(info.timestamp, language)}
           </div>

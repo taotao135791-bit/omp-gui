@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { existsSync } from 'node:fs'
-import { app, shell } from 'electron'
+import { app } from 'electron'
 import {
   ChatMessage,
   ExtensionUiAnswer,
@@ -25,6 +25,7 @@ import { reconstructSessionMetadata, reconstructHistoricalAgents } from '../sess
 import { isSessionFilePath } from '../sessionHistory'
 import { planSpawn, removeApprovalConfig, resolvePermissionMode, spawnProcess, writeApprovalConfig } from './OmpProcess'
 import { OmpSession } from './OmpSession'
+import { extensionExternalLinkMessage } from './extensionLinks'
 import {
   detectCli,
   noteHandshake,
@@ -140,10 +141,20 @@ export function createSession(
           if (entry) void bootstrapSubagentBridge(entry)
         }
       },
-      onOpenUrl: (url, launchUrl) => {
-        // OAuth-style flows ask the host to open a browser; http(s) only.
-        const target = launchUrl ?? url
-        if (/^https?:\/\//i.test(target)) void shell.openExternal(target)
+      onOpenUrl: (url, launchUrl, instructions) => {
+        // Third-party extensions must never open a browser without a user
+        // gesture. Surface a safe, explicit link in the transcript instead.
+        const content = extensionExternalLinkMessage(url, launchUrl, instructions)
+        if (content) {
+          onEvent({ type: 'message', sessionId: id, role: 'system', content })
+        } else {
+          onEvent({
+            type: 'error',
+            sessionId: id,
+            message: 'Extension requested an invalid external URL.',
+            recoverable: true
+          })
+        }
       },
       onDebug: (message) => {
         if (!app.isPackaged) console.debug(`[omp:${id.slice(-6)}]`, message)

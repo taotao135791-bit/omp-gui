@@ -2,8 +2,27 @@ import { open, readdir, stat, unlink } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { HistorySessionInfo } from '../shared/types'
 import { defaultPiAgentDir } from './piSettings'
+
+/**
+ * Main-only record discovered from a durable session file.
+ *
+ * `filePath` is deliberately kept out of the shared renderer contract. It is
+ * converted into an opaque HistorySessionDescriptor by HistorySessionGrantManager
+ * before crossing IPC.
+ */
+export interface HistorySessionFile {
+  /** Session uuid from the file header. */
+  uuid: string
+  /** Main-only canonical candidate path for the durable JSONL file. */
+  filePath: string
+  /** First user message, truncated to 80 chars; 'Untitled' when absent. */
+  title: string
+  /** Session start time, epoch ms. */
+  timestamp: number
+  /** Header metadata; informational only and never trusted for authorization. */
+  cwd: string
+}
 
 /**
  * Read-only access to pi's on-disk session files:
@@ -158,7 +177,7 @@ function textContentOf(content: unknown): string {
  * file with {"type":"session",…} directly, current omp prepends a
  * {"type":"title",…} line. Scan the first few lines for the header instead.
  */
-async function parseSessionFile(filePath: string): Promise<HistorySessionInfo | null> {
+async function parseSessionFile(filePath: string): Promise<HistorySessionFile | null> {
   let head: string
   try {
     head = await readHead(filePath, TITLE_SCAN_BYTES)
@@ -225,8 +244,8 @@ async function parseSessionFile(filePath: string): Promise<HistorySessionInfo | 
 export async function listSessionHistory(
   projectDir: string,
   agentDir?: string
-): Promise<HistorySessionInfo[]> {
-  const out: HistorySessionInfo[] = []
+): Promise<HistorySessionFile[]> {
+  const out: HistorySessionFile[] = []
   const seenFiles = new Set<string>()
   for (const dir of sessionDirCandidatesFor(projectDir, agentDir)) {
     let names: string[]

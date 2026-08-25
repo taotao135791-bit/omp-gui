@@ -64,7 +64,9 @@ speaks a protocol this app can't, the session fails with an explicit
 compatibility message (both version lists), not a parse error. Settings →
 About shows the detected version, the negotiated protocol, and the runtime's
 supported versions. The tested matrix lives in `docs/protocol-facts.md`; the
-real-binary suite runs with `pnpm test:omp`.
+real-binary suite runs with `pnpm test:omp`. Native OMP/Pi packages and any
+future GUI contribution have deliberately separate boundaries; see
+`docs/extension-host-contract.md`.
 
 ## Settings & authentication compatibility
 
@@ -104,6 +106,17 @@ pnpm install
 pnpm dev
 ```
 
+## Contributing
+
+Use a focused branch and pull request for every change. `CONTRIBUTING.md`
+defines the review, compatibility, and release process; `AGENTS.md` records
+the working agreement for human contributors and coding agents. Security,
+runtime, IPC, persistence, and release changes need code-owner review.
+
+The repository does not yet declare an open-source license. The project owner
+must make that legal decision before inviting external redistribution or
+contributions; see `CONTRIBUTING.md`.
+
 ## Security
 
 - **Electron boundary** — `contextIsolation: true`, `nodeIntegration: false`,
@@ -113,6 +126,14 @@ pnpm dev
   realpath-canonicalized root allowlist. Roots come from user-selected folders
   (native dialog) or persisted recent workspaces; the renderer can't grant
   itself arbitrary filesystem authority.
+- **Session-history capabilities** — the renderer receives opaque, expiring
+  history ids rather than transcript paths. Resume/delete are bound to the
+  listing window and current workspace grant, then revalidate canonical file
+  identity before OMP or disk access.
+- **Package-code authorization** — package rows and local selections are
+  short-lived Main-owned capabilities; install, update, remove and
+  enable/disable actions require a native confirmation instead of trusting a
+  renderer-supplied source path.
 - **Symlink containment** — Git changes, session history and project-file reads
   resolve real paths, so an in-workspace symlink pointing outside the workspace
   is never read through (its target content is not exposed).
@@ -159,14 +180,23 @@ quota are untouched. `pnpm test:omp:live` is opt-in only (set
 `OMP_GUI_RUN_LIVE_TESTS=1`); it may use configured provider credentials and
 consume tokens, so it is never invoked automatically.
 
-When cutting a GitHub release, upload **all** updater assets, not just the dmgs — electron-updater needs the rest:
+### Publishing a release
+
+Pushing a tag that exactly matches `v` plus `package.json`'s version triggers
+the Release workflow:
 
 ```bash
-gh release create vX.Y.Z \
-  release/OMP-GUI-arm64.dmg release/OMP-GUI-x64.dmg \
-  release/OMP-GUI-arm64.zip release/OMP-GUI-x64.zip \
-  release/latest-mac.yml release/*.blockmap
+git switch main
+git pull --ff-only
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
+
+The workflow reruns typecheck, unit tests, and the pinned OMP compatibility
+suite; builds both macOS architectures; verifies the DMGs, ZIPs, update
+manifest, and blockmaps; generates `SHA256SUMS.txt`; then creates or updates
+the GitHub Release. Do not manually upload a partial set of updater assets.
+See `CONTRIBUTING.md` for the full release checklist.
 
 ## Project Structure
 

@@ -18,11 +18,12 @@ import {
   Search,
   Hammer,
   Check,
-  Loader2
+  Loader2,
+  Power
 } from 'lucide-react'
 import {
   CommunityPackageInfo,
-  PackageInfo,
+  PackageDescriptor,
   PackageManagerCapabilities,
   PackageResource
 } from '@shared/types'
@@ -43,7 +44,7 @@ const CATEGORY_KEYS: Record<string, I18nKey> = {
 
 type PendingAction =
   | { kind: 'install' }
-  | { kind: 'remove' | 'update' | 'toggle'; source: string }
+  | { kind: 'remove' | 'update' | 'toggle'; id: string }
   | null
 
 type DropZone = 'chassis' | 'rack' | 'trash'
@@ -66,12 +67,11 @@ function hasFileDrag(e: React.DragEvent | DragEvent): boolean {
 }
 
 export default function PackagesPage() {
-  const { packages, setPackages, updatePackageEnabled } = useAppStore()
+  const { packages, setPackages } = useAppStore()
   const t = useT()
   const [source, setSource] = useState('')
   const [pending, setPending] = useState<PendingAction>(null)
   const [log, setLog] = useState<{ ok: boolean; text: string } | null>(null)
-  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
   const [dragSource, setDragSource] = useState<string | null>(null)
   const [overZone, setOverZone] = useState<DropZone | null>(null)
   const [fileDrag, setFileDrag] = useState(false)
@@ -82,7 +82,6 @@ export default function PackagesPage() {
     canUpdate: false
   })
   const [capabilitiesLoaded, setCapabilitiesLoaded] = useState(false)
-  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fileDragDepth = useRef(0)
   const refreshGeneration = useRef(0)
 
@@ -119,117 +118,88 @@ export default function PackagesPage() {
     if (isCurrentOmp && tab === 'marketplace') setTab('installed')
   }, [isCurrentOmp, tab])
 
-  useEffect(() => {
-    return () => {
-      if (confirmTimer.current) clearTimeout(confirmTimer.current)
-    }
-  }, [])
-
   const run = async (action: PendingAction, fn: () => Promise<{ ok: boolean; log: string }>) => {
     setPending(action)
-    const result = await fn()
-    setLog(result.log ? { ok: result.ok, text: result.log } : { ok: result.ok, text: '' })
-    await refresh()
-    setPending(null)
-  }
-
-  const handleInstall = async (target?: string) => {
-    const value = (target ?? source).trim()
-    if (!value || pending) return
-    setSource('')
-    await run({ kind: 'install' }, () => window.electronAPI.installPackage(value))
-  }
-
-  const handlePick = async (kind: 'folder' | 'file') => {
-    const picked =
-      kind === 'folder'
-        ? await window.electronAPI.selectFolder()
-        : await window.electronAPI.selectFile()
-    if (picked) handleInstall(picked)
-  }
-
-  const handleRemove = async (pkg: PackageInfo) => {
-    await run({ kind: 'remove', source: pkg.source }, () =>
-      window.electronAPI.removePackage(pkg.commandSource ?? pkg.source, pkg.scope)
-    )
-  }
-
-  const handleRemoveClick = async (pkg: PackageInfo) => {
-    if (confirmRemove !== pkg.source) {
-      setConfirmRemove(pkg.source)
-      if (confirmTimer.current) clearTimeout(confirmTimer.current)
-      confirmTimer.current = setTimeout(() => setConfirmRemove(null), 3000)
-      return
-    }
-    setConfirmRemove(null)
-    if (confirmTimer.current) clearTimeout(confirmTimer.current)
-    await handleRemove(pkg)
-  }
-
-  const handleUpdate = async (pkg: PackageInfo) => {
-    await run({ kind: 'update', source: pkg.source }, () =>
-      window.electronAPI.updatePackage(pkg.commandSource ?? pkg.source, pkg.scope)
-    )
-  }
-
-  const handleToggle = async (pkg: PackageInfo, next: boolean) => {
-    if (!packageCapabilities.canToggle || pending || pkg.enabled === next) return
-    setPending({ kind: 'toggle', source: pkg.source })
-    updatePackageEnabled(pkg.source, next)
     try {
-      const result = await window.electronAPI.setPackageEnabled(
-        pkg.commandSource ?? pkg.source,
-        next,
-        pkg.scope
-      )
-      if (!result.ok) {
-        updatePackageEnabled(pkg.source, !next)
-        setLog({ ok: false, text: result.log })
-        return
-      }
-
-      // Confirm native state rather than preserving only an optimistic move.
+      const result = await fn()
+      setLog(result.log ? { ok: result.ok, text: result.log } : null)
       await refresh()
-    } catch (err) {
-      updatePackageEnabled(pkg.source, !next)
-      setLog({ ok: false, text: err instanceof Error ? err.message : String(err) })
+      return result
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error)
+      setLog({ ok: false, text })
+      return { ok: false, log: text }
     } finally {
       setPending(null)
     }
   }
 
+  const handleInstall = async (target?: string) => {
+    const value = (target ?? source).trim()
+    if (!value || pending) return
+    const result = await run({ kind: 'install' }, () => window.electronAPI.installPackage(value))
+    if (result.ok && target === undefined) setSource('')
+  }
+
+  const handlePick = async (kind: 'directory' | 'file') => {
+    if (pending) return
+    try {
+      const grant = await window.electronAPI.selectPackageLocalSource(kind)
+      if (!grant) return
+      await run({ kind: 'install' }, () => window.electronAPI.installPackageLocalSource(grant.id))
+    } catch (error) {
+      setLog({ ok: false, text: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  const handleRemove = async (pkg: PackageDescriptor) => {
+    await run({ kind: 'remove', id: pkg.id }, () => window.electronAPI.removePackage(pkg.id))
+  }
+
+  const handleUpdate = async (pkg: PackageDescriptor) => {
+    await run({ kind: 'update', id: pkg.id }, () => window.electronAPI.updatePackage(pkg.id))
+  }
+
+  const handleToggle = async (pkg: PackageDescriptor, next: boolean) => {
+    if (!packageCapabilities.canToggle || pending || pkg.enabled === next) return
+    await run({ kind: 'toggle', id: pkg.id }, () => window.electronAPI.setPackageEnabled(pkg.id, next))
+  }
+
   const installDroppedFiles = async (files: FileList | File[]) => {
-    for (const file of Array.from(files)) {
-      const filePath = window.electronAPI.getPathForFile(file)
-      if (filePath) {
-        // eslint-disable-next-line no-await-in-loop
-        await handleInstall(filePath)
-      }
+    if (isCurrentOmp || pending) return
+    const file = Array.from(files)[0]
+    if (!file) return
+    try {
+      const grant = await window.electronAPI.grantDroppedPackageLocalSource(file)
+      if (!grant) return
+      await run({ kind: 'install' }, () => window.electronAPI.installPackageLocalSource(grant.id))
+    } catch (error) {
+      setLog({ ok: false, text: error instanceof Error ? error.message : String(error) })
     }
   }
 
   // Finder file drags get a full-window overlay; card drags use the zones.
   useEffect(() => {
     const onDragEnter = (e: DragEvent) => {
-      if (!hasFileDrag(e)) return
+      if (isCurrentOmp || !hasFileDrag(e)) return
       e.preventDefault()
       fileDragDepth.current += 1
       setFileDrag(true)
     }
     const onDragOver = (e: DragEvent) => {
-      if (hasFileDrag(e)) e.preventDefault()
+      if (!isCurrentOmp && hasFileDrag(e)) e.preventDefault()
     }
     const onDragLeave = (e: DragEvent) => {
-      if (!hasFileDrag(e)) return
+      if (isCurrentOmp || !hasFileDrag(e)) return
       fileDragDepth.current = Math.max(0, fileDragDepth.current - 1)
       if (fileDragDepth.current === 0) setFileDrag(false)
     }
     const onDrop = (e: DragEvent) => {
-      if (!hasFileDrag(e)) return
+      if (isCurrentOmp || !hasFileDrag(e)) return
       e.preventDefault()
       fileDragDepth.current = 0
       setFileDrag(false)
-      if (e.dataTransfer?.files.length) installDroppedFiles(e.dataTransfer.files)
+      if (e.dataTransfer?.files.length) void installDroppedFiles(e.dataTransfer.files)
     }
     window.addEventListener('dragenter', onDragEnter)
     window.addEventListener('dragover', onDragOver)
@@ -242,7 +212,7 @@ export default function PackagesPage() {
       window.removeEventListener('drop', onDrop)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending])
+  }, [isCurrentOmp, pending])
 
   const zoneDropProps = (zone: DropZone) => ({
     onDragOver: (e: React.DragEvent) => {
@@ -260,12 +230,11 @@ export default function PackagesPage() {
       if (!canUseAssemblyLayout || pending || !hasPackageDrag(e)) return
       e.preventDefault()
       const dragged = e.dataTransfer.getData(PKG_DRAG_TYPE)
-      const pkg = packages.find((p) => p.source === dragged)
+      const pkg = packages.find((p) => p.id === dragged)
       if (!pkg) return
-      if (zone === 'chassis') handleToggle(pkg, true)
-      else if (zone === 'rack') handleToggle(pkg, false)
-      // Same destructive op as the card button — same two-stage confirm.
-      else void handleRemoveClick(pkg)
+      if (zone === 'chassis') void handleToggle(pkg, true)
+      else if (zone === 'rack') void handleToggle(pkg, false)
+      else void handleRemove(pkg)
     }
   })
 
@@ -385,7 +354,7 @@ export default function PackagesPage() {
                     className="min-w-0 flex-1 rounded-lg border border-line bg-ink-900 px-3 py-2 font-mono text-[13px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50 focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50"
                   />
                   <button
-                    onClick={() => handlePick('folder')}
+                    onClick={() => void handlePick('directory')}
                     disabled={pending !== null}
                     title={t('plugins.browseFolder')}
                     className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
@@ -395,7 +364,7 @@ export default function PackagesPage() {
                   </button>
                   {!isCurrentOmp && (
                     <button
-                      onClick={() => handlePick('file')}
+                      onClick={() => void handlePick('file')}
                       disabled={pending !== null}
                       title={t('plugins.browseFile')}
                       className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-2 text-[12px] whitespace-nowrap text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
@@ -468,15 +437,16 @@ export default function PackagesPage() {
                       <div className="grid gap-2.5">
                         {mounted.map((pkg) => (
                           <PartCard
-                            key={pkg.source}
+                            key={pkg.id}
                             pkg={pkg}
                             pending={pending}
-                            confirmRemove={confirmRemove === pkg.source}
                             draggable
                             canUpdate={packageCapabilities.canUpdate}
+                            canToggle={packageCapabilities.canToggle}
                             onDragStateChange={setDragSource}
                             onUpdate={() => handleUpdate(pkg)}
-                            onRemove={() => handleRemoveClick(pkg)}
+                            onToggle={(next) => void handleToggle(pkg, next)}
+                            onRemove={() => void handleRemove(pkg)}
                           />
                         ))}
                       </div>
@@ -503,15 +473,16 @@ export default function PackagesPage() {
                       <div className="grid gap-2.5">
                         {parts.map((pkg) => (
                           <PartCard
-                            key={pkg.source}
+                            key={pkg.id}
                             pkg={pkg}
                             pending={pending}
-                            confirmRemove={confirmRemove === pkg.source}
                             draggable
                             canUpdate={packageCapabilities.canUpdate}
+                            canToggle={packageCapabilities.canToggle}
                             onDragStateChange={setDragSource}
                             onUpdate={() => handleUpdate(pkg)}
-                            onRemove={() => handleRemoveClick(pkg)}
+                            onToggle={(next) => void handleToggle(pkg, next)}
+                            onRemove={() => void handleRemove(pkg)}
                           />
                         ))}
                       </div>
@@ -545,15 +516,16 @@ export default function PackagesPage() {
                       <div className="grid gap-2.5">
                         {packages.map((pkg) => (
                           <PartCard
-                            key={pkg.source}
+                            key={pkg.id}
                             pkg={pkg}
                             pending={pending}
-                            confirmRemove={confirmRemove === pkg.source}
                             draggable={false}
                             canUpdate={packageCapabilities.canUpdate}
+                            canToggle={packageCapabilities.canToggle}
                             onDragStateChange={setDragSource}
                             onUpdate={() => handleUpdate(pkg)}
-                            onRemove={() => handleRemoveClick(pkg)}
+                            onToggle={(next) => void handleToggle(pkg, next)}
+                            onRemove={() => void handleRemove(pkg)}
                           />
                         ))}
                       </div>
@@ -600,26 +572,29 @@ export default function PackagesPage() {
 function PartCard({
   pkg,
   pending,
-  confirmRemove,
   draggable,
   canUpdate,
+  canToggle,
   onDragStateChange,
   onUpdate,
+  onToggle,
   onRemove
 }: {
-  pkg: PackageInfo
+  pkg: PackageDescriptor
   pending: PendingAction
-  confirmRemove: boolean
   draggable: boolean
   canUpdate: boolean
+  canToggle: boolean
   onDragStateChange: (source: string | null) => void
   onUpdate: () => void
+  onToggle: (next: boolean) => void
   onRemove: () => void
 }) {
   const t = useT()
-  const busy = pending !== null && 'source' in pending && pending.source === pkg.source
+  const busy = pending !== null && 'id' in pending && pending.id === pkg.id
   const removing = busy && pending?.kind === 'remove'
   const updating = busy && pending?.kind === 'update'
+  const toggling = busy && pending?.kind === 'toggle'
   const updatable = canUpdate && (pkg.canUpdate ?? (pkg.kind !== 'local' && !pkg.pinned))
   const [dragging, setDragging] = useState(false)
 
@@ -628,10 +603,10 @@ function PartCard({
       draggable={draggable && pending === null}
       onDragStart={(e) => {
         if (!draggable) return
-        e.dataTransfer.setData(PKG_DRAG_TYPE, pkg.source)
+        e.dataTransfer.setData(PKG_DRAG_TYPE, pkg.id)
         e.dataTransfer.effectAllowed = 'move'
         setDragging(true)
-        onDragStateChange(pkg.source)
+        onDragStateChange(pkg.id)
       }}
       onDragEnd={() => {
         if (!draggable) return
@@ -709,21 +684,38 @@ function PartCard({
               <ArrowUpCircle size={13} />
             </button>
           )}
+          {canToggle && (
+            <button
+              onClick={() => onToggle(!pkg.enabled)}
+              disabled={pending !== null}
+              title={
+                toggling
+                  ? pkg.enabled
+                    ? t('plugins.disabling')
+                    : t('plugins.enabling')
+                  : pkg.enabled
+                    ? t('plugins.disable')
+                    : t('plugins.enable')
+              }
+              aria-label={pkg.enabled ? t('plugins.disable') : t('plugins.enable')}
+              className={`rounded-md p-1.5 transition disabled:opacity-50 ${
+                pkg.enabled
+                  ? 'text-emerald-500 hover:bg-emerald-500/10 hover:text-emerald-400'
+                  : 'text-cream-faint hover:bg-overlay hover:text-cream'
+              }`}
+            >
+              <Power size={13} />
+            </button>
+          )}
           <button
             onClick={onRemove}
             disabled={pending !== null}
             title={
               removing
                 ? t('plugins.removing')
-                : confirmRemove
-                  ? t('plugins.uninstallConfirm')
-                  : t('plugins.uninstall')
+                : t('plugins.uninstall')
             }
-            className={`rounded-md p-1.5 transition disabled:opacity-50 ${
-              confirmRemove
-                ? 'bg-red-500/10 text-red-600 dark:text-red-300'
-                : 'text-cream-faint hover:bg-red-500/10 hover:text-red-500'
-            }`}
+            className="rounded-md p-1.5 text-cream-faint transition hover:bg-red-500/10 hover:text-red-500 disabled:opacity-50"
           >
             <Trash2 size={13} />
           </button>
@@ -743,7 +735,7 @@ function MarketplaceSection({
   onInstall,
   logBlock
 }: {
-  packages: PackageInfo[]
+  packages: PackageDescriptor[]
   pending: PendingAction
   onInstall: (source: string) => void
   logBlock: React.ReactNode
@@ -755,18 +747,14 @@ function MarketplaceSection({
   const [results, setResults] = useState<CommunityPackageInfo[] | null>(null)
   const [searching, setSearching] = useState(false)
 
-  // Installed when the git repo slug matches (git installs) or the npm name
-  // matches (the same package may have been installed from npm).
+  // Main derives a path-free, non-command marketplace key for this one badge.
+  // The renderer never receives or reconstructs a package source string.
   const isInstalled = (pkg: CommunityPackageInfo) =>
     packages.some((p) => {
-      if (pkg.repo && p.kind === 'git' && p.source.toLowerCase().includes(pkg.repo.toLowerCase())) {
-        return true
-      }
-      if (p.kind === 'npm') {
-        const spec = p.source.replace(/^npm:/, '')
-        if (spec === pkg.name || spec.startsWith(`${pkg.name}@`)) return true
-      }
-      return false
+      const expected = pkg.repo
+        ? `github:${pkg.repo.toLowerCase()}`
+        : `npm:${pkg.name.toLowerCase()}`
+      return p.marketplaceKey === expected
     })
 
   const installSource = (pkg: CommunityPackageInfo) =>
@@ -778,6 +766,9 @@ function MarketplaceSection({
       .searchPackages('', true)
       .then((list) => {
         if (alive) setCurated(list)
+      })
+      .catch(() => {
+        if (alive) setCurated([])
       })
     return () => {
       alive = false
@@ -793,13 +784,25 @@ function MarketplaceSection({
       return
     }
     setSearching(true)
+    let alive = true
     const timer = setTimeout(() => {
-      window.electronAPI.searchPackages(q).then((list) => {
-        setResults(list)
-        setSearching(false)
-      })
+      window.electronAPI
+        .searchPackages(q)
+        .then((list) => {
+          if (!alive) return
+          setResults(list)
+          setSearching(false)
+        })
+        .catch(() => {
+          if (!alive) return
+          setResults([])
+          setSearching(false)
+        })
     }, 400)
-    return () => clearTimeout(timer)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
   }, [query])
 
   return (

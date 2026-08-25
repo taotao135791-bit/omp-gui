@@ -422,6 +422,10 @@ const en = {
   'plugins.uninstall': 'Uninstall',
   'plugins.uninstallConfirm': 'Confirm?',
   'plugins.removing': 'Removing…',
+  'plugins.enable': 'Enable',
+  'plugins.disable': 'Disable',
+  'plugins.enabling': 'Enabling…',
+  'plugins.disabling': 'Disabling…',
   'plugins.update': 'Update',
   'plugins.updating': 'Updating…',
   'plugins.kind.local': 'Local',
@@ -636,9 +640,12 @@ const en = {
   'author.error.invalidVersion': 'Invalid version — use semver like 0.1.0.',
   'author.error.noResources': 'Select at least one content type.',
   'author.error.dirMissing': 'The chosen folder does not exist.',
+  'author.error.unsafePath': 'The chosen folder contains an unsafe link or path.',
   'author.error.dirNotEmpty': 'A non-empty folder with this package name already exists there.',
   'author.error.writeFailed': 'Failed to write files: {detail}',
   'author.error.invalidSpec': 'Invalid package spec — check the form and retry.',
+  'author.error.invalidGrant': 'The chosen folder is no longer available. Choose it again.',
+  'author.error.outputUnavailable': 'This generated package is no longer available. Create it again.',
 
   // Extension UI dialog
   'uiDialog.untitled': 'Plugin request',
@@ -649,6 +656,7 @@ const en = {
   'uiDialog.deny': 'Deny',
   'uiDialog.noOptions': 'No options provided.',
   'uiDialog.timeout': 'Auto-cancel in {count}s',
+  'uiDialog.sendFailed': "Couldn't deliver the response. Try again or cancel.",
 
   // Setup wizard
   'setup.detecting': 'Detecting environment…',
@@ -1071,6 +1079,10 @@ const zh: Record<I18nKey, string> = {
   'plugins.uninstall': '卸载',
   'plugins.uninstallConfirm': '确认卸载？',
   'plugins.removing': '卸载中…',
+  'plugins.enable': '启用',
+  'plugins.disable': '停用',
+  'plugins.enabling': '启用中…',
+  'plugins.disabling': '停用中…',
   'plugins.update': '更新',
   'plugins.updating': '更新中…',
   'plugins.kind.local': '本地',
@@ -1284,9 +1296,12 @@ const zh: Record<I18nKey, string> = {
   'author.error.invalidVersion': '版本号不合法 — 请使用 0.1.0 这样的语义化版本。',
   'author.error.noResources': '请至少选择一种内容类型。',
   'author.error.dirMissing': '所选目录不存在。',
+  'author.error.unsafePath': '所选目录包含不安全的链接或路径。',
   'author.error.dirNotEmpty': '该目录下已存在同名的非空文件夹。',
   'author.error.writeFailed': '写入文件失败：{detail}',
   'author.error.invalidSpec': '插件参数不合法，请检查表单后重试。',
+  'author.error.invalidGrant': '所选目录已不可用，请重新选择。',
+  'author.error.outputUnavailable': '这个生成的插件包已不可用，请重新生成。',
 
   'uiDialog.untitled': '插件请求',
   'uiDialog.subtitle': '插件正在等待你的输入',
@@ -1296,6 +1311,7 @@ const zh: Record<I18nKey, string> = {
   'uiDialog.deny': '拒绝',
   'uiDialog.noOptions': '插件没有提供可选项。',
   'uiDialog.timeout': '{count} 秒后自动取消',
+  'uiDialog.sendFailed': '未能把答复发送给插件，请重试或取消。',
 
   'setup.detecting': '正在检测环境…',
   'setup.ready.title': 'Oh My Pi 已就绪',

@@ -218,6 +218,25 @@ export default function BoardsPage() {
     setConfirmClear(false)
   }
 
+  // The toolbar menus are transient controls, so keyboard users need the
+  // same predictable dismissal path as pointer users clicking the backdrop.
+  useEffect(() => {
+    if (!boardMenuOpen && !toolsMenuOpen && !galleryOpen) return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setBoardMenuOpen(false)
+      setToolsMenuOpen(false)
+      setGalleryOpen(false)
+      setConfirmDeleteBoard(false)
+      setConfirmClear(false)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [boardMenuOpen, toolsMenuOpen, galleryOpen])
+
   const switchBoard = (id: string) => {
     closeMenus()
     setConfigWidgetId(null)
@@ -391,9 +410,9 @@ export default function BoardsPage() {
     setDatasets(await window.electronAPI.listBoardDatasets())
   }
 
-  /** Import one picked/dropped file; the result toast names the outcome. */
-  const importDatasetFile = async (filePath: string) => {
-    const result = await window.electronAPI.importBoardDataset(filePath)
+  /** Import one picked/dropped file through Main's one-use FileGrant. */
+  const importDatasetGrant = async (fileGrantId: string) => {
+    const result = await window.electronAPI.importBoardDataset(fileGrantId)
     if (result.ok) {
       await refreshDatasets()
       const rows = result.dataset.rows.length
@@ -409,10 +428,8 @@ export default function BoardsPage() {
 
   const handleImportPick = async () => {
     setToolsMenuOpen(false)
-    const picked = await window.electronAPI.selectFile([
-      { name: 'CSV / Excel', extensions: ['csv', 'xlsx', 'xls'] }
-    ])
-    if (picked) await importDatasetFile(picked)
+    const grant = await window.electronAPI.selectBoardDatasetFile()
+    if (grant) await importDatasetGrant(grant.id)
   }
 
   // Finder file drags get a full-page overlay (same pattern as PackagesPage).
@@ -440,9 +457,10 @@ export default function BoardsPage() {
       if (!files?.length) return
       void (async () => {
         for (const file of Array.from(files)) {
-          const filePath = window.electronAPI.getPathForFile(file)
           // eslint-disable-next-line no-await-in-loop
-          if (filePath) await importDatasetFile(filePath)
+          const grant = await window.electronAPI.grantDroppedBoardDatasetFile(file)
+          // eslint-disable-next-line no-await-in-loop
+          if (grant) await importDatasetGrant(grant.id)
         }
       })()
     }

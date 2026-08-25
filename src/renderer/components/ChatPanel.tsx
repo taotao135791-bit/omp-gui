@@ -224,8 +224,10 @@ export default function ChatPanel() {
     // forever (no agent_end ever arrives).
     try {
       for (const req of store.uiRequests[sid] || []) {
-        await window.electronAPI.respondUi(sid, req.id, { cancelled: true })
-        store.resolveUiRequest(sid, req.id)
+        const answered = await window.electronAPI.respondUi(sid, req.id, { cancelled: true })
+        // Do not pretend an upstream dialog is gone if the response could not
+        // be written. A successful abort/close will clear it authoritatively.
+        if (answered) store.resolveUiRequest(sid, req.id)
       }
       const accepted = await window.electronAPI.abortSession(sid)
       if (!accepted) throw new Error('abortSession rejected')

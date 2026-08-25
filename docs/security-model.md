@@ -62,7 +62,8 @@ Git / Files / OMP Session
 The following IPC handlers require a valid `WorkspaceGrant.id` and resolve the
 real path internally:
 
-- `omp:create-session`, `omp:resume-session`, `omp:list-session-history`
+- `omp:create-session`, `omp:resume-session`, `omp:list-session-history`,
+  `omp:delete-session-file`
 - `git:info`, `git:file-diff`
 - `fs:list-project-files`
 - `fs:list-dir` and `fs:read-file` (grant id + relative path)
@@ -82,9 +83,12 @@ resolution proves its real path is also inside:
 - **Git changes** (`src/main/gitinfo.ts`): untracked-file line counts and
   synthetic diffs resolve real paths; an in-workspace symlink pointing outside
   is shown as `symlink → outside workspace`, never read through.
-- **Session history** (`src/main/sessionHistory.ts`): `isSessionFilePath`
-  verifies real-path containment, so a `session.jsonl -> /outside/file` symlink
-  is never resumed/read.
+- **Session history** (`src/main/historySessionGrant.ts`): listing converts
+  Main-only file records into opaque ids bound to the requesting `webContents`
+  and workspace grant. Resume/delete revalidate the file's canonical
+  path/device/inode and exact generated session directory for that workspace;
+  a `session.jsonl -> /outside/file` symlink (or a replacement file) is never
+  resumed/read/deleted.
 - **Package manifests** (`src/main/packages.ts`): `pi.*` resource paths are
   checked lexically **and** by `realpath`, so a package symlink cannot smuggle
   resources from outside the package dir.
@@ -95,6 +99,12 @@ OMP owns durable session transcripts under `~/.omp/agent/sessions` (or the
 isolated `PI_CODING_AGENT_DIR` in tests). The GUI reads them read-only for
 history/resume and reconstructs metadata/agents from the active branch only
 (`src/main/sessionMetadata.ts`). A GUI sidecar is not used for execution truth.
+
+The history-list API returns only `HistorySessionDescriptor` values (`id`,
+title, timestamp, uuid), never a durable transcript path or header cwd. The
+opaque id expires, is revoked on workspace/window teardown or history refresh,
+and is valid only with the same active workspace grant and renderer that
+listed it.
 
 Historical agent records are reconstructed from OMP's durable `task` tool
 results. Background/async agents end up in the same `task` result format; the
@@ -108,6 +118,25 @@ running.
 - Auth/open-URL flows use `shell.openExternal` only for `http(s)` URLs, and the
   installer downloads only from an HTTPS host allowlist (`omp.sh` / GitHub),
   refusing redirects to untrusted hosts (`src/main/installer.ts`).
+
+## Package-code authorization
+
+Installing or upgrading a package is a code-trust decision. The renderer never
+receives an installed package's CLI source, scope, command target, or on-disk
+path. Instead, `packages:list` maps each Main-owned `PackageInfo` row to a
+short-lived `PackageDescriptor` id (`src/main/packageActionGrant.ts`).
+
+- Remove/update/enable/disable accept only that opaque id. Main binds it to the
+  listing `webContents`, re-lists and exact-matches the internal source/scope
+  before dispatch, and serializes one mutation per row.
+- Local folder/file selections and Finder drops become separate
+  `PackageLocalSourceGrant` ids. Their canonical realpath/device/inode remains
+  in Main and is checked again after confirmation.
+- Every install, update, remove, enable and disable action requires an
+  Electron-owned native confirmation. Renderer content can request the dialog,
+  but cannot silently accept it or select a different command argument.
+- Package CLI logs are redacted for known source/path spellings and URL
+  credential fragments before they return to the renderer.
 
 ## Installer trust model
 

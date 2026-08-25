@@ -174,6 +174,33 @@ export interface WorkspaceGrant {
   createdAt: number
 }
 
+/**
+ * A short-lived, Main-held capability for one user-approved file operation.
+ * The canonical path is deliberately never exposed to the renderer.
+ */
+export interface FileGrant {
+  /** Opaque id; valid only for the declared purpose. */
+  id: string
+  purpose: 'board-dataset-import'
+  /** Display-only basename supplied by Main after the user picks/drops it. */
+  name: string
+  createdAt: number
+}
+
+/**
+ * A short-lived, Main-held capability for one user-approved directory write.
+ * Main exposes only a non-authoritative folder label; it resolves the id to
+ * its private canonical path immediately before writing.
+ */
+export interface DirectoryGrant {
+  /** Opaque id; valid only for the declared purpose. */
+  id: string
+  purpose: 'plugin-scaffold'
+  /** Display-only basename supplied by Main; never an authorization path. */
+  name: string
+  createdAt: number
+}
+
 /** Main-owned recent workspace entry. The id is opaque to the renderer. */
 export interface RecentWorkspaceDescriptor {
   id: string
@@ -225,6 +252,8 @@ export interface Session {
   resumeFrom?: string
   /** pi's on-disk session file (backfilled after spawn; used to dedup history). */
   sessionFile?: string
+  /** Opaque history capability that this renderer session resumed, if any. */
+  resumedHistoryId?: string
 }
 
 export type SessionEvent =
@@ -666,16 +695,22 @@ export interface ChatMessage {
   }
 }
 
-/** A persisted pi session file discovered under the agent's sessions dir. */
-export interface HistorySessionInfo {
-  /** Session uuid from the file header. */
+/**
+ * A persisted session exposed to the renderer through a Main-owned capability.
+ *
+ * `id` is opaque and bound to the requesting renderer plus its workspace
+ * grant. Durable session-file paths and header cwd values intentionally never
+ * cross this boundary.
+ */
+export interface HistorySessionDescriptor {
+  /** Opaque Main-issued capability id for resume/delete operations. */
+  id: string
+  /** Session uuid from the file header, for display/deduplication only. */
   uuid: string
-  filePath: string
   /** First user message, truncated to 80 chars; 'Untitled' when absent. */
   title: string
   /** Session start time, epoch ms. */
   timestamp: number
-  cwd: string
 }
 
 /**
@@ -734,6 +769,45 @@ export interface PackageInfo {
   canUpdate?: boolean
 }
 
+/**
+ * A package row exposed to the renderer through a short-lived Main-owned
+ * capability. The id is the only valid input for a row mutation. Command
+ * targets, install paths and scopes stay in Main because they can contain
+ * private filesystem locations or credential-bearing URLs.
+ */
+export interface PackageDescriptor {
+  /** Opaque, renderer-bound capability for one listed package row. */
+  id: string
+  kind: PackageSourceKind
+  name: string
+  description?: string
+  version?: string
+  enabled: boolean
+  resources: PackageResource[]
+  pinned: boolean
+  /** Whether Main reports a real update operation for this row. */
+  canUpdate?: boolean
+  /**
+   * A deliberately sanitized marketplace identity (for example
+   * `npm:pkg` or `github:owner/repo`) used only to display an Installed
+   * badge. It is never a CLI argument or a filesystem path.
+   */
+  marketplaceKey?: string
+}
+
+/**
+ * One short-lived, Main-held local source selected for package installation.
+ * The renderer sees a display label only; the canonical source remains in
+ * Main until the user confirms installation through a native dialog.
+ */
+export interface PackageLocalSourceGrant {
+  id: string
+  purpose: 'package-local-install'
+  name: string
+  kind: 'file' | 'directory'
+  createdAt: number
+}
+
 export interface PackageActionResult {
   ok: boolean
   log: string
@@ -764,7 +838,7 @@ export interface CommunityPackageInfo {
 /** Extension skeleton offered by the plugin scaffold form. */
 export type PluginTemplate = 'blank' | 'command' | 'tool-guard'
 
-/** Everything the plugin scaffold needs, collected by the /plugins/new form. */
+/** Main-internal scaffold spec after a DirectoryGrant has been resolved. */
 export interface PluginScaffoldSpec {
   name: string
   displayName?: string
@@ -779,18 +853,55 @@ export interface PluginScaffoldSpec {
   template: PluginTemplate
 }
 
+/**
+ * Renderer-facing plugin scaffold request. Unlike PluginScaffoldSpec it never
+ * carries a filesystem path: Main resolves parentGrantId to the selected
+ * directory after validation.
+ */
+export interface PluginScaffoldRequest {
+  name: string
+  displayName?: string
+  description: string
+  version: string
+  author?: string
+  parentGrantId: string
+  extension: boolean
+  skill: boolean
+  prompt: boolean
+  template: PluginTemplate
+}
+
 /** Stable error codes from plugin scaffolding; the renderer maps them to i18n. */
 export type PluginScaffoldError =
   | 'invalid-spec'
+  | 'invalid-grant'
   | 'invalid-name'
   | 'invalid-version'
   | 'no-resources'
   | 'dir-missing'
+  | 'unsafe-path'
   | 'dir-not-empty'
   | 'write-failed'
 
-export type PluginScaffoldResult =
+/**
+ * Opaque Main-held handle for the directory produced by a successful
+ * scaffold. Its canonical path never crosses into the renderer; install and
+ * reveal each take this id and resolve it in Main.
+ */
+export interface PluginScaffoldOutput {
+  id: string
+  name: string
+  createdAt: number
+}
+
+/** Main-internal filesystem result; not exposed over preload. */
+export type PluginScaffoldInternalResult =
   | { ok: true; dir: string; files: string[] }
+  | { ok: false; error: PluginScaffoldError; detail?: string }
+
+/** Renderer-facing result — deliberately contains no absolute path. */
+export type PluginScaffoldResult =
+  | { ok: true; output: PluginScaffoldOutput; files: string[] }
   | { ok: false; error: PluginScaffoldError; detail?: string }
 
 // ---------------------------------------------------------------------------

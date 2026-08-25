@@ -21,6 +21,9 @@ import {
 import { GUI_SUPPORTED_PROTOCOLS, HandshakeOutcome, OmpHandshake } from './OmpHandshake'
 import { extensionUiResponse, normalizeRpcFrame } from './OmpProtocol'
 
+/** An extension may only hold a bounded number of unresolved host dialogs. */
+const MAX_PENDING_EXTENSION_UI_REQUESTS = 20
+
 /**
  * One live `pi/omp --mode rpc` session: the child process, its transport
  * (physical JSONL + logical v2 chunk reassembly), the protocol handshake,
@@ -71,6 +74,10 @@ export class OmpSession {
   private readonly pending = new Map<string, PendingQuery>()
   /** Request ids of prompts whose ack we still expect. */
   private readonly pendingPrompts = new Set<string>()
+  /** Active extension dialogs, keyed by the upstream request id. */
+  private readonly pendingExtensionUi = new Set<string>()
+  /** Avoid repeating the same host-capability diagnostic throughout a turn. */
+  private readonly unsupportedExtensionUiMethods = new Set<string>()
   private readonly reader = new LineReader()
   private readonly decoder = new RpcFrameDecoder()
   private readonly handshake = new OmpHandshake()
@@ -127,10 +134,21 @@ export class OmpSession {
 
   // ---------------------------------------------------------------- stdin
 
+  private writeLine(line: string): boolean {
+    if (!this.alive || !this.proc.stdin) return false
+    try {
+      // Writable.write() returning false means backpressure, not rejection: the
+      // frame was accepted and must not be sent a second time.
+      this.proc.stdin.write(line)
+      return true
+    } catch (err) {
+      this.debug(`stdin write failed: ${err instanceof Error ? err.message : String(err)}`)
+      return false
+    }
+  }
+
   private write(payload: Record<string, unknown>): boolean {
-    if (!this.alive) return false
-    this.proc.stdin?.write(serializeCommand(payload))
-    return true
+    return this.writeLine(serializeCommand(payload))
   }
 
   /** Send a user prompt. */
@@ -158,9 +176,13 @@ export class OmpSession {
 
   /** Answer (or cancel) a pending interactive extension UI dialog. */
   respondExtensionUi(requestId: string, answer: ExtensionUiAnswer): boolean {
-    if (!this.alive) return false
-    this.proc.stdin?.write(extensionUiResponse(requestId, answer))
-    if (this.state === 'waiting_for_user') {
+    if (!this.pendingExtensionUi.has(requestId)) {
+      this.debug(`ignored extension UI response for unknown request ${requestId}`)
+      return false
+    }
+    if (!this.writeLine(extensionUiResponse(requestId, answer))) return false
+    this.pendingExtensionUi.delete(requestId)
+    if (this.state === 'waiting_for_user' && this.pendingExtensionUi.size === 0) {
       this.state = 'working'
     }
     return true
@@ -213,7 +235,11 @@ export class OmpSession {
         resolve(null)
       }, timeoutMs)
       this.pending.set(id, { resolve, timer, commandType: String(command.type ?? '') })
-      this.proc.stdin?.write(serializeCommand({ id, ...command }))
+      if (!this.writeLine(serializeCommand({ id, ...command }))) {
+        clearTimeout(timer)
+        this.pending.delete(id)
+        resolve(null)
+      }
     })
   }
 
@@ -349,6 +375,25 @@ export class OmpSession {
         this.handleEvent(result.event)
         return
       case 'extension_ui':
+        if (this.pendingExtensionUi.has(result.id)) {
+          this.emit({
+            type: 'error',
+            sessionId: this.id,
+            message: 'Extension sent a duplicate interactive request id; the duplicate was ignored.',
+            recoverable: true
+          })
+          return
+        }
+        if (this.pendingExtensionUi.size >= MAX_PENDING_EXTENSION_UI_REQUESTS) {
+          this.emit({
+            type: 'error',
+            sessionId: this.id,
+            message: 'Extension opened too many interactive requests; the newest request was ignored.',
+            recoverable: true
+          })
+          return
+        }
+        this.pendingExtensionUi.add(result.id)
         // Forward interactive extension dialogs to the renderer; the answer
         // comes back through respondExtensionUi().
         this.emit({
@@ -368,11 +413,26 @@ export class OmpSession {
         }
         return
       case 'extension_ui_cancel':
+        if (!this.pendingExtensionUi.delete(result.targetId)) return
         this.emit({ type: 'ui_cancel', sessionId: this.id, id: result.targetId })
         // The dismissed dialog resolves as cancelled runtime-side; the turn
         // continues, so leave waiting_for_user like a user answer would.
-        if (this.state === 'waiting_for_user') {
+        if (this.state === 'waiting_for_user' && this.pendingExtensionUi.size === 0) {
           this.state = 'working'
+        }
+        return
+      case 'extension_ui_invalid':
+        this.emit({ type: 'error', sessionId: this.id, message: result.reason, recoverable: true })
+        return
+      case 'extension_ui_unsupported':
+        if (!this.unsupportedExtensionUiMethods.has(result.method)) {
+          this.unsupportedExtensionUiMethods.add(result.method)
+          this.emit({
+            type: 'message',
+            sessionId: this.id,
+            role: 'system',
+            content: `An installed extension requested unsupported host UI: ${result.method}.`
+          })
         }
         return
       case 'open_url':
@@ -526,6 +586,7 @@ export class OmpSession {
       // turn open.
       if (event.isTerminal === false) return
       if (this.state !== 'idle') {
+        this.cancelPendingExtensionUi()
         this.state = 'idle'
         this.finalizeDraft()
         this.emit(event)
@@ -535,6 +596,7 @@ export class OmpSession {
 
     if (event.type === 'error' && event.recoverable !== true) {
       this.emit(event)
+      this.cancelPendingExtensionUi()
       this.finalizeDraft()
       // A provider failure ends the turn even without agent_end.
       if (
@@ -556,6 +618,14 @@ export class OmpSession {
     this.draftText = ''
   }
 
+  /** Drop stale dialogs whenever the runtime settles or dies. */
+  private cancelPendingExtensionUi(): void {
+    for (const id of this.pendingExtensionUi) {
+      this.emit({ type: 'ui_cancel', sessionId: this.id, id })
+    }
+    this.pendingExtensionUi.clear()
+  }
+
   // --------------------------------------------------------- process end
 
   private resolvePending(value: Record<string, unknown> | null): void {
@@ -565,6 +635,7 @@ export class OmpSession {
     }
     this.pending.clear()
     this.pendingPrompts.clear()
+    this.pendingExtensionUi.clear()
   }
 
   /** Spawn failure (ENOENT, EACCES, …). */

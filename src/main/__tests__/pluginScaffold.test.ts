@@ -1,9 +1,31 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { PluginScaffoldSpec } from '../../shared/types'
 import { scaffoldPlugin } from '../pluginScaffold'
+
+const fsMock = vi.hoisted(() => ({ failWrites: false }))
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    writeFileSync: (...args: Parameters<typeof actual.writeFileSync>) => {
+      if (fsMock.failWrites) throw new Error('forced write failure')
+      return actual.writeFileSync(...args)
+    }
+  }
+})
 
 let dir: string
 
@@ -95,6 +117,49 @@ describe('scaffoldPlugin', () => {
 
   it('allows writing into an existing empty directory', () => {
     mkdirSync(path.join(dir, 'pi-demo'), { recursive: true })
+    expect(scaffoldPlugin(spec()).ok).toBe(true)
+  })
+
+  it('refuses a package directory symlink instead of writing through it', () => {
+    const selected = path.join(dir, 'selected')
+    const outside = path.join(dir, 'outside')
+    mkdirSync(selected)
+    mkdirSync(outside)
+    symlinkSync(outside, path.join(selected, 'pi-demo'))
+
+    expect(scaffoldPlugin(spec({ parentDir: selected }))).toEqual({ ok: false, error: 'unsafe-path' })
+    expect(existsSync(path.join(outside, 'package.json'))).toBe(false)
+  })
+
+  it('refuses a scoped package parent symlink instead of writing through it', () => {
+    const selected = path.join(dir, 'selected')
+    const outside = path.join(dir, 'outside')
+    mkdirSync(selected)
+    mkdirSync(outside)
+    symlinkSync(outside, path.join(selected, '@acme'))
+
+    expect(
+      scaffoldPlugin(spec({ parentDir: selected, name: '@acme/pi-demo', extension: false, skill: true }))
+    ).toEqual({ ok: false, error: 'unsafe-path' })
+    expect(existsSync(path.join(outside, 'pi-demo', 'package.json'))).toBe(false)
+  })
+
+  it('publishes a completed staging tree and leaves no staging folder behind', () => {
+    const res = scaffoldPlugin(spec())
+    expect(res.ok).toBe(true)
+    expect(readdirSync(dir).filter((name) => name.startsWith('.omp-scaffold-'))).toEqual([])
+    expect(existsSync(path.join(dir, 'pi-demo', 'package.json'))).toBe(true)
+  })
+
+  it('cleans the staged tree after a write failure so the same grant can retry', () => {
+    fsMock.failWrites = true
+    try {
+      expect(scaffoldPlugin(spec())).toMatchObject({ ok: false, error: 'write-failed' })
+    } finally {
+      fsMock.failWrites = false
+    }
+    expect(existsSync(path.join(dir, 'pi-demo'))).toBe(false)
+    expect(readdirSync(dir).filter((name) => name.startsWith('.omp-scaffold-'))).toEqual([])
     expect(scaffoldPlugin(spec()).ok).toBe(true)
   })
 

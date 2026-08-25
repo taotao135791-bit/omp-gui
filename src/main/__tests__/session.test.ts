@@ -118,6 +118,51 @@ describe('OmpSession extension UI', () => {
     expect(s.runtimeState).toBe('idle')
     expect(statusEvents(events)).toEqual(['working', 'idle'])
   })
+
+  it('keeps a dialog pending when stdin rejects the response, then permits a retry', () => {
+    const { s, events, fake } = makeSession()
+    emitLines(fake, { type: 'agent_start' })
+    emitLines(fake, { type: 'extension_ui_request', id: 'retry-1', method: 'confirm', title: 'Proceed?' })
+    fake.stdin.write.mockImplementationOnce(() => {
+      throw new Error('broken pipe')
+    })
+
+    expect(s.respondExtensionUi('retry-1', { confirmed: true })).toBe(false)
+    expect(s.runtimeState).toBe('waiting_for_user')
+    expect(s.respondExtensionUi('retry-1', { confirmed: true })).toBe(true)
+    expect(s.runtimeState).toBe('working')
+    expect(events.filter((event) => event.type === 'ui_request')).toHaveLength(1)
+  })
+
+  it('rejects duplicate extension dialog ids instead of enqueueing indistinguishable requests', () => {
+    const { s, events, fake } = makeSession()
+    emitLines(fake, { type: 'agent_start' })
+    emitLines(fake, { type: 'extension_ui_request', id: 'same-id', method: 'confirm', title: 'First' })
+    emitLines(fake, { type: 'extension_ui_request', id: 'same-id', method: 'confirm', title: 'Second' })
+
+    expect(events.filter((event) => event.type === 'ui_request')).toHaveLength(1)
+    expect(events).toContainEqual({
+      type: 'error',
+      sessionId: 's1',
+      message: 'Extension sent a duplicate interactive request id; the duplicate was ignored.',
+      recoverable: true
+    })
+    expect(s.respondExtensionUi('missing', { confirmed: true })).toBe(false)
+  })
+
+  it('turns unsupported extension UI calls into one visible diagnostic per method', () => {
+    const { events, fake } = makeSession()
+    emitLines(fake, { type: 'extension_ui_request', method: 'setWidget' })
+    emitLines(fake, { type: 'extension_ui_request', method: 'setWidget' })
+    expect(events.filter((event) => event.type === 'message')).toEqual([
+      {
+        type: 'message',
+        sessionId: 's1',
+        role: 'system',
+        content: 'An installed extension requested unsupported host UI: setWidget.'
+      }
+    ])
+  })
 })
 
 describe('OmpSession abort', () => {

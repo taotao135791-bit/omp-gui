@@ -1,4 +1,4 @@
-import { ReactElement, ReactNode, isValidElement, useState } from 'react'
+import { ComponentPropsWithoutRef, ReactElement, ReactNode, isValidElement, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, Copy } from 'lucide-react'
@@ -49,12 +49,35 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   )
 }
 
+/**
+ * Markdown is runtime-provided content. Keep every link inside the explicit,
+ * Main-validated external-browser path rather than allowing renderer anchors
+ * to navigate the Electron application window.
+ */
+function ExternalLink({ href, onClick, ...props }: ComponentPropsWithoutRef<'a'>) {
+  const openInBrowser: ComponentPropsWithoutRef<'a'>['onClick'] = (event) => {
+    onClick?.(event)
+    if (event.defaultPrevented) return
+
+    event.preventDefault()
+    if (href) {
+      // Main validates the scheme/host before delegating to the system browser.
+      // Deliberately ignore invalid URLs here: they must not turn into an app
+      // navigation fallback.
+      void window.electronAPI.openExternalUrl(href)
+    }
+  }
+
+  return <a {...props} href={href} target="_blank" rel="noopener noreferrer" onClick={openInBrowser} />
+}
+
 export default function Markdown({ content }: { content: string }) {
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          a: ExternalLink,
           pre: ({ children }) => {
             let lang = ''
             let raw = ''

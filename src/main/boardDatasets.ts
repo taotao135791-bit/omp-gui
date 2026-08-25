@@ -18,11 +18,11 @@ import {
 /**
  * Board dataset persistence + import — a single JSON document at
  * userData/board-datasets.json, written atomically (tmp + rename, same as
- * boards.ts). importDataset is the only writer: it reads a user-picked
- * CSV/XLSX (file dialogs and Finder drops are the user's consent, like
- * selectFile), parses it into a raw string grid (papaparse / xlsx), and lets
- * the shared pure layer infer types and clean values. Every read re-validates
- * via validateDataset; corrupt files fall back to an empty list.
+ * boards.ts). importDataset is the only writer: IPC resolves an opaque
+ * FileGrant to a trusted, Main-held CSV/XLSX path before this function reads
+ * it. It then parses a raw string grid (papaparse / xlsx) and lets the shared
+ * pure layer infer types and clean values. Every read re-validates via
+ * validateDataset; corrupt files fall back to an empty list.
  */
 
 function defaultDatasetsFile(): string {

@@ -26,17 +26,32 @@ export const IPC_CHANNELS = {
   PACKAGES_CAPABILITIES: 'packages:capabilities',
   PACKAGES_SEARCH: 'packages:search',
   PACKAGES_INSTALL: 'packages:install',
+  /** Native local source picker → opaque, short-lived package source grant. */
+  PACKAGES_SELECT_LOCAL_SOURCE: 'packages:select-local-source',
+  /** Trusted preload File extraction → opaque local package source grant. */
+  PACKAGES_GRANT_DROPPED_LOCAL_SOURCE: 'packages:grant-dropped-local-source',
+  /** Install a Main-held local package source; never accepts a filesystem path. */
+  PACKAGES_INSTALL_LOCAL_SOURCE: 'packages:install-local-source',
   PACKAGES_REMOVE: 'packages:remove',
   PACKAGES_UPDATE: 'packages:update',
   PACKAGES_SET_ENABLED: 'packages:set-enabled',
   PLUGINS_SCAFFOLD: 'plugins:scaffold',
-  PLUGINS_REVEAL: 'plugins:reveal',
+  /** Native directory picker → opaque, one-scaffold DirectoryGrant. */
+  PLUGINS_SCAFFOLD_SELECT_DIRECTORY: 'plugins:scaffold-select-directory',
+  /** Reveal a Main-held scaffold output; never accepts a renderer path. */
+  PLUGINS_SCAFFOLD_REVEAL: 'plugins:scaffold-reveal',
+  /** Install a Main-held scaffold output; never accepts a renderer path. */
+  PLUGINS_SCAFFOLD_INSTALL: 'plugins:scaffold-install',
   STORE_GET: 'store:get',
   STORE_SET: 'store:set',
   BOARDS_LIST: 'boards:list',
   BOARDS_SAVE: 'boards:save',
   BOARDS_DELETE: 'boards:delete',
   BOARDS_DATASETS_LIST: 'boards:datasets-list',
+  /** Native file picker → opaque, one-import FileGrant. */
+  BOARDS_DATASETS_SELECT_FILE: 'boards:datasets-select-file',
+  /** Trusted preload File extraction → opaque, one-import FileGrant. */
+  BOARDS_DATASETS_GRANT_DROPPED_FILE: 'boards:datasets-grant-dropped-file',
   BOARDS_DATASETS_IMPORT: 'boards:datasets-import',
   BOARDS_DATASETS_DELETE: 'boards:datasets-delete',
   BOARDS_DATASETS_RENAME: 'boards:datasets-rename',
@@ -44,6 +59,7 @@ export const IPC_CHANNELS = {
   DIALOG_SELECT_FILE: 'dialog:select-file',
   DIALOG_SELECT_IMAGE: 'dialog:select-image',
   SHELL_SHOW_CLI_SETTINGS: 'shell:show-cli-settings',
+  SHELL_OPEN_EXTERNAL_URL: 'shell:open-external-url',
   OMP_RESPOND_UI: 'omp:respond-ui',
   OMP_SET_MODEL: 'omp:set-model',
   OMP_SESSION_STATS: 'omp:session-stats',

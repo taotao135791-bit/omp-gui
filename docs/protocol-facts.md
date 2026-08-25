@@ -115,11 +115,19 @@ never chunks its writes.
 ## Extension UI
 
 `extension_ui_request {id, method, …}` — interactive:
-`select|confirm|input|editor` (answer with `extension_ui_response`);
-fire-and-forget: `notify|setStatus|setWidget|setTitle|set_editor_text`;
-current adds `cancel {targetId}` (dismisses a pending dialog) and
-`open_url {url, launchUrl?, instructions?}` (host opens a browser; the GUI
-prefers the truncation-safe `launchUrl`, http(s) only).
+`select|confirm|input|editor` (answer with `extension_ui_response`).
+`notify` becomes a bounded system message and needs no response. Current adds
+`cancel {targetId}` (dismisses a pending dialog) and
+`open_url {url, launchUrl?, instructions?}`. An extension URL is never opened
+automatically: the host renders a validated, explicit transcript link and
+only the user's click may open the system browser. Extension URLs are HTTPS,
+or HTTP loopback (`localhost` / `127.0.0.1`) for OAuth-style flows.
+
+`setStatus`, `setWidget`, `setTitle`, `set_editor_text`, and unknown UI
+methods are explicitly unsupported. The host emits one visible diagnostic per
+method per session, sends no fabricated response, and keeps the runtime
+stream alive. See `docs/extension-host-contract.md` for the full host
+contract, bounds, and future GUI-contribution policy.
 
 ## Commands used by the GUI
 

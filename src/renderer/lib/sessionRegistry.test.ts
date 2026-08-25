@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { HistorySessionInfo, Session } from '@shared/types'
+import { HistorySessionDescriptor, Session } from '@shared/types'
 import {
   recordsForWorkspace,
   replaceHistoricalSessionRecords,
@@ -21,8 +21,8 @@ function live(id: string, cwd = A, extra: Partial<Session> = {}): Session {
   }
 }
 
-function history(filePath: string, cwd = A, uuid = filePath): HistorySessionInfo {
-  return { uuid, filePath, title: `History ${uuid}`, timestamp: 200, cwd }
+function history(id: string, uuid = id): HistorySessionDescriptor {
+  return { id, uuid, title: `History ${uuid}`, timestamp: 200 }
 }
 
 describe('session registry projection', () => {
@@ -49,19 +49,19 @@ describe('session registry projection', () => {
     expect(recordsForWorkspace(records, B).map((record) => record.runtimeSessionId)).toEqual(['b'])
   })
 
-  it('discovers historical sessions and upgrades the same record on resume', () => {
-    const info = history('/sessions/a.jsonl', A, 'uuid-a')
+  it('upgrades a historical row through its opaque capability, not a file path', () => {
+    const info = history('history-a', 'uuid-a')
     let records = replaceHistoricalSessionRecords([], A, [info])
     expect(records).toHaveLength(1)
-    expect(records[0]).toMatchObject({ key: info.filePath, state: 'historical', isLive: false, isResumable: true })
+    expect(records[0]).toMatchObject({ key: 'history:history-a', state: 'historical', isLive: false, isResumable: true })
 
     records = upsertLiveSessionRecord(
       records,
-      live('runtime-a', A, { resumeFrom: info.filePath, title: info.title })
+      live('runtime-a', A, { resumedHistoryId: info.id, title: info.title })
     )
     expect(records).toHaveLength(1)
     expect(records[0]).toMatchObject({
-      key: info.filePath,
+      key: 'history:history-a',
       runtimeSessionId: 'runtime-a',
       state: 'idle',
       isLive: true,
@@ -70,12 +70,13 @@ describe('session registry projection', () => {
   })
 
   it('replaces stale historical discovery without dropping a live session', () => {
-    const a = history('/sessions/a.jsonl', A, 'uuid-a')
-    const b = history('/sessions/b.jsonl', A, 'uuid-b')
+    const a = history('history-a', 'uuid-a')
+    const b = history('history-b', 'uuid-b')
     let records = replaceHistoricalSessionRecords([], A, [a, b])
-    records = upsertLiveSessionRecord(records, live('runtime-a', A, { resumeFrom: a.filePath }))
-    records = replaceHistoricalSessionRecords(records, A, [a])
-    expect(records.map((record) => record.sessionFile)).toEqual([a.filePath])
-    expect(records[0].isLive).toBe(true)
+    records = upsertLiveSessionRecord(records, live('runtime-a', A, { resumedHistoryId: a.id }))
+    const refreshedA = { ...a, id: 'history-a-refreshed' }
+    records = replaceHistoricalSessionRecords(records, A, [refreshedA])
+    expect(records.filter((record) => record.history).map((record) => record.history?.id)).toEqual(['history-a-refreshed'])
+    expect(records.some((record) => record.runtimeSessionId === 'runtime-a' && record.isLive)).toBe(true)
   })
 })

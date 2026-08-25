@@ -1,16 +1,16 @@
-import { HistorySessionInfo, Session } from '@shared/types'
+import { HistorySessionDescriptor, Session } from '@shared/types'
 
 /** The single renderer projection used to reason about live and historical sessions. */
 export type SessionRecordState = 'idle' | 'running' | 'waiting' | 'dead' | 'historical'
 
 export interface SessionRecord {
-  /** Durable session-file identity when available; otherwise the live runtime id. */
+  /** Opaque durable-history identity when available; otherwise the live runtime id. */
   key: string
   workspaceRealPath: string
   title: string
   runtimeSessionId?: string
   sessionFile?: string
-  history?: HistorySessionInfo
+  history?: HistorySessionDescriptor
   state: SessionRecordState
   createdAt?: number
   updatedAt: number
@@ -26,19 +26,25 @@ function liveState(session: Session): SessionRecordState {
   return session.status === 'error' ? 'dead' : 'idle'
 }
 
-function sameHistory(record: SessionRecord, info: HistorySessionInfo): boolean {
-  return record.sessionFile === info.filePath || record.history?.filePath === info.filePath
+function sameHistory(record: SessionRecord, info: HistorySessionDescriptor): boolean {
+  return (
+    record.history?.id === info.id ||
+    // A history refresh mints a new opaque id. A live session that came from
+    // the same durable UUID retains its row without needing the private path.
+    (record.isLive && Boolean(info.uuid) && record.history?.uuid === info.uuid)
+  )
 }
 
 function liveMatch(record: SessionRecord, session: Session): boolean {
   const sessionFile = sessionFileOf(session)
   return (
     record.runtimeSessionId === session.id ||
+    (Boolean(session.resumedHistoryId) && record.history?.id === session.resumedHistoryId) ||
     (Boolean(sessionFile) && record.sessionFile === sessionFile)
   )
 }
 
-/** Insert/update a live session without creating a second row for a resumed file. */
+/** Insert/update a live session without creating a duplicate live row for its durable file. */
 export function upsertLiveSessionRecord(
   records: SessionRecord[],
   session: Session,
@@ -70,26 +76,26 @@ export function upsertLiveSessionRecord(
 export function replaceHistoricalSessionRecords(
   records: SessionRecord[],
   workspaceRealPath: string,
-  history: HistorySessionInfo[],
+  history: HistorySessionDescriptor[],
   now = Date.now()
 ): SessionRecord[] {
-  const discovered = new Set(history.map((info) => info.filePath))
+  const discovered = new Set(history.map((info) => info.id))
   const kept = records.filter(
     (record) =>
       record.isLive ||
       record.workspaceRealPath !== workspaceRealPath ||
-      (record.history?.filePath ? discovered.has(record.history.filePath) : false)
+      (record.history?.id ? discovered.has(record.history.id) : false)
   )
   let next = kept
   for (const info of history) {
     const index = next.findIndex((record) => sameHistory(record, info))
     const previous = index >= 0 ? next[index] : undefined
     const record: SessionRecord = {
-      key: previous?.key ?? info.filePath,
+      key: previous?.key ?? `history:${info.id}`,
       workspaceRealPath,
       title: previous?.isLive ? previous.title : info.title,
       ...(previous?.runtimeSessionId ? { runtimeSessionId: previous.runtimeSessionId } : {}),
-      ...(previous?.sessionFile ? { sessionFile: previous.sessionFile } : { sessionFile: info.filePath }),
+      ...(previous?.sessionFile ? { sessionFile: previous.sessionFile } : {}),
       history: info,
       state: previous?.isLive ? previous.state : 'historical',
       createdAt: previous?.createdAt ?? info.timestamp,
@@ -136,8 +142,8 @@ export function removeLiveSessionRecords(records: SessionRecord[], liveSessionId
   return records.filter((record) => !record.isLive || !record.runtimeSessionId || liveSessionIds.has(record.runtimeSessionId))
 }
 
-export function removeHistoryRecord(records: SessionRecord[], filePath: string): SessionRecord[] {
-  return records.filter((record) => record.history?.filePath !== filePath || record.isLive)
+export function removeHistoryRecord(records: SessionRecord[], historyId: string): SessionRecord[] {
+  return records.filter((record) => record.history?.id !== historyId || record.isLive)
 }
 
 export function recordsForWorkspace(records: SessionRecord[], workspaceRealPath: string | null): SessionRecord[] {

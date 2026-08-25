@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell } from 'electron'
 import path from 'node:path'
 import { readdirSync, unlinkSync } from 'node:fs'
 import { getStore, setStore, applyFirstRunDefaults } from './store'
@@ -6,6 +6,7 @@ import { registerIpc } from './ipc'
 import { syncMachineSkills } from './piSettings'
 import { detectCli } from './omp'
 import { initUpdater } from './updater'
+import { installNavigationGuards } from './navigation'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
 
@@ -32,6 +33,9 @@ function createWindow() {
   const width = Math.max(900, Math.min(getStore('windowWidth') || 1280, 5120))
   const height = Math.max(600, Math.min(getStore('windowHeight') || 800, 5120))
 
+  const rendererEntryPath = path.join(__dirname, '../renderer/index.html')
+  const devServerUrl = isDev ? process.env.ELECTRON_RENDERER_URL : undefined
+
   const win = new BrowserWindow({
     width,
     height,
@@ -47,6 +51,12 @@ function createWindow() {
     }
   })
 
+  installNavigationGuards(
+    win.webContents,
+    { rendererEntryPath, devServerUrl },
+    (url) => shell.openExternal(url)
+  )
+
   // 'resize' fires on all platforms; 'resized' is Windows-only
   win.on('resize', () => {
     const [w, h] = win.getSize()
@@ -54,11 +64,11 @@ function createWindow() {
     setStore('windowHeight', h)
   })
 
-  if (isDev && process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL)
+  if (devServerUrl) {
+    win.loadURL(devServerUrl)
     win.webContents.openDevTools()
   } else {
-    win.loadFile(path.join(__dirname, '../renderer/index.html'))
+    win.loadFile(rendererEntryPath)
   }
 
   return win

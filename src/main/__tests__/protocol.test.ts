@@ -201,11 +201,46 @@ describe('parseRpcLine', () => {
     })
   })
 
-  it('ignores fire-and-forget extension UI methods', () => {
+  it('surfaces unsupported fire-and-forget extension UI methods', () => {
     for (const method of ['setStatus', 'setWidget', 'setTitle', 'set_editor_text']) {
       const line = JSON.stringify({ type: 'extension_ui_request', id: 'x9', method })
-      expect(parseRpcLine(line, 's1')).toEqual({ kind: 'none' })
+      expect(parseRpcLine(line, 's1')).toEqual({ kind: 'extension_ui_unsupported', method })
     }
+  })
+
+  it('rejects malformed extension dialogs before they can block a session', () => {
+    expect(
+      parseRpcLine(
+        JSON.stringify({ type: 'extension_ui_request', id: '', method: 'confirm', title: 'Proceed?' }),
+        's1'
+      )
+    ).toEqual({ kind: 'extension_ui_invalid', reason: 'The extension sent a dialog without a valid id.' })
+    expect(
+      parseRpcLine(
+        JSON.stringify({ type: 'extension_ui_request', id: 'x1', method: 'open_url', url: 'file:///etc/passwd' }),
+        's1'
+      )
+    ).toEqual({ kind: 'extension_ui_invalid', reason: 'The extension requested an invalid external URL.' })
+  })
+
+  it('bounds extension dialog presentation data', () => {
+    const line = JSON.stringify({
+      type: 'extension_ui_request',
+      id: 'x1',
+      method: 'select',
+      title: 'a'.repeat(3_000),
+      message: 'b'.repeat(20_000),
+      options: Array.from({ length: 120 }, (_, i) => `${i}:${'c'.repeat(2_100)}`),
+      timeout: 25 * 60 * 60 * 1_000
+    })
+    const parsed = parseRpcLine(line, 's1')
+    expect(parsed.kind).toBe('extension_ui')
+    if (parsed.kind !== 'extension_ui') return
+    expect(parsed.title).toHaveLength(2_000)
+    expect(parsed.message).toHaveLength(16_000)
+    expect(parsed.options).toHaveLength(100)
+    expect(parsed.options?.[0]).toHaveLength(2_000)
+    expect(parsed.timeout).toBeUndefined()
   })
 
   it('maps agent lifecycle events to working status', () => {

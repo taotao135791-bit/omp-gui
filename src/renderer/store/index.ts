@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageInfo, InstallStatus, Language, ModelConfig, PermissionMode, PiModel, PromptImage, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord, WorkspaceGrant, RecentWorkspaceDescriptor } from '@shared/types'
+import { Session, SessionEvent, SessionRuntimeState, SessionStats, PackageDescriptor, InstallStatus, Language, ModelConfig, PermissionMode, PiModel, PromptImage, RuntimeOverview, RuntimeModelInfo, LoginState, LoginAnswer, SessionThinkingLevel, HistoricalAgentRecord, WorkspaceGrant, RecentWorkspaceDescriptor } from '@shared/types'
 import { applyToolResult, ToolCallRecord } from '../lib/toolCalls'
 import { captureSessionSnapshot } from '../lib/runtimeSnapshot'
 import { emptyProjection, foldExecutionEvent, ExecutionProjection, applyAgentRoster, foldUserSteer, applyHistoricalAgents } from '../lib/execution'
@@ -93,7 +93,7 @@ interface AppState {
   executions: Record<string, ExecutionProjection>
   /** sessionId -> pending extension UI dialogs (FIFO) */
   uiRequests: Record<string, UiRequest[]>
-  packages: PackageInfo[]
+  packages: PackageDescriptor[]
   rightPanelOpen: boolean
   activeRightTab: 'files' | 'preview' | 'changes'
   selectedFile: string | null
@@ -184,8 +184,7 @@ interface AppState {
   /** Stamp thinkingEndTs on the session's last message if its thinking is open. */
   finalizeThinking: (sessionId: string) => void
   resolveUiRequest: (sessionId: string, requestId: string) => void
-  setPackages: (packages: PackageInfo[]) => void
-  updatePackageEnabled: (source: string, enabled: boolean) => void
+  setPackages: (packages: PackageDescriptor[]) => void
   setRightPanelOpen: (open: boolean) => void
   setActiveRightTab: (tab: 'files' | 'preview' | 'changes') => void
   setSelectedFile: (path: string | null) => void
@@ -240,8 +239,8 @@ interface AppState {
   removeRecentProject: (path: string) => void
   /** (Re)load the persisted session history of the current workspace; null clears the list. */
   loadHistorySessions: (grantId: string | null) => Promise<void>
-  /** Drop one entry from the history list (after its file was deleted). */
-  removeHistorySession: (filePath: string) => void
+  /** Drop one entry from the history list (after its opaque capability was deleted). */
+  removeHistorySession: (historyId: string) => void
   /** Update one session's display title in place. */
   setSessionTitle: (sessionId: string, title: string) => void
   setSessionFile: (sessionId: string, sessionFile: string) => void
@@ -453,7 +452,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         previous.createdAt === session.createdAt &&
         previous.status === session.status &&
         previous.resumeFrom === session.resumeFrom &&
-        previous.sessionFile === session.sessionFile
+        previous.sessionFile === session.sessionFile &&
+        previous.resumedHistoryId === session.resumedHistoryId
       const nextCurrentSessionId = select ? session.id : state.currentSessionId
       if (same && nextCurrentSessionId === state.currentSessionId) return state
       changed = true
@@ -464,9 +464,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     })
     if (!changed) return
-    // Backfill the on-disk session file so the history list can dedup it
-    // (resumed sessions already carry resumeFrom).
-    if (!session.resumeFrom && !session.sessionFile) {
+    // Backfill the on-disk session file for newly-created sessions. A resumed
+    // session carries an opaque history id instead, so Main never has to send
+    // its durable transcript path back across preload.
+    if (!session.resumeFrom && !session.sessionFile && !session.resumedHistoryId) {
       window.electronAPI.getSessionState(session.id).then((st) => {
         if (st?.sessionFile) get().setSessionFile(session.id, st.sessionFile)
       })
@@ -614,16 +615,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { messages: { ...state.messages, [sessionId]: updated } }
     }),
   resolveUiRequest: (sessionId, requestId) =>
-    set((state) => ({
-      uiRequests: {
-        ...state.uiRequests,
-        [sessionId]: (state.uiRequests[sessionId] || []).filter((r) => r.id !== requestId)
+    set((state) => {
+      const requests = state.uiRequests[sessionId] || []
+      const index = requests.findIndex((request) => request.id === requestId)
+      if (index === -1) return state
+      // Remove one request only. Main prevents duplicate ids, but this keeps a
+      // malformed upstream frame from clearing more than the user answered.
+      return {
+        uiRequests: {
+          ...state.uiRequests,
+          [sessionId]: [...requests.slice(0, index), ...requests.slice(index + 1)]
+        }
       }
-    })),
+  }),
   setPackages: (packages) => set({ packages }),
-  updatePackageEnabled: (source, enabled) => set((state) => ({
-    packages: state.packages.map((p) => (p.source === source ? { ...p, enabled } : p))
-  })),
   setRightPanelOpen: (rightPanelOpen) => set({ rightPanelOpen }),
   setActiveRightTab: (activeRightTab) => set({ activeRightTab }),
   setSelectedFile: (selectedFile) => set({ selectedFile }),
@@ -811,9 +816,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       }))
     }
   },
-  removeHistorySession: (filePath) =>
+  removeHistorySession: (historyId) =>
     set((state) => ({
-      sessionRecords: removeHistoryRecord(state.sessionRecords, filePath)
+      sessionRecords: removeHistoryRecord(state.sessionRecords, historyId)
     })),
   setSessionTitle: (sessionId, title) =>
     set((state) => {
@@ -1024,22 +1029,31 @@ export const useAppStore = create<AppState>((set, get) => ({
         compacting: { ...state.compacting, [event.sessionId]: event.phase === 'start' }
       }))
     } else if (event.type === 'ui_request') {
-      set((state) => ({
-        uiRequests: {
-          ...state.uiRequests,
-          [event.sessionId]: [...(state.uiRequests[event.sessionId] || []), event]
+      set((state) => {
+        const requests = state.uiRequests[event.sessionId] || []
+        // Keep renderer state in step with Main's request ledger, and never
+        // let a duplicate upstream id create two indistinguishable dialogs.
+        if (!event.id || requests.some((request) => request.id === event.id)) return state
+        return {
+          uiRequests: {
+            ...state.uiRequests,
+            [event.sessionId]: [...requests, event]
+          }
         }
-      }))
+      })
     } else if (event.type === 'ui_cancel') {
       // The extension dismissed its own dialog — drop the pending request.
-      set((state) => ({
-        uiRequests: {
-          ...state.uiRequests,
-          [event.sessionId]: (state.uiRequests[event.sessionId] || []).filter(
-            (r) => r.id !== event.id
-          )
+      set((state) => {
+        const requests = state.uiRequests[event.sessionId] || []
+        const index = requests.findIndex((request) => request.id === event.id)
+        if (index === -1) return state
+        return {
+          uiRequests: {
+            ...state.uiRequests,
+            [event.sessionId]: [...requests.slice(0, index), ...requests.slice(index + 1)]
+          }
         }
-      }))
+      })
     } else if (event.type === 'thinking_level_changed') {
       // Runtime-resolved level (may be clamped from the requested one);
       // pickers display exactly this, never the optimistic request.

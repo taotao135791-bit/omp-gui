@@ -22,8 +22,7 @@ import {
   SubagentTranscriptSelector,
   WorkspaceGrant,
   RecentWorkspaceDescriptor,
-  PluginScaffoldSpec,
-  PackageScope,
+  PluginScaffoldRequest,
   CustomProvidersListResult,
   CustomProviderSaveResult,
   CustomProviderDeleteResult
@@ -69,6 +68,7 @@ import { getStore, rememberRecentProject, setStore } from './store'
 import { installOmp } from './installer'
 import { searchCommunityPackages } from './community'
 import { scaffoldPlugin } from './pluginScaffold'
+import { OperationGrantManager } from './operationGrant'
 import { FsGuard } from './fsGuard'
 import {
   createCheckpoint,
@@ -79,6 +79,9 @@ import {
 } from './checkpoints'
 import { getGitInfo, getFileDiff } from './gitinfo'
 import { listSessionHistory, deleteSessionFile } from './sessionHistory'
+import { HistorySessionGrantManager } from './historySessionGrant'
+import { PackageActionGrantManager, matchesPackageActionTarget } from './packageActionGrant'
+import { PackageLocalSourceGrantManager } from './packageLocalSourceGrant'
 import { deleteBoard, listBoards, saveBoard } from './boards'
 import { deleteDataset, importDataset, listDatasets, renameDataset } from './boardDatasets'
 import { defaultExportFileName } from './exportPath'
@@ -110,9 +113,18 @@ import {
 } from './customProviders'
 import { sanitizeImages } from './imageValidation'
 import { RecentWorkspaceRegistry, WorkspaceGrantManager } from './workspaceGrant'
+import { safeExternalUrl, safeLoginExternalUrl } from './navigation'
+import { isUiAnswer } from './uiAnswer'
 
 const fsGuard = new FsGuard()
 const grantManager = new WorkspaceGrantManager({ fsGuard })
+const operationGrantManager = new OperationGrantManager()
+const operationGrantOwnerCleanupHooks = new Set<number>()
+const historySessionGrantManager = new HistorySessionGrantManager()
+const historySessionGrantOwnerCleanupHooks = new Set<number>()
+const packageActionGrantManager = new PackageActionGrantManager()
+const packageLocalSourceGrantManager = new PackageLocalSourceGrantManager()
+const packageGrantOwnerCleanupHooks = new Set<number>()
 const recentWorkspaceRegistry = new RecentWorkspaceRegistry(grantManager, {
   readPaths: () => getStore('recentProjects'),
   writePaths: (paths) => setStore('recentProjects', paths)
@@ -219,6 +231,131 @@ function requireGrant(id: unknown): { grant: WorkspaceGrant; realPath: string } 
   return { grant, realPath: grant.realPath }
 }
 
+/** Purge short-lived file capabilities as soon as their renderer is gone. */
+function bindOperationGrantOwnerCleanup(event: IpcMainInvokeEvent): void {
+  const { sender } = event
+  const ownerId = sender.id
+  if (operationGrantOwnerCleanupHooks.has(ownerId)) return
+  operationGrantOwnerCleanupHooks.add(ownerId)
+  sender.once('destroyed', () => {
+    operationGrantManager.revokeOwner(ownerId)
+    operationGrantOwnerCleanupHooks.delete(ownerId)
+  })
+}
+
+/** Revoke renderer-bound history capabilities when their webContents closes. */
+function bindHistorySessionGrantOwnerCleanup(event: IpcMainInvokeEvent): void {
+  const { sender } = event
+  const ownerId = sender.id
+  if (historySessionGrantOwnerCleanupHooks.has(ownerId)) return
+  historySessionGrantOwnerCleanupHooks.add(ownerId)
+  sender.once('destroyed', () => {
+    historySessionGrantManager.revokeOwner(ownerId)
+    historySessionGrantOwnerCleanupHooks.delete(ownerId)
+  })
+}
+
+/** Revoke every renderer-bound package capability once its webContents closes. */
+function bindPackageGrantOwnerCleanup(event: IpcMainInvokeEvent): void {
+  const { sender } = event
+  const ownerId = sender.id
+  if (packageGrantOwnerCleanupHooks.has(ownerId)) return
+  packageGrantOwnerCleanupHooks.add(ownerId)
+  sender.once('destroyed', () => {
+    packageActionGrantManager.revokeOwner(ownerId)
+    packageLocalSourceGrantManager.revokeOwner(ownerId)
+    packageGrantOwnerCleanupHooks.delete(ownerId)
+  })
+}
+
+function safePackageDialogLabel(value: string): string {
+  let cleaned = value.slice(0, 512)
+  while (CONTROL_RE.test(cleaned)) cleaned = cleaned.replace(CONTROL_RE, ' ')
+  cleaned = cleaned.trim().replace(/\s+/g, ' ')
+  return (cleaned || 'package').slice(0, 180)
+}
+
+type PackageConfirmationAction = 'install' | 'update' | 'remove' | 'enable' | 'disable'
+
+/**
+ * Package installation executes third-party code. Keep the trust decision in
+ * an Electron-owned dialog so compromised renderer content cannot perform it
+ * silently, even if it can invoke a preload method.
+ */
+async function confirmPackageAction(
+  event: IpcMainInvokeEvent,
+  action: PackageConfirmationAction,
+  label: string,
+  detail?: string
+): Promise<boolean> {
+  const verbs: Record<PackageConfirmationAction, string> = {
+    install: 'Install',
+    update: 'Update',
+    remove: 'Uninstall',
+    enable: 'Enable',
+    disable: 'Disable'
+  }
+  const verb = verbs[action]
+  const codeWarning =
+    action === 'install' || action === 'update'
+      ? 'Plugins can run code with this app\'s permissions. Review the source before continuing.'
+      : 'This changes the plugin state managed by Oh My Pi.'
+  const options = {
+    type: action === 'remove' ? 'warning' as const : 'question' as const,
+    buttons: ['Cancel', verb],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: `${verb} plugin`,
+    message: `${verb} “${safePackageDialogLabel(label)}”?`,
+    detail: detail ? `${codeWarning}\n\n${detail}` : codeWarning
+  }
+  const owner = BrowserWindow.fromWebContents(event.sender)
+  const result = owner
+    ? await dialog.showMessageBox(owner, options)
+    : await dialog.showMessageBox(options)
+  return result.response === 1
+}
+
+/** Remove known private paths/sources and credential fragments from CLI output. */
+function redactPackageActionLog(value: unknown, privateValues: readonly (string | undefined)[]): string {
+  let log = typeof value === 'string' ? value : ''
+  const aliases = new Set<string>()
+  for (const raw of privateValues) {
+    if (!raw) continue
+    aliases.add(raw)
+    if (path.isAbsolute(raw)) {
+      aliases.add(path.resolve(raw))
+      if (raw.startsWith('/private/var/')) aliases.add(raw.slice('/private'.length))
+      if (raw.startsWith('/var/')) aliases.add(`/private${raw}`)
+    }
+  }
+  for (const alias of [...aliases].filter(Boolean).sort((a, b) => b.length - a.length)) {
+    log = log.split(alias).join('[package source]')
+  }
+  // Do not return an access token embedded in an URL even if it did not
+  // match a source spelling exactly (for example after CLI normalization).
+  log = log.replace(/([a-z][a-z0-9+.-]*:\/\/)([^\s/@:]+):[^\s/@]+@/gi, '$1$2:[redacted]@')
+  log = log.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[redacted]@')
+  return log
+}
+
+/**
+ * Package-manager output can echo its local source argument. Scaffold output
+ * paths are Main-only, so strip both macOS /var ↔ /private/var spellings
+ * before returning the compact public PackageActionResult to the renderer.
+ */
+function redactScaffoldOutputLog(value: unknown, canonicalDir: string): string {
+  let log = typeof value === 'string' ? value : ''
+  const aliases = new Set<string>([canonicalDir, path.resolve(canonicalDir)])
+  if (canonicalDir.startsWith('/private/var/')) aliases.add(canonicalDir.slice('/private'.length))
+  if (canonicalDir.startsWith('/var/')) aliases.add(`/private${canonicalDir}`)
+  for (const alias of [...aliases].filter(Boolean).sort((a, b) => b.length - a.length)) {
+    log = log.split(alias).join('[generated plugin]')
+  }
+  return log
+}
+
 export function registerIpc() {
   ipcMain.handle(IPC_CHANNELS.OMP_DETECT, async (_event: IpcMainInvokeEvent, force?: boolean) => {
     if (force) {
@@ -305,13 +442,7 @@ export function registerIpc() {
     IPC_CHANNELS.OMP_RESPOND_UI,
     async (_event: IpcMainInvokeEvent, sessionId: string, requestId: string, answer: ExtensionUiAnswer) => {
       if (typeof requestId !== 'string' || !requestId) return false
-      if (
-        typeof answer !== 'object' ||
-        answer === null ||
-        !('cancelled' in answer || 'value' in answer || 'confirmed' in answer)
-      ) {
-        return false
-      }
+      if (!isUiAnswer(answer)) return false
       return respondExtensionUi(sessionId, requestId, answer)
     }
   )
@@ -422,28 +553,64 @@ export function registerIpc() {
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_LIST_SESSION_HISTORY,
-    async (_event: IpcMainInvokeEvent, grantId: string) => {
+    async (event: IpcMainInvokeEvent, grantId: string) => {
       const resolved = requireGrant(grantId)
       if (!resolved) return []
-      return listSessionHistory(resolved.realPath)
+      bindHistorySessionGrantOwnerCleanup(event)
+      const history = await listSessionHistory(resolved.realPath)
+      return historySessionGrantManager.mintForWorkspace(history, {
+        workspaceGrantId: resolved.grant.id,
+        workspaceRealPath: resolved.realPath,
+        ownerWebContentsId: event.sender.id
+      })
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_RESUME_SESSION,
-    async (_event: IpcMainInvokeEvent, grantId: string, filePath: string) => {
+    async (event: IpcMainInvokeEvent, grantId: string, historyId: unknown) => {
       const resolved = requireGrant(grantId)
-      if (!resolved) return null
-      if (typeof filePath !== 'string' || !filePath.trim()) return null
-      return resumeSession(resolved.realPath, broadcastSessionEvent, filePath)
+      if (!resolved || typeof historyId !== 'string') return null
+      bindHistorySessionGrantOwnerCleanup(event)
+      return historySessionGrantManager.withResolved(
+        historyId,
+        {
+          workspaceGrantId: resolved.grant.id,
+          workspaceRealPath: resolved.realPath,
+          ownerWebContentsId: event.sender.id
+        },
+        async (filePath) => {
+          const resumed = await resumeSession(resolved.realPath, broadcastSessionEvent, filePath)
+          if (!resumed) return null
+          // The runtime keeps the file path in Main for --session and durable
+          // metadata reconstruction. The renderer needs only the opaque
+          // history capability to merge the resulting live row.
+          const { resumeFrom: _resumeFrom, sessionFile: _sessionFile, ...session } = resumed.session
+          return {
+            ...resumed,
+            session: { ...session, resumedHistoryId: historyId }
+          }
+        }
+      )
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.OMP_DELETE_SESSION_FILE,
-    async (_event: IpcMainInvokeEvent, filePath: string) => {
-      if (typeof filePath !== 'string' || !filePath.trim()) return false
-      return deleteSessionFile(filePath)
+    async (event: IpcMainInvokeEvent, grantId: string, historyId: unknown) => {
+      const resolved = requireGrant(grantId)
+      if (!resolved) return false
+      bindHistorySessionGrantOwnerCleanup(event)
+      const deleted = await historySessionGrantManager.withResolved(historyId, {
+        workspaceGrantId: resolved.grant.id,
+        workspaceRealPath: resolved.realPath,
+        ownerWebContentsId: event.sender.id
+      }, async (filePath) => {
+        const result = await deleteSessionFile(filePath)
+        if (result) historySessionGrantManager.revoke(historyId)
+        return result
+      })
+      return deleted === true
     }
   )
 
@@ -704,16 +871,7 @@ export function registerIpc() {
 
   ipcMain.handle(IPC_CHANNELS.AUTH_ANSWER_LOGIN, async (_event, answer: LoginAnswer) => {
     if (!loginFlow?.active) return { ok: false, error: 'no active login flow' }
-    if (
-      typeof answer !== 'object' ||
-      answer === null ||
-      !('cancelled' in answer || 'value' in answer || 'confirmed' in answer)
-    ) {
-      return { ok: false, error: 'invalid answer' }
-    }
-    if ('value' in answer && typeof answer.value !== 'string') {
-      return { ok: false, error: 'invalid answer' }
-    }
+    if (!isUiAnswer(answer)) return { ok: false, error: 'invalid answer' }
     return { ok: loginFlow.answer(answer) }
   })
 
@@ -743,14 +901,14 @@ export function registerIpc() {
   })
 
   ipcMain.handle(IPC_CHANNELS.AUTH_OPEN_LOGIN_URL, async (_event, url: unknown) => {
-    if (typeof url !== 'string') return { ok: false, error: 'invalid url' }
-    // Login URLs come from the runtime's own login flow; https only
-    // (loopback launch URLs included — they 302 to the https target).
-    if (!/^https:\/\//i.test(url) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) {
-      return { ok: false, error: 'invalid url' }
+    const safeUrl = safeLoginExternalUrl(url)
+    if (!safeUrl) return { ok: false, error: 'invalid url' }
+    try {
+      await shell.openExternal(safeUrl)
+      return { ok: true }
+    } catch {
+      return { ok: false, error: 'open failed' }
     }
-    await shell.openExternal(url)
-    return { ok: true }
   })
 
   ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async (_event, providerId: unknown) => {
@@ -824,10 +982,12 @@ export function registerIpc() {
         const st = await fs.promises.stat(grant.realPath)
         if (!st.isDirectory()) {
           grantManager.revoke(grantId)
+          historySessionGrantManager.revokeWorkspace(grantId)
           return null
         }
       } catch {
         grantManager.revoke(grantId)
+        historySessionGrantManager.revokeWorkspace(grantId)
         return null
       }
       return grant
@@ -836,7 +996,9 @@ export function registerIpc() {
 
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_REVOKE, async (_event, grantId: string): Promise<boolean> => {
     if (typeof grantId !== 'string' || !grantId.trim()) return false
-    return grantManager.revoke(grantId)
+    const revoked = grantManager.revoke(grantId)
+    if (revoked) historySessionGrantManager.revokeWorkspace(grantId)
+    return revoked
   })
 
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_LIST, async (): Promise<WorkspaceGrant[]> => {
@@ -910,67 +1072,200 @@ export function registerIpc() {
     }
   )
 
-  ipcMain.handle(IPC_CHANNELS.PACKAGES_LIST, async () => {
-    return listPackages()
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_LIST, async (event: IpcMainInvokeEvent) => {
+    bindPackageGrantOwnerCleanup(event)
+    const [capabilities, packages] = await Promise.all([
+      getPackageManagerCapabilities(),
+      listPackages()
+    ])
+    return packageActionGrantManager.mintSnapshot(packages, {
+      ownerWebContentsId: event.sender.id,
+      profile: capabilities.profile
+    })
   })
 
   ipcMain.handle(IPC_CHANNELS.PACKAGES_CAPABILITIES, async () => {
     return getPackageManagerCapabilities()
   })
 
-  /** Package sources become CLI argv — reject anything flag-shaped. */
+  /** Package sources become CLI argv — reject flags, controls and empty input. */
   function validSource(source: unknown): source is string {
     return (
       typeof source === 'string' &&
       source.trim().length > 0 &&
       source.trim().length < 500 &&
-      !source.trim().startsWith('-')
+      !source.trim().startsWith('-') &&
+      !hasControl(source)
     )
   }
 
-  function validPackageScope(scope: unknown): scope is PackageScope | undefined {
-    return scope === undefined || scope === 'user' || scope === 'project'
+  const stalePackageAction = { ok: false, log: 'Package list changed. Refresh and try again.' }
+  const unavailableLocalSource = { ok: false, log: 'Selected local package is no longer available. Choose it again.' }
+  const cancelledPackageAction = { ok: false, log: '' }
+
+  async function performPackageRowAction(
+    event: IpcMainInvokeEvent,
+    packageId: unknown,
+    action: 'remove' | 'update' | 'toggle',
+    enabled?: boolean
+  ) {
+    bindPackageGrantOwnerCleanup(event)
+    const lease = packageActionGrantManager.claimPackageAction(packageId, event.sender.id)
+    if (!lease) return stalePackageAction
+
+    let success = false
+    try {
+      const capabilities = await getPackageManagerCapabilities()
+      const listed = await listPackages()
+      const current = listed.find((pkg) => matchesPackageActionTarget(lease.target, pkg, capabilities.profile))
+      if (!current) {
+        packageActionGrantManager.revoke(lease.id)
+        return stalePackageAction
+      }
+      if (action === 'update') {
+        const canUpdate = current.canUpdate ?? (current.kind !== 'local' && !current.pinned)
+        if (!capabilities.canUpdate || !canUpdate) {
+          return { ok: false, log: 'This package cannot be updated by the active OMP version.' }
+        }
+      }
+      if (action === 'toggle' && (!capabilities.canToggle || typeof enabled !== 'boolean')) {
+        return { ok: false, log: 'This package cannot be enabled or disabled by the active OMP version.' }
+      }
+
+      const confirmationAction: PackageConfirmationAction =
+        action === 'toggle' ? (enabled ? 'enable' : 'disable') : action
+      if (!await confirmPackageAction(event, confirmationAction, lease.descriptor.name)) {
+        return cancelledPackageAction
+      }
+
+      // A native confirmation may stay open for a while. Re-list after it
+      // closes, then use only the Main-held target that still matches exactly.
+      const currentAfterConfirmation = (await listPackages()).find((pkg) =>
+        matchesPackageActionTarget(lease.target, pkg, capabilities.profile)
+      )
+      if (!currentAfterConfirmation) {
+        packageActionGrantManager.revoke(lease.id)
+        return stalePackageAction
+      }
+
+      const commandSource = lease.target.commandSource ?? lease.target.source
+      const result =
+        action === 'remove'
+          ? await removePackage(commandSource, lease.target.scope)
+          : action === 'update'
+            ? await updatePackage(commandSource, lease.target.scope)
+            : await setPackageEnabled(commandSource, enabled as boolean, undefined, lease.target.scope)
+      success = result.ok
+      return {
+        ok: result.ok,
+        log: redactPackageActionLog(result.log, [
+          lease.target.source,
+          lease.target.commandSource,
+          current.path,
+          currentAfterConfirmation.path
+        ])
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        log: redactPackageActionLog(error instanceof Error ? error.message : String(error), [
+          lease.target.source,
+          lease.target.commandSource
+        ])
+      }
+    } finally {
+      packageActionGrantManager.finishPackageAction(lease.id, success)
+    }
   }
 
-  ipcMain.handle(IPC_CHANNELS.PACKAGES_INSTALL, async (_event, source: string) => {
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_INSTALL, async (event: IpcMainInvokeEvent, source: unknown) => {
     if (!validSource(source)) return { ok: false, log: 'invalid package source' }
-    return installPackage(source.trim())
+    bindPackageGrantOwnerCleanup(event)
+    const normalized = source.trim()
+    if (!await confirmPackageAction(event, 'install', normalized, `Source: ${normalized}`)) {
+      return cancelledPackageAction
+    }
+    try {
+      const result = await installPackage(normalized)
+      return { ok: result.ok, log: redactPackageActionLog(result.log, [normalized]) }
+    } catch (error) {
+      return {
+        ok: false,
+        log: redactPackageActionLog(error instanceof Error ? error.message : String(error), [normalized])
+      }
+    }
   })
 
-  ipcMain.handle(IPC_CHANNELS.PACKAGES_REMOVE, async (_event, source: string, scope: unknown) => {
-    if (!validSource(source) || !validPackageScope(scope)) {
-      return { ok: false, log: 'invalid package source or scope' }
-    }
-    return removePackage(source.trim(), scope)
-  })
-
-  ipcMain.handle(IPC_CHANNELS.PACKAGES_UPDATE, async (_event, source: string, scope: unknown) => {
-    if (!validSource(source) || !validPackageScope(scope)) {
-      return { ok: false, log: 'invalid package source or scope' }
-    }
-    return updatePackage(source.trim(), scope)
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_SELECT_LOCAL_SOURCE, async (event, kind: unknown) => {
+    if (kind !== 'file' && kind !== 'directory') return null
+    bindPackageGrantOwnerCleanup(event)
+    const result = await dialog.showOpenDialog({
+      properties: [kind === 'directory' ? 'openDirectory' : 'openFile'],
+      ...(kind === 'file'
+        ? { filters: [{ name: 'Plugin files', extensions: ['js', 'ts', 'mjs', 'cjs'] }] }
+        : {})
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    return packageLocalSourceGrantManager.mint(result.filePaths[0], event.sender.id)
   })
 
   ipcMain.handle(
-    IPC_CHANNELS.PACKAGES_SET_ENABLED,
-    async (_event, source: string, enabled: boolean, scope: unknown) => {
-      if (!validSource(source) || !validPackageScope(scope)) {
-        return { ok: false, log: 'invalid package source or scope' }
-      }
-      return setPackageEnabled(source.trim(), Boolean(enabled), undefined, scope)
+    IPC_CHANNELS.PACKAGES_GRANT_DROPPED_LOCAL_SOURCE,
+    async (event, trustedFilePath: unknown) => {
+      if (typeof trustedFilePath !== 'string') return null
+      bindPackageGrantOwnerCleanup(event)
+      return packageLocalSourceGrantManager.mint(trustedFilePath, event.sender.id)
     }
   )
 
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_INSTALL_LOCAL_SOURCE, async (event, grantId: unknown) => {
+    bindPackageGrantOwnerCleanup(event)
+    const lease = await packageLocalSourceGrantManager.claim(grantId, event.sender.id)
+    if (!lease) return unavailableLocalSource
+    let success = false
+    let source: string | null | undefined
+    try {
+      if (!await confirmPackageAction(event, 'install', lease.grant.name, 'Source: local selection')) {
+        return cancelledPackageAction
+      }
+      source = await packageLocalSourceGrantManager.resolveClaimedPath(lease.id, event.sender.id)
+      if (!source) return unavailableLocalSource
+      const result = await installPackage(source)
+      success = result.ok
+      return { ok: result.ok, log: redactPackageActionLog(result.log, [source]) }
+    } catch (error) {
+      return {
+        ok: false,
+        log: redactPackageActionLog(error instanceof Error ? error.message : String(error), [source ?? undefined])
+      }
+    } finally {
+      packageLocalSourceGrantManager.finish(lease.id, success)
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_REMOVE, async (event, packageId: unknown) =>
+    performPackageRowAction(event, packageId, 'remove')
+  )
+
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_UPDATE, async (event, packageId: unknown) =>
+    performPackageRowAction(event, packageId, 'update')
+  )
+
+  ipcMain.handle(IPC_CHANNELS.PACKAGES_SET_ENABLED, async (event, packageId: unknown, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') return { ok: false, log: 'invalid package enabled state' }
+    return performPackageRowAction(event, packageId, 'toggle', enabled)
+  })
+
   /**
-   * The scaffold spec crosses the trust boundary as `unknown` — whitelist and
-   * re-type every field; semantic validation (name pattern, version, …)
-   * happens again inside scaffoldPlugin.
+   * The renderer cannot supply a parent path. It may only send the opaque
+   * DirectoryGrant id produced by Main's native directory picker; Main then
+   * resolves it immediately before scaffoldPlugin writes any files.
    */
-  function sanitizeScaffoldSpec(raw: unknown): PluginScaffoldSpec | null {
+  function sanitizeScaffoldRequest(raw: unknown): PluginScaffoldRequest | null {
     if (!raw || typeof raw !== 'object') return null
     const s = raw as Record<string, unknown>
-    if (typeof s.name !== 'string' || typeof s.parentDir !== 'string') return null
-    if (s.name.length > 250 || s.parentDir.length > 1000) return null
+    if (typeof s.name !== 'string' || typeof s.parentGrantId !== 'string') return null
+    if (s.name.length > 250 || s.parentGrantId.length > 200 || hasControl(s.parentGrantId)) return null
     const opt = (v: unknown) =>
       typeof v === 'string' && v.trim().length > 0 && v.length <= 500 ? v.trim() : undefined
     return {
@@ -979,7 +1274,7 @@ export function registerIpc() {
       description: typeof s.description === 'string' ? s.description.slice(0, 2000) : '',
       version: typeof s.version === 'string' && s.version.trim() ? s.version.trim() : '0.1.0',
       author: opt(s.author),
-      parentDir: s.parentDir,
+      parentGrantId: s.parentGrantId,
       extension: s.extension === true,
       skill: s.skill === true,
       prompt: s.prompt === true,
@@ -987,16 +1282,80 @@ export function registerIpc() {
     }
   }
 
-  ipcMain.handle(IPC_CHANNELS.PLUGINS_SCAFFOLD, async (_event, raw: unknown) => {
-    const spec = sanitizeScaffoldSpec(raw)
-    if (!spec) return { ok: false, error: 'invalid-spec' }
-    return scaffoldPlugin(spec)
+  ipcMain.handle(IPC_CHANNELS.PLUGINS_SCAFFOLD_SELECT_DIRECTORY, async (event) => {
+    bindOperationGrantOwnerCleanup(event)
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+    if (result.canceled || !result.filePaths[0]) return null
+    return operationGrantManager.mintPluginScaffoldDirectory(result.filePaths[0], event.sender.id)
   })
 
-  ipcMain.handle(IPC_CHANNELS.PLUGINS_REVEAL, async (_event, target: unknown) => {
-    if (typeof target !== 'string' || !target.trim() || target.length > 1000) return false
-    shell.showItemInFolder(target)
+  ipcMain.handle(IPC_CHANNELS.PLUGINS_SCAFFOLD, async (event, raw: unknown) => {
+    bindOperationGrantOwnerCleanup(event)
+    const request = sanitizeScaffoldRequest(raw)
+    if (!request) return { ok: false, error: 'invalid-spec' }
+    const lease = await operationGrantManager.claimPluginScaffoldDirectory(
+      request.parentGrantId,
+      event.sender.id
+    )
+    if (!lease) return { ok: false, error: 'invalid-grant' }
+    let success = false
+    try {
+      const { parentGrantId: _parentGrantId, ...spec } = request
+      const result = scaffoldPlugin({ ...spec, parentDir: lease.parentDir })
+      success = result.ok
+      if (!result.ok) {
+        // Node's filesystem errors often include the absolute target path. Do
+        // not let an internal scaffold result cross preload verbatim now that
+        // the selected directory itself is an opaque capability.
+        return {
+          ok: false,
+          error: result.error,
+          ...(result.error === 'write-failed'
+            ? { detail: 'Could not write the generated package files. Check folder permissions and try again.' }
+            : {})
+        }
+      }
+
+      // The scaffold result's canonical directory stays in Main. The renderer
+      // receives only this owner-bound opaque output capability for follow-up
+      // reveal/install actions.
+      const output = await operationGrantManager.mintPluginScaffoldOutput(result.dir, event.sender.id)
+      if (!output) {
+        return {
+          ok: false,
+          error: 'write-failed',
+          detail: 'The generated plugin could not be retained for follow-up actions.'
+        }
+      }
+      return { ok: true, output, files: result.files }
+    } finally {
+      operationGrantManager.finishPluginScaffoldDirectory(lease.id, success)
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PLUGINS_SCAFFOLD_REVEAL, async (event, outputId: unknown) => {
+    bindOperationGrantOwnerCleanup(event)
+    const outputDir = await operationGrantManager.revealPluginScaffoldOutput(outputId, event.sender.id)
+    if (!outputDir) return false
+    shell.showItemInFolder(outputDir)
     return true
+  })
+
+  ipcMain.handle(IPC_CHANNELS.PLUGINS_SCAFFOLD_INSTALL, async (event, outputId: unknown) => {
+    bindOperationGrantOwnerCleanup(event)
+    const lease = await operationGrantManager.claimPluginScaffoldOutputInstall(outputId, event.sender.id)
+    if (!lease) return { ok: false, log: 'Generated plugin is no longer available; create it again.' }
+    let success = false
+    try {
+      const result = await installPackage(lease.dir)
+      success = result.ok
+      // `runCli` carries stdout/stderr at runtime even though installPackage's
+      // public TypeScript type is PackageActionResult. Pick only the public
+      // fields and redact every known spelling of the Main-held source path.
+      return { ok: result.ok, log: redactScaffoldOutputLog(result.log, lease.dir) }
+    } finally {
+      operationGrantManager.finishPluginScaffoldOutputInstall(lease.id, success)
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.SHELL_SHOW_CLI_SETTINGS, async () => {
@@ -1010,6 +1369,17 @@ export function registerIpc() {
     const settingsFile = path.join(defaultPiAgentDir(), 'settings.json')
     shell.showItemInFolder(settingsFile)
     return true
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SHELL_OPEN_EXTERNAL_URL, async (_event, value: unknown) => {
+    const url = safeExternalUrl(value)
+    if (!url) return { ok: false, error: 'invalid-url' }
+    try {
+      await shell.openExternal(url)
+      return { ok: true }
+    } catch {
+      return { ok: false, error: 'open-failed' }
+    }
   })
 
   ipcMain.handle(IPC_CHANNELS.STORE_GET, async (_event, key: keyof AppSettings) => {
@@ -1042,14 +1412,34 @@ export function registerIpc() {
     return deleteBoard(id)
   })
 
-  // Board datasets — same trust model as boards: the filePath/id/name payloads
-  // arrive as `unknown` and are validated inside boardDatasets.ts (extension
-  // whitelist, existence/size checks, parse errors surfaced as stable codes).
+  // Board datasets — file paths never cross from the renderer. Main mints a
+  // one-use FileGrant from the native picker (or trusted preload's real Finder
+  // File extraction), then resolves the id privately for the import.
   ipcMain.handle(IPC_CHANNELS.BOARDS_DATASETS_LIST, async () => {
     return listDatasets()
   })
 
-  ipcMain.handle(IPC_CHANNELS.BOARDS_DATASETS_IMPORT, async (_event, filePath: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.BOARDS_DATASETS_SELECT_FILE, async (event) => {
+    bindOperationGrantOwnerCleanup(event)
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [{ name: 'CSV / Excel', extensions: ['csv', 'xlsx', 'xls'] }]
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    return operationGrantManager.mintBoardDatasetFile(result.filePaths[0], event.sender.id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.BOARDS_DATASETS_GRANT_DROPPED_FILE, async (event, trustedPath: unknown) => {
+    // This channel is invoked only by preload after webUtils.getPathForFile
+    // accepts a real dropped File. Never expose it as a renderer string API.
+    if (typeof trustedPath !== 'string') return null
+    bindOperationGrantOwnerCleanup(event)
+    return operationGrantManager.mintBoardDatasetFile(trustedPath, event.sender.id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.BOARDS_DATASETS_IMPORT, async (event, fileGrantId: unknown) => {
+    const filePath = await operationGrantManager.consumeBoardDatasetFile(fileGrantId, event.sender.id)
+    if (!filePath) return { ok: false, error: 'invalid-path' }
     return importDataset(filePath)
   })
 
