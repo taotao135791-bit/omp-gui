@@ -107,14 +107,37 @@ jobs:
         # Build was already gated above. `--publish never` prevents
         # electron-builder from publishing before checksums are created and the
         # workflow has an auditable list of assets to upload.
-        run: pnpm exec electron-builder --publish never
+        shell: bash
         env:
-          # Empty when not configured → an unsigned (ad-hoc) build is produced.
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Do not expose empty signing variables as electron-builder inputs:
+          # an empty CSC_LINK is interpreted as a local certificate path.
+          RELEASE_CSC_LINK: ${{ secrets.CSC_LINK }}
+          RELEASE_CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          RELEASE_APPLE_ID: ${{ secrets.APPLE_ID }}
+          RELEASE_APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          RELEASE_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          # Keep unsigned builds valid when this repository has no Apple
+          # signing secrets. Export all signing/notarization variables only
+          # when their required values are actually present.
+          if [[ -n "${RELEASE_CSC_LINK:-}" ]]; then
+            export CSC_LINK="${RELEASE_CSC_LINK}"
+            if [[ -n "${RELEASE_CSC_KEY_PASSWORD:-}" ]]; then
+              export CSC_KEY_PASSWORD="${RELEASE_CSC_KEY_PASSWORD}"
+            fi
+          fi
+
+          if [[ -n "${RELEASE_APPLE_ID:-}" \
+            && -n "${RELEASE_APPLE_APP_SPECIFIC_PASSWORD:-}" \
+            && -n "${RELEASE_APPLE_TEAM_ID:-}" ]]; then
+            export APPLE_ID="${RELEASE_APPLE_ID}"
+            export APPLE_APP_SPECIFIC_PASSWORD="${RELEASE_APPLE_APP_SPECIFIC_PASSWORD}"
+            export APPLE_TEAM_ID="${RELEASE_APPLE_TEAM_ID}"
+          fi
+
+          pnpm exec electron-builder --publish never
 
       - name: Verify release assets
         shell: bash
