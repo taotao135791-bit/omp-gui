@@ -22,7 +22,8 @@ import {
  * FileGrant to a trusted, Main-held CSV/XLSX path before this function reads
  * it. It then parses a raw string grid (papaparse / xlsx) and lets the shared
  * pure layer infer types and clean values. Every read re-validates via
- * validateDataset; corrupt files fall back to an empty list.
+ * validateDataset; a missing file is empty, while a corrupt/unreadable store
+ * is surfaced and protected from destructive writes.
  */
 
 function defaultDatasetsFile(): string {
@@ -30,18 +31,28 @@ function defaultDatasetsFile(): string {
 }
 
 function readDatasets(file: string): BoardDataset[] {
+  let text: string
   try {
-    const raw: unknown = JSON.parse(readFileSync(file, 'utf-8'))
-    if (!Array.isArray(raw)) return []
-    const datasets: BoardDataset[] = []
-    for (const entry of raw) {
-      const dataset = validateDataset(entry)
-      if (dataset) datasets.push(dataset)
-    }
-    return datasets
-  } catch {
-    return []
+    text = readFileSync(file, 'utf-8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw new Error('Could not read the local datasets file.')
   }
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    throw new Error('The local datasets file is not valid JSON.')
+  }
+  if (!Array.isArray(raw)) {
+    throw new Error('The local datasets file has an invalid format.')
+  }
+  const datasets: BoardDataset[] = []
+  for (const entry of raw) {
+    const dataset = validateDataset(entry)
+    if (dataset) datasets.push(dataset)
+  }
+  return datasets
 }
 
 function writeDatasets(file: string, datasets: BoardDataset[]): void {
@@ -57,7 +68,12 @@ export function listDatasets(file: string = defaultDatasetsFile()): BoardDataset
 
 export function deleteDataset(id: unknown, file: string = defaultDatasetsFile()): DatasetMutationResult {
   if (!isValidDatasetId(id)) return { ok: false, error: 'invalid-dataset' }
-  const datasets = readDatasets(file)
+  let datasets: BoardDataset[]
+  try {
+    datasets = readDatasets(file)
+  } catch {
+    return { ok: false, error: 'dataset-store-unreadable' }
+  }
   const next = datasets.filter((d) => d.id !== id)
   // Deleting an absent dataset is an idempotent no-op — skip the write.
   if (next.length === datasets.length) return { ok: true }
@@ -77,7 +93,12 @@ export function renameDataset(
   if (!isValidDatasetId(id) || !isValidDatasetName(name)) {
     return { ok: false, error: 'invalid-dataset' }
   }
-  const datasets = readDatasets(file)
+  let datasets: BoardDataset[]
+  try {
+    datasets = readDatasets(file)
+  } catch {
+    return { ok: false, error: 'dataset-store-unreadable' }
+  }
   const dataset = datasets.find((d) => d.id === id)
   if (!dataset) return { ok: false, error: 'not-found' }
   if (dataset.name === name) return { ok: true }
@@ -165,7 +186,12 @@ export function importDataset(
   const built = buildDataset(headers.map((h) => String(h ?? '')), rawRows)
   if (built.columns.length === 0) return { ok: false, error: 'empty' }
 
-  const datasets = readDatasets(file)
+  let datasets: BoardDataset[]
+  try {
+    datasets = readDatasets(file)
+  } catch {
+    return { ok: false, error: 'dataset-store-unreadable' }
+  }
   if (datasets.length >= DATASET_LIMITS.maxDatasets) return { ok: false, error: 'dataset-limit' }
   const dataset: BoardDataset = {
     id: crypto.randomUUID(),

@@ -35,6 +35,15 @@ export const IPC_CHANNELS = {
   PACKAGES_REMOVE: 'packages:remove',
   PACKAGES_UPDATE: 'packages:update',
   PACKAGES_SET_ENABLED: 'packages:set-enabled',
+  /** Read-only health/configuration state for the user-installed Kimi CU runtime. */
+  KIMI_CU_STATUS: 'kimi-cu:status',
+  /** Explicitly add/remove OMP GUI's managed Kimi CU MCP registration. */
+  KIMI_CU_SET_ENABLED: 'kimi-cu:set-enabled',
+  MANAGED_PLUGINS_LIST: 'managed-plugins:list',
+  MANAGED_PLUGINS_GET: 'managed-plugins:get',
+  MANAGED_PLUGINS_SAVE: 'managed-plugins:save',
+  MANAGED_PLUGINS_SYNC: 'managed-plugins:sync',
+  MANAGED_PLUGINS_DELETE: 'managed-plugins:delete',
   PLUGINS_SCAFFOLD: 'plugins:scaffold',
   /** Native directory picker → opaque, one-scaffold DirectoryGrant. */
   PLUGINS_SCAFFOLD_SELECT_DIRECTORY: 'plugins:scaffold-select-directory',
@@ -47,6 +56,7 @@ export const IPC_CHANNELS = {
   BOARDS_LIST: 'boards:list',
   BOARDS_SAVE: 'boards:save',
   BOARDS_DELETE: 'boards:delete',
+  BOARDS_APPEND_NOTE: 'boards:append-note',
   BOARDS_DATASETS_LIST: 'boards:datasets-list',
   /** Native file picker → opaque, one-import FileGrant. */
   BOARDS_DATASETS_SELECT_FILE: 'boards:datasets-select-file',

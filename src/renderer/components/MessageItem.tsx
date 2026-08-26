@@ -9,6 +9,7 @@ import {
   Copy,
   History,
   Info,
+  LayoutDashboard,
   Loader2,
   Pencil
 } from 'lucide-react'
@@ -16,6 +17,7 @@ import { MessageLike, useAppStore } from '../store'
 import { useT } from '../i18n'
 import { formatSeconds } from '../lib/time'
 import Markdown from './Markdown'
+import { SaveMessageToBoardDialog } from './SaveMessageToBoardDialog'
 
 interface MessageItemProps {
   message: MessageLike
@@ -29,6 +31,8 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
   const [confirmRollback, setConfirmRollback] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const [thinkingOpen, setThinkingOpen] = useState(false)
+  const [boardDialogOpen, setBoardDialogOpen] = useState(false)
+  const [boardSaved, setBoardSaved] = useState(false)
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const t = useT()
   const isUser = message.role === 'user'
@@ -278,14 +282,32 @@ export default function MessageItem({ message, index = -1, sessionId = null }: M
       )}
       <Markdown content={message.content} />
       {message.content && (
-        <button
-          onClick={copyContent}
-          title={t('msg.copy')}
-          className="mt-1 flex items-center gap-1 rounded-md px-1 py-0.5 text-[10.5px] text-cream-faint opacity-0 transition-all hover:bg-overlay hover:text-cream group-hover:opacity-100"
-        >
-          {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
-          {copied ? t('msg.copied') : t('msg.copy')}
-        </button>
+        <div className="mt-1 flex items-center gap-1">
+          <button
+            onClick={copyContent}
+            title={t('msg.copy')}
+            className="flex items-center gap-1 rounded-md px-1 py-0.5 text-[10.5px] text-cream-faint opacity-0 transition-all hover:bg-overlay hover:text-cream group-hover:opacity-100"
+          >
+            {copied ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+            {copied ? t('msg.copied') : t('msg.copy')}
+          </button>
+          <button
+            onClick={() => setBoardDialogOpen(true)}
+            title={t('boards.chat.saveToBoard')}
+            className="flex items-center gap-1 rounded-md px-1 py-0.5 text-[10.5px] text-cream-faint transition hover:bg-overlay hover:text-cream"
+          >
+            <LayoutDashboard size={11} />
+            {t('boards.chat.saveToBoard')}
+          </button>
+          {boardSaved && <span className="text-[10.5px] text-emerald-500">{t('boards.chat.saved')}</span>}
+        </div>
+      )}
+      {boardDialogOpen && (
+        <SaveMessageToBoardDialog
+          content={message.content}
+          onClose={() => setBoardDialogOpen(false)}
+          onSaved={() => setBoardSaved(true)}
+        />
       )}
     </div>
   )

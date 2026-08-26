@@ -813,6 +813,90 @@ export interface PackageActionResult {
   log: string
 }
 
+// ---------------------------------------------------------------------------
+// Kimi Computer Use bridge — Kimi CU stays a separate, user-installed local
+// runtime. These are deliberately status/configuration records only: raw
+// executable paths, MCP traffic and desktop screenshots never cross preload.
+// ---------------------------------------------------------------------------
+
+export type KimiComputerUseReadiness =
+  | 'ready'
+  | 'not-installed'
+  | 'unsupported-platform'
+  | 'service-unavailable'
+  | 'permission-required'
+  | 'bridge-unreachable'
+  | 'configuration-error'
+
+export interface KimiComputerUseStatus {
+  readiness: KimiComputerUseReadiness
+  /** Kimi CU app bundle exists and is executable on this machine. */
+  installed: boolean
+  /** Its background XPC service answered the official status probe. */
+  serviceRunning: boolean
+  accessibilityGranted: boolean
+  screenRecordingGranted: boolean
+  /** OMP GUI's explicitly managed MCP registration is present and enabled. */
+  configured: boolean
+  /** A short-lived, read-only MCP initialize/tools-list probe succeeded. */
+  bridgeReachable: boolean
+  /** Number of MCP tools reported by the local runtime; no schemas leave Main. */
+  toolCount: number
+  version?: string
+  /** Bounded, non-sensitive diagnostic appropriate for the renderer. */
+  detail?: string
+  /** Official documentation/install page; users install Kimi CU themselves. */
+  downloadUrl: string
+}
+
+export interface KimiComputerUseMutationResult {
+  ok: boolean
+  status: KimiComputerUseStatus
+  error?: string
+}
+
+// ---------------------------------------------------------------------------
+// OMP GUI-managed handwritten plugins. The source tree lives under userData
+// and only its opaque id/metadata/code cross preload; a renderer never chooses
+// a filesystem path or invokes a runtime command directly.
+// ---------------------------------------------------------------------------
+
+export interface ManagedPluginDraft {
+  id?: string
+  name: string
+  displayName?: string
+  description: string
+  version: string
+  /** Contents of the generated package's extensions/index.ts file. */
+  code: string
+}
+
+export interface ManagedPluginDescriptor {
+  id: string
+  name: string
+  displayName?: string
+  description: string
+  version: string
+  createdAt: number
+  updatedAt: number
+  /** The most recent successful OMP link/sync time, if any. */
+  syncedAt?: number
+  /** Bounded, redacted runtime error from the latest sync attempt. */
+  lastSyncError?: string
+}
+
+export interface ManagedPluginDetail extends ManagedPluginDescriptor {
+  code: string
+}
+
+export type ManagedPluginSaveResult =
+  | { ok: true; plugin: ManagedPluginDetail }
+  | { ok: false; error: string }
+
+export type ManagedPluginActionResult =
+  | { ok: true; plugin?: ManagedPluginDescriptor; log: string }
+  | { ok: false; error: string; log: string }
+
 /** Category buckets used by the curated marketplace list. */
 export type CuratedPackageCategory = 'web' | 'mcp' | 'agents' | 'quality' | 'safety' | 'productivity'
 
@@ -928,6 +1012,30 @@ export interface BoardWidgetLayout {
   h: number
 }
 
+/**
+ * Deliberately bounded visual controls for a widget. They provide a rich
+ * appearance surface without persisting arbitrary CSS (which would make the
+ * local board file an unsafe renderer input).
+ */
+export interface BoardWidgetStyle {
+  /** Six-digit hex colors selected in the appearance panel. */
+  accent?: string
+  surface?: string
+  text?: string
+  border?: string
+  /** Pixel values, clamped by shared board validation. */
+  radius?: number
+  padding?: number
+  titleAlign?: 'left' | 'center' | 'right'
+  shadow?: 'none' | 'soft' | 'strong'
+}
+
+/** Canvas-level appearance, shared by all widgets on a board. */
+export interface BoardStyle {
+  background?: string
+  grid?: 'none' | 'dots' | 'lines'
+}
+
 export interface BoardWidget {
   id: string
   type: WidgetType
@@ -935,6 +1043,8 @@ export interface BoardWidget {
   layout: BoardWidgetLayout
   /** Type-specific settings, whitelisted per widget type (see shared/boards). */
   config: Record<string, unknown>
+  /** Optional bounded appearance overrides; see BoardWidgetStyle. */
+  style?: BoardWidgetStyle
 }
 
 export interface KanbanBoard {
@@ -942,9 +1052,25 @@ export interface KanbanBoard {
   name: string
   description?: string
   widgets: BoardWidget[]
+  /** Optional canvas appearance, stored separately from widget data. */
+  style?: BoardStyle
   createdAt: number
   updatedAt: number
 }
+
+/** Narrow chat → board mutation: Main appends one note to the latest board. */
+export interface BoardNoteAppendRequest {
+  boardId: string
+  title: string
+  text: string
+}
+
+export type BoardNoteAppendResult =
+  | { ok: true; board: KanbanBoard }
+  | {
+      ok: false
+      error: 'invalid-request' | 'not-found' | 'board-full' | 'board-store-unreadable' | 'write-failed'
+    }
 
 // ---------------------------------------------------------------------------
 // Board datasets — imported ad-backend CSV/XLSX exports that counter/chart

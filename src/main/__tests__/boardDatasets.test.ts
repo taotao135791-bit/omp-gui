@@ -48,12 +48,12 @@ function makeDataset(id: string): BoardDataset {
 }
 
 describe('listDatasets', () => {
-  it('returns an empty list when the file is missing or corrupt', () => {
+  it('returns an empty list only when the file is missing and surfaces corrupt stores', () => {
     expect(listDatasets(file)).toEqual([])
     writeFileSync(file, '{not json')
-    expect(listDatasets(file)).toEqual([])
+    expect(() => listDatasets(file)).toThrow('The local datasets file is not valid JSON.')
     writeFileSync(file, JSON.stringify({ datasets: [] }))
-    expect(listDatasets(file)).toEqual([])
+    expect(() => listDatasets(file)).toThrow('The local datasets file has an invalid format.')
   })
 
   it('drops invalid entries but keeps the valid ones', () => {
@@ -63,6 +63,14 @@ describe('listDatasets', () => {
 })
 
 describe('importDataset', () => {
+  it('refuses to overwrite a corrupt dataset store', () => {
+    writeFileSync(file, '{not json')
+    const csv = writeFixture('new.csv', 'a\n1\n')
+    const before = readFileSync(file, 'utf-8')
+    expect(importDataset(csv, file)).toEqual({ ok: false, error: 'dataset-store-unreadable' })
+    expect(readFileSync(file, 'utf-8')).toBe(before)
+  })
+
   it('imports a CSV, infers types, cleans values and round-trips', () => {
     const csv = writeFixture('谷歌日报.csv', CSV)
     const result = importDataset(csv, file)
@@ -188,6 +196,13 @@ describe('importDataset', () => {
 })
 
 describe('deleteDataset', () => {
+  it('refuses to overwrite a corrupt dataset store', () => {
+    writeFileSync(file, '{not json')
+    const before = readFileSync(file, 'utf-8')
+    expect(deleteDataset('a', file)).toEqual({ ok: false, error: 'dataset-store-unreadable' })
+    expect(readFileSync(file, 'utf-8')).toBe(before)
+  })
+
   it('removes the dataset and keeps the rest', () => {
     const csv = writeFixture('a.csv', 'a\n1\n')
     const first = importDataset(csv, file)
@@ -212,6 +227,13 @@ describe('deleteDataset', () => {
 })
 
 describe('renameDataset', () => {
+  it('refuses to overwrite a corrupt dataset store', () => {
+    writeFileSync(file, '{not json')
+    const before = readFileSync(file, 'utf-8')
+    expect(renameDataset('a', 'Renamed', file)).toEqual({ ok: false, error: 'dataset-store-unreadable' })
+    expect(readFileSync(file, 'utf-8')).toBe(before)
+  })
+
   it('renames and persists', () => {
     writeFileSync(file, JSON.stringify([makeDataset('a')]))
     expect(renameDataset('a', '新名字', file)).toEqual({ ok: true })

@@ -43,12 +43,21 @@ import {
   PluginScaffoldRequest,
   PluginScaffoldResult,
   KanbanBoard,
+  BoardNoteAppendRequest,
+  BoardNoteAppendResult,
   BoardDataset,
   CustomProviderSpec,
   CustomProvidersListResult,
   CustomProviderSaveResult,
   CustomProviderDeleteResult,
-  PackageLocalSourceGrant
+  PackageLocalSourceGrant,
+  KimiComputerUseStatus,
+  KimiComputerUseMutationResult,
+  ManagedPluginDraft,
+  ManagedPluginDescriptor,
+  ManagedPluginDetail,
+  ManagedPluginSaveResult,
+  ManagedPluginActionResult
 } from '../shared/types'
 import { KanbanSaveResult } from '../shared/boards'
 import { DatasetImportResult, DatasetMutationResult } from '../shared/datasets'
@@ -114,6 +123,16 @@ export interface ElectronAPI {
   removePackage: (packageId: string) => Promise<PackageActionResult>
   updatePackage: (packageId: string) => Promise<PackageActionResult>
   setPackageEnabled: (packageId: string, enabled: boolean) => Promise<PackageActionResult>
+  /** Detect the separately installed Kimi CU runtime without touching desktop state. */
+  getKimiComputerUseStatus: () => Promise<KimiComputerUseStatus>
+  /** Explicitly add/remove OMP GUI's managed Kimi CU MCP bridge registration. */
+  setKimiComputerUseEnabled: (enabled: boolean) => Promise<KimiComputerUseMutationResult>
+  /** App-owned handwritten plugin sources (no filesystem paths cross preload). */
+  listManagedPlugins: () => Promise<ManagedPluginDescriptor[]>
+  getManagedPlugin: (id: string) => Promise<ManagedPluginDetail | null>
+  saveManagedPlugin: (draft: ManagedPluginDraft) => Promise<ManagedPluginSaveResult>
+  syncManagedPlugin: (id: string) => Promise<ManagedPluginActionResult>
+  deleteManagedPlugin: (id: string) => Promise<ManagedPluginActionResult>
   /** Native directory picker for one opaque plugin-scaffold write grant. */
   selectPluginScaffoldDirectory: () => Promise<DirectoryGrant | null>
   /** Scaffold a new pi package under the DirectoryGrant selected above. */
@@ -131,6 +150,8 @@ export interface ElectronAPI {
   /** Whole-board upsert; rejects structurally invalid boards. */
   saveBoard: (board: KanbanBoard) => Promise<KanbanSaveResult>
   deleteBoard: (id: string) => Promise<KanbanSaveResult>
+  /** Atomically append one bounded note to the latest persisted board. */
+  appendBoardNote: (request: BoardNoteAppendRequest) => Promise<BoardNoteAppendResult>
   /** Imported CSV/XLSX datasets board widgets can bind to. */
   listBoardDatasets: () => Promise<BoardDataset[]>
   /** Native file picker for one opaque board-dataset import grant. */
@@ -330,6 +351,15 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_UPDATE, packageId),
   setPackageEnabled: (packageId: string, enabled: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.PACKAGES_SET_ENABLED, packageId, enabled),
+  getKimiComputerUseStatus: () => ipcRenderer.invoke(IPC_CHANNELS.KIMI_CU_STATUS),
+  setKimiComputerUseEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.KIMI_CU_SET_ENABLED, enabled),
+  listManagedPlugins: () => ipcRenderer.invoke(IPC_CHANNELS.MANAGED_PLUGINS_LIST),
+  getManagedPlugin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.MANAGED_PLUGINS_GET, id),
+  saveManagedPlugin: (draft: ManagedPluginDraft) =>
+    ipcRenderer.invoke(IPC_CHANNELS.MANAGED_PLUGINS_SAVE, draft),
+  syncManagedPlugin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.MANAGED_PLUGINS_SYNC, id),
+  deleteManagedPlugin: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.MANAGED_PLUGINS_DELETE, id),
   selectPluginScaffoldDirectory: () =>
     ipcRenderer.invoke(IPC_CHANNELS.PLUGINS_SCAFFOLD_SELECT_DIRECTORY),
   scaffoldPlugin: (request: PluginScaffoldRequest) =>
@@ -345,6 +375,8 @@ const api: ElectronAPI = {
   listBoards: () => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_LIST),
   saveBoard: (board: KanbanBoard) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_SAVE, board),
   deleteBoard: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DELETE, id),
+  appendBoardNote: (request: BoardNoteAppendRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.BOARDS_APPEND_NOTE, request),
   listBoardDatasets: () => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_LIST),
   selectBoardDatasetFile: () => ipcRenderer.invoke(IPC_CHANNELS.BOARDS_DATASETS_SELECT_FILE),
   grantDroppedBoardDatasetFile: async (file: File) => {

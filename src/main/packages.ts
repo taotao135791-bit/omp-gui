@@ -37,6 +37,10 @@ export { defaultPiAgentDir } from './piSettings'
 export function classifySource(source: string): PackageSourceKind {
   if (source.startsWith('npm:')) return 'npm'
   if (source.startsWith('git:')) return 'git'
+  // Current OMP's documented shorthand. Legacy Pi did not classify these,
+  // which made a perfectly valid `github:owner/repo` look like an npm name in
+  // the GUI even though the runtime installs it from Git.
+  if (/^(github|gitlab|bitbucket|codeberg|sourcehut|srht):/i.test(source)) return 'git'
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) return 'git' // https:// ssh:// git:// …
   if (/^(git@|[^/\s]+@)[^/\s]+:/.test(source)) return 'git' // git@host:user/repo shorthand
   if (source.startsWith('/') || source.startsWith('./') || source.startsWith('../')) return 'local'
@@ -54,8 +58,10 @@ export function isPinned(source: string, kind: PackageSourceKind): boolean {
     const atCount = (spec.match(/@/g) || []).length
     return spec.startsWith('@') ? atCount >= 2 : atCount >= 1
   }
-  // git: ref lives after the last '@' (absent in protocol URLs without ref)
+  // Current OMP uses `github:owner/repo#ref`; legacy Pi also accepted a
+  // trailing `@ref`. Treat either notation as pinned in the display layer.
   const body = source.replace(/^git:/, '')
+  if (/#\S+$/.test(body)) return true
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(body)) {
     return /@[^/@]+$/.test(body)
   }
@@ -585,7 +591,76 @@ export function canonicalSourceForCommand(source: string, piAgentDir: string): s
 
 export function installPackage(source: string): Promise<PackageActionResult> {
   const cli = detectCli()
-  return runCli(cli.command === 'omp' ? ['plugin', 'install', source] : ['install', source], cli)
+  return runCli(
+    cli.command === 'omp' ? ['plugin', 'install', normalizeOmpPluginSource(source)] : ['install', source],
+    cli
+  )
+}
+
+/**
+ * Link an application-managed local package for live editing. Current OMP
+ * keeps a symlink so saving a handwritten plugin source can take effect after
+ * the next session/reload; legacy Pi only has its local install primitive.
+ */
+export function linkLocalPackage(source: string): Promise<PackageActionResult> {
+  const cli = detectCli()
+  return runCli(cli.command === 'omp' ? ['plugin', 'link', source] : ['install', source], cli)
+}
+
+/**
+ * Normalize the common forms users paste into the current OMP plugin manager.
+ * OMP explicitly supports `github:owner/repo[#ref]`, while older Pi settings
+ * used `git:github.com/owner/repo@ref` and `npm:name`. Keeping this conversion
+ * Main-side makes the input UI forgiving without trusting renderer parsing.
+ */
+export function normalizeOmpPluginSource(source: string): string {
+  const trimmed = source.trim()
+  if (!trimmed) return trimmed
+
+  // `npm:` is a legacy Pi notation; OMP takes a regular npm spec.
+  if (trimmed.startsWith('npm:')) return trimmed.slice('npm:'.length)
+
+  // Never reinterpret an explicit local source as an owner/repository pair.
+  if (trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../') || trimmed.startsWith('~')) {
+    return trimmed
+  }
+
+  const legacyGithub = trimmed.match(/^git:github\.com\/([^/\s]+)\/([^/@\s]+)(?:@([^\s]+))?$/i)
+  if (legacyGithub) {
+    const [, owner, repo, ref] = legacyGithub
+    return `github:${owner}/${repo}${ref ? `#${ref}` : ''}`
+  }
+
+  // A bare owner/repository is overwhelmingly a GitHub reference in this
+  // field. Local paths require ./, ../, ~ or / and are handled untouched.
+  const bareGithub = trimmed.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:#([^\s]+))?$/)
+  if (bareGithub) {
+    const [, owner, repo, ref] = bareGithub
+    return `github:${owner}/${repo}${ref ? `#${ref}` : ''}`
+  }
+
+  // Accept copy-pasted repository root URLs, including a trailing .git.
+  const githubUrl = trimmed.match(
+    /^(?:git\+)?https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:#([^\s]+))?\/?$/i
+  )
+  if (githubUrl) {
+    const [, owner, repo, ref] = githubUrl
+    return `github:${owner}/${repo}${ref ? `#${ref}` : ''}`
+  }
+
+  // GitHub's branch/tag picker commonly yields a `/tree/<ref>` URL. It is
+  // still an unambiguous repository reference, so preserve its ref in OMP's
+  // native `#ref` form. Deliberately do not accept `/blob/...` paths: those
+  // name a file rather than a plugin package root.
+  const githubTreeUrl = trimmed.match(
+    /^(?:git\+)?https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/tree\/([^\s#]+?)\/?$/i
+  )
+  if (githubTreeUrl) {
+    const [, owner, repo, ref] = githubTreeUrl
+    return `github:${owner}/${repo}#${ref}`
+  }
+
+  return trimmed
 }
 
 export function removePackage(source: string, scope?: PackageScope): Promise<PackageActionResult> {

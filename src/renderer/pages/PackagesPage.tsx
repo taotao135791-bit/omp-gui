@@ -19,10 +19,17 @@ import {
   Hammer,
   Check,
   Loader2,
-  Power
+  Power,
+  MonitorSmartphone,
+  Download,
+  Pencil,
+  Code2
 } from 'lucide-react'
 import {
   CommunityPackageInfo,
+  KimiComputerUseStatus,
+  ManagedPluginDescriptor,
+  ManagedPluginDetail,
   PackageDescriptor,
   PackageManagerCapabilities,
   PackageResource
@@ -30,8 +37,11 @@ import {
 import { useAppStore } from '../store'
 import { useT, I18nKey } from '../i18n'
 import Logo from '../components/Logo'
+import { PluginStudioDialog } from '../components/PluginStudioDialog'
 
 type PageTab = 'installed' | 'marketplace'
+type SourceMode = 'github' | 'npm'
+type StudioTarget = 'new' | ManagedPluginDetail | null
 
 const CATEGORY_KEYS: Record<string, I18nKey> = {
   web: 'plugins.category.web',
@@ -70,6 +80,7 @@ export default function PackagesPage() {
   const { packages, setPackages } = useAppStore()
   const t = useT()
   const [source, setSource] = useState('')
+  const [sourceMode, setSourceMode] = useState<SourceMode>('github')
   const [pending, setPending] = useState<PendingAction>(null)
   const [log, setLog] = useState<{ ok: boolean; text: string } | null>(null)
   const [dragSource, setDragSource] = useState<string | null>(null)
@@ -82,8 +93,19 @@ export default function PackagesPage() {
     canUpdate: false
   })
   const [capabilitiesLoaded, setCapabilitiesLoaded] = useState(false)
+  const [managedPlugins, setManagedPlugins] = useState<ManagedPluginDescriptor[]>([])
+  const [studioTarget, setStudioTarget] = useState<StudioTarget>(null)
+  const [managedBusyId, setManagedBusyId] = useState<string | null>(null)
+  const [managedError, setManagedError] = useState<string | null>(null)
+  const [confirmDeleteManagedId, setConfirmDeleteManagedId] = useState<string | null>(null)
+  const [kimiStatus, setKimiStatus] = useState<KimiComputerUseStatus | null>(null)
+  const [kimiPending, setKimiPending] = useState(false)
+  const [kimiError, setKimiError] = useState<string | null>(null)
   const fileDragDepth = useRef(0)
   const refreshGeneration = useRef(0)
+  const managedRefreshGeneration = useRef(0)
+  const kimiRefreshGeneration = useRef(0)
+  const confirmManagedDeleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const isCurrentOmp = packageCapabilities.profile === 'current'
   const isLegacyPi = packageCapabilities.profile === 'legacy'
@@ -110,13 +132,58 @@ export default function PackagesPage() {
     }
   }, [setPackages])
 
+  const refreshManagedPlugins = useCallback(async () => {
+    const generation = ++managedRefreshGeneration.current
+    try {
+      const next = await window.electronAPI.listManagedPlugins()
+      if (generation === managedRefreshGeneration.current) {
+        setManagedPlugins(next)
+        setManagedError(null)
+      }
+    } catch {
+      if (generation === managedRefreshGeneration.current) setManagedError('Could not load handwritten plugins.')
+    }
+  }, [])
+
+  const refreshKimiStatus = useCallback(async () => {
+    const generation = ++kimiRefreshGeneration.current
+    setKimiPending(true)
+    setKimiError(null)
+    try {
+      const status = await window.electronAPI.getKimiComputerUseStatus()
+      if (generation === kimiRefreshGeneration.current) setKimiStatus(status)
+    } catch (error) {
+      if (generation === kimiRefreshGeneration.current) {
+        setKimiStatus(null)
+        setKimiError(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      if (generation === kimiRefreshGeneration.current) setKimiPending(false)
+    }
+  }, [])
+
   useEffect(() => {
     refresh()
   }, [refresh])
 
   useEffect(() => {
+    void refreshManagedPlugins()
+    void refreshKimiStatus()
+  }, [refreshKimiStatus, refreshManagedPlugins])
+
+  useEffect(() => {
     if (isCurrentOmp && tab === 'marketplace') setTab('installed')
   }, [isCurrentOmp, tab])
+
+  useEffect(() => {
+    return () => {
+      if (confirmManagedDeleteTimer.current) clearTimeout(confirmManagedDeleteTimer.current)
+    }
+  }, [])
+
+  const refreshAll = async () => {
+    await Promise.all([refresh(), refreshManagedPlugins(), refreshKimiStatus()])
+  }
 
   const run = async (action: PendingAction, fn: () => Promise<{ ok: boolean; log: string }>) => {
     setPending(action)
@@ -139,6 +206,74 @@ export default function PackagesPage() {
     if (!value || pending) return
     const result = await run({ kind: 'install' }, () => window.electronAPI.installPackage(value))
     if (result.ok && target === undefined) setSource('')
+  }
+
+  const openManagedPlugin = async (id: string) => {
+    setManagedError(null)
+    try {
+      const plugin = await window.electronAPI.getManagedPlugin(id)
+      if (!plugin) {
+        setManagedError('This handwritten plugin is no longer available.')
+        await refreshManagedPlugins()
+        return
+      }
+      setStudioTarget(plugin)
+    } catch (error) {
+      setManagedError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const syncManagedPlugin = async (id: string) => {
+    if (managedBusyId) return
+    setManagedError(null)
+    setManagedBusyId(id)
+    try {
+      const result = await window.electronAPI.syncManagedPlugin(id)
+      if (!result.ok) setManagedError(result.error || result.log || 'Could not sync the handwritten plugin.')
+      await Promise.all([refreshManagedPlugins(), refresh()])
+    } catch (error) {
+      setManagedError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setManagedBusyId(null)
+    }
+  }
+
+  const deleteManagedPlugin = async (id: string) => {
+    if (managedBusyId) return
+    if (confirmDeleteManagedId !== id) {
+      setConfirmDeleteManagedId(id)
+      if (confirmManagedDeleteTimer.current) clearTimeout(confirmManagedDeleteTimer.current)
+      confirmManagedDeleteTimer.current = setTimeout(() => setConfirmDeleteManagedId(null), 3000)
+      return
+    }
+    setConfirmDeleteManagedId(null)
+    if (confirmManagedDeleteTimer.current) clearTimeout(confirmManagedDeleteTimer.current)
+    setManagedError(null)
+    setManagedBusyId(id)
+    try {
+      const result = await window.electronAPI.deleteManagedPlugin(id)
+      if (!result.ok) setManagedError(result.error || result.log || 'Could not delete the handwritten plugin.')
+      await Promise.all([refreshManagedPlugins(), refresh()])
+    } catch (error) {
+      setManagedError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setManagedBusyId(null)
+    }
+  }
+
+  const toggleKimiBridge = async () => {
+    if (!kimiStatus || kimiPending) return
+    setKimiPending(true)
+    setKimiError(null)
+    try {
+      const result = await window.electronAPI.setKimiComputerUseEnabled(!kimiStatus.configured)
+      setKimiStatus(result.status)
+      if (!result.ok && result.error && result.error !== 'Cancelled.') setKimiError(result.error)
+    } catch (error) {
+      setKimiError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setKimiPending(false)
+    }
   }
 
   const handlePick = async (kind: 'directory' | 'file') => {
@@ -284,7 +419,7 @@ export default function PackagesPage() {
           </span>
         </div>
         <button
-          onClick={refresh}
+          onClick={() => void refreshAll()}
           className="app-no-drag flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition hover:border-ink-600 hover:text-cream"
         >
           <RotateCcw size={11} />
@@ -337,6 +472,22 @@ export default function PackagesPage() {
                 <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
                   {isCurrentOmp ? t('plugins.omp.installTitle') : t('plugins.installTitle')}
                 </div>
+                <div className="mb-2.5 flex w-fit gap-1 rounded-full border border-line bg-ink-900 p-1">
+                  {(['github', 'npm'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => setSourceMode(mode)}
+                      disabled={pending !== null}
+                      className={`rounded-full px-3 py-1 text-[11px] transition disabled:opacity-50 ${
+                        sourceMode === mode
+                          ? 'bg-ink-850 font-medium text-cream shadow-card'
+                          : 'text-cream-dim hover:text-cream'
+                      }`}
+                    >
+                      {mode === 'github' ? t('plugins.source.github') : t('plugins.source.npm')}
+                    </button>
+                  ))}
+                </div>
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -346,9 +497,9 @@ export default function PackagesPage() {
                       if (e.key === 'Enter') handleInstall()
                     }}
                     placeholder={
-                      isCurrentOmp
-                        ? t('plugins.omp.installPlaceholder')
-                        : t('plugins.installPlaceholder')
+                      sourceMode === 'github'
+                        ? t('plugins.source.githubPlaceholder')
+                        : t('plugins.source.npmPlaceholder')
                     }
                     disabled={pending !== null}
                     className="min-w-0 flex-1 rounded-lg border border-line bg-ink-900 px-3 py-2 font-mono text-[13px] text-cream outline-none transition-all placeholder:text-cream-faint focus:border-accent/50 focus:shadow-[0_0_0_3px_var(--accent-soft)] disabled:opacity-50"
@@ -382,8 +533,102 @@ export default function PackagesPage() {
                     {pending?.kind === 'install' ? t('plugins.installing') : t('plugins.install')}
                   </button>
                 </div>
+                <p className="mt-2 text-[11px] leading-4 text-cream-faint">
+                  {sourceMode === 'github' ? t('plugins.source.githubHint') : t('plugins.source.npmHint')}
+                </p>
                 {logBlock}
               </section>
+
+              <section className="rounded-[16px] border border-line bg-ink-850 p-4 shadow-card">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
+                      {t('plugins.write.title')}
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-cream-dim">{t('plugins.write.empty')}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setManagedError(null)
+                      setStudioTarget('new')
+                    }}
+                    className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-[12px] text-cream-dim transition hover:border-accent/50 hover:text-cream"
+                  >
+                    <Hammer size={12} />
+                    {t('plugins.write.new')}
+                  </button>
+                </div>
+                {managedPlugins.length > 0 && (
+                  <div className="mt-3 grid gap-2">
+                    {managedPlugins.map((plugin) => {
+                      const busy = managedBusyId === plugin.id
+                      const confirmingDelete = confirmDeleteManagedId === plugin.id
+                      return (
+                        <div key={plugin.id} className="flex items-center gap-2 rounded-xl border border-line bg-ink-900/60 px-3 py-2.5">
+                          <Code2 size={13} className="shrink-0 text-accent" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="truncate text-[12px] font-medium text-cream">{plugin.displayName || plugin.name}</span>
+                              <span className="font-mono text-[10px] text-cream-faint">{plugin.version}</span>
+                              <span className={`rounded-full px-1.5 py-0.5 text-[9.5px] ${plugin.syncedAt ? 'bg-emerald-500/10 text-emerald-500' : 'bg-overlay text-cream-faint'}`}>
+                                {plugin.syncedAt ? t('plugins.write.synced') : t('plugins.write.unsynced')}
+                              </span>
+                            </div>
+                            {plugin.lastSyncError && (
+                              <p className="mt-0.5 truncate text-[10.5px] text-red-500" title={plugin.lastSyncError}>
+                                {t('plugins.write.lastSyncFailed', { error: plugin.lastSyncError })}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              onClick={() => void openManagedPlugin(plugin.id)}
+                              disabled={busy}
+                              title={t('plugins.write.edit')}
+                              className="rounded-md p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream disabled:opacity-50"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                            <button
+                              onClick={() => void syncManagedPlugin(plugin.id)}
+                              disabled={busy}
+                              title={t('plugins.write.sync')}
+                              className="rounded-md p-1.5 text-cream-faint transition hover:bg-accent-soft hover:text-accent disabled:opacity-50"
+                            >
+                              {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+                            </button>
+                            <button
+                              onClick={() => void deleteManagedPlugin(plugin.id)}
+                              disabled={busy}
+                              title={confirmingDelete ? t('plugins.write.deleteConfirm') : t('plugins.write.delete')}
+                              className={`rounded-md p-1.5 transition disabled:opacity-50 ${
+                                confirmingDelete
+                                  ? 'bg-red-500/15 text-red-500'
+                                  : 'text-cream-faint hover:bg-red-500/10 hover:text-red-500'
+                              }`}
+                            >
+                              {confirmingDelete ? <Check size={12} /> : <Trash2 size={12} />}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                {managedError && (
+                  <p role="alert" className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs leading-5 text-red-600 dark:text-red-300">
+                    {managedError}
+                  </p>
+                )}
+              </section>
+
+              <KimiComputerUseCard
+                status={kimiStatus}
+                pending={kimiPending}
+                error={kimiError}
+                onRefresh={() => void refreshKimiStatus()}
+                onToggle={() => void toggleKimiBridge()}
+              />
 
               {canUseAssemblyLayout ? (
                 <>
@@ -565,7 +810,127 @@ export default function PackagesPage() {
           </div>
         </div>
       )}
+
+      {studioTarget !== null && (
+        <PluginStudioDialog
+          plugin={studioTarget === 'new' ? undefined : studioTarget}
+          onClose={() => setStudioTarget(null)}
+          onChanged={async () => {
+            await Promise.all([refreshManagedPlugins(), refresh()])
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+function KimiComputerUseCard({
+  status,
+  pending,
+  error,
+  onRefresh,
+  onToggle
+}: {
+  status: KimiComputerUseStatus | null
+  pending: boolean
+  error: string | null
+  onRefresh: () => void
+  onToggle: () => void
+}) {
+  const t = useT()
+  const statusKey = status ? (`plugins.kimi.status.${status.readiness}` as I18nKey) : null
+  const canToggle = Boolean(status && (status.configured || status.readiness === 'ready'))
+  const showDownload = Boolean(status && !status.installed && status.readiness !== 'unsupported-platform')
+
+  return (
+    <section className="rounded-[16px] border border-line bg-ink-850 p-4 shadow-card">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
+            <MonitorSmartphone size={14} />
+          </span>
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-cream-faint">
+              {t('plugins.kimi.title')}
+            </div>
+            <p className="mt-1 text-xs leading-5 text-cream-dim">{t('plugins.kimi.subtitle')}</p>
+          </div>
+        </div>
+        <button
+          onClick={onRefresh}
+          disabled={pending}
+          title={t('plugins.kimi.refresh')}
+          className="rounded-md p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream disabled:opacity-50"
+        >
+          <RotateCcw size={13} className={pending ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {status ? (
+        <div className="mt-3 rounded-xl border border-line bg-ink-900/60 px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                status.readiness === 'ready'
+                  ? 'bg-emerald-500/10 text-emerald-500'
+                  : 'bg-overlay text-cream-dim'
+              }`}
+            >
+              {statusKey ? t(statusKey) : ''}
+            </span>
+            {status.version && <span className="font-mono text-[10px] text-cream-faint">v{status.version}</span>}
+            {status.bridgeReachable && (
+              <span className="text-[10.5px] text-cream-faint">{t('plugins.kimi.tools', { count: status.toolCount })}</span>
+            )}
+          </div>
+          {status.detail && <p className="mt-1.5 text-[11px] leading-4 text-cream-dim">{status.detail}</p>}
+          {status.configured && <p className="mt-1.5 text-[11px] leading-4 text-emerald-500">{t('plugins.kimi.nextSession')}</p>}
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {canToggle && (
+              <button
+                onClick={onToggle}
+                disabled={pending}
+                className="flex items-center gap-1.5 rounded-full bg-cream px-3.5 py-1.5 text-[12px] font-medium text-ink-950 transition hover:opacity-90 disabled:opacity-50"
+              >
+                {pending ? <Loader2 size={12} className="animate-spin" /> : <Power size={12} />}
+                {status.configured ? t('plugins.kimi.disable') : t('plugins.kimi.enable')}
+              </button>
+            )}
+            {showDownload && (
+              <button
+                onClick={() => void window.electronAPI.openExternalUrl(status.downloadUrl)}
+                className="flex items-center gap-1.5 rounded-full border border-line px-3.5 py-1.5 text-[12px] text-cream-dim transition hover:border-ink-600 hover:text-cream"
+              >
+                <Download size={12} />
+                {t('plugins.kimi.download')}
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div
+          className="mt-3 flex items-center gap-2 rounded-xl border border-line bg-ink-900/60 px-3 py-2.5 text-xs text-cream-dim"
+          role={error ? 'status' : undefined}
+        >
+          {error ? <Info size={13} className="shrink-0 text-red-500" /> : <Loader2 size={13} className="animate-spin text-accent" />}
+          <span className="min-w-0 flex-1">{error ? t('plugins.kimi.statusUnavailable') : t('plugins.kimi.refresh')}</span>
+          {error && (
+            <button
+              onClick={onRefresh}
+              disabled={pending}
+              className="shrink-0 rounded-full border border-line px-2 py-1 text-[10.5px] text-cream-dim transition hover:border-ink-600 hover:text-cream disabled:opacity-50"
+            >
+              {t('plugins.kimi.refresh')}
+            </button>
+          )}
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="mt-2 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs leading-5 text-red-600 dark:text-red-300">
+          {error}
+        </p>
+      )}
+    </section>
   )
 }
 

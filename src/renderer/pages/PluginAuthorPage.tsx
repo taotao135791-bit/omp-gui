@@ -50,6 +50,11 @@ interface ScaffoldedPackage {
   files: string[]
 }
 
+function errorDetail(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  return detail.replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) || 'Unknown error'
+}
+
 export default function PluginAuthorPage() {
   const t = useT()
   const navigate = useNavigate()
@@ -73,8 +78,12 @@ export default function PluginAuthorPage() {
   const [installLog, setInstallLog] = useState<string | null>(null)
 
   const pickDir = async () => {
-    const grant = await window.electronAPI.selectPluginScaffoldDirectory()
-    if (grant) setParentDirectory(grant)
+    try {
+      const grant = await window.electronAPI.selectPluginScaffoldDirectory()
+      if (grant) setParentDirectory(grant)
+    } catch (cause) {
+      setError({ key: 'author.error.operationFailed', detail: errorDetail(cause) })
+    }
   }
 
   // Renderer-side checks are UX only — the main process validates again.
@@ -98,27 +107,32 @@ export default function PluginAuthorPage() {
     if (!parentDirectory) return
     setError(null)
     setSubmitting(true)
-    const res = await window.electronAPI.scaffoldPlugin({
-      name: name.trim(),
-      displayName: displayName.trim() || undefined,
-      description: description.trim(),
-      version: version.trim(),
-      author: author.trim() || undefined,
-      parentGrantId: parentDirectory.id,
-      extension: resources.extension,
-      skill: resources.skill,
-      prompt: resources.prompt,
-      template
-    })
-    setSubmitting(false)
-    if (res.ok) {
-      setResult({ output: res.output, files: res.files })
-    } else {
-      // Grants expire/are consumed by Main. Do not leave a visually selected
-      // directory that can only fail again; the error asks the user to pick it
-      // anew and the form returns to its normal required-location state.
-      if (res.error === 'invalid-grant') setParentDirectory(null)
-      setError({ key: ERROR_KEYS[res.error] ?? 'author.error.invalidSpec', detail: res.detail })
+    try {
+      const res = await window.electronAPI.scaffoldPlugin({
+        name: name.trim(),
+        displayName: displayName.trim() || undefined,
+        description: description.trim(),
+        version: version.trim(),
+        author: author.trim() || undefined,
+        parentGrantId: parentDirectory.id,
+        extension: resources.extension,
+        skill: resources.skill,
+        prompt: resources.prompt,
+        template
+      })
+      if (res.ok) {
+        setResult({ output: res.output, files: res.files })
+      } else {
+        // Grants expire/are consumed by Main. Do not leave a visually selected
+        // directory that can only fail again; the error asks the user to pick it
+        // anew and the form returns to its normal required-location state.
+        if (res.error === 'invalid-grant') setParentDirectory(null)
+        setError({ key: ERROR_KEYS[res.error] ?? 'author.error.invalidSpec', detail: res.detail })
+      }
+    } catch (cause) {
+      setError({ key: 'author.error.operationFailed', detail: errorDetail(cause) })
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -126,20 +140,33 @@ export default function PluginAuthorPage() {
     if (!result || installing || installed) return
     setInstalling(true)
     setInstallLog(null)
-    const res = await window.electronAPI.installScaffoldedPlugin(result.output.id)
-    setInstalling(false)
-    if (res.ok) {
-      setInstalled(true)
-      useAppStore.getState().setPackages(await window.electronAPI.listPackages())
-    } else {
-      setInstallLog(res.log || 'install failed')
+    try {
+      const res = await window.electronAPI.installScaffoldedPlugin(result.output.id)
+      if (res.ok) {
+        setInstalled(true)
+        try {
+          useAppStore.getState().setPackages(await window.electronAPI.listPackages())
+        } catch (cause) {
+          setInstallLog(errorDetail(cause))
+        }
+      } else {
+        setInstallLog(res.log || 'install failed')
+      }
+    } catch (cause) {
+      setInstallLog(errorDetail(cause))
+    } finally {
+      setInstalling(false)
     }
   }
 
   const handleReveal = async () => {
     if (!result) return
-    const revealed = await window.electronAPI.revealScaffoldedPlugin(result.output.id)
-    if (!revealed) setInstallLog(t('author.error.outputUnavailable'))
+    try {
+      const revealed = await window.electronAPI.revealScaffoldedPlugin(result.output.id)
+      if (!revealed) setInstallLog(t('author.error.outputUnavailable'))
+    } catch (cause) {
+      setInstallLog(errorDetail(cause))
+    }
   }
 
   return (

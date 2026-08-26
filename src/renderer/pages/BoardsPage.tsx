@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useNavigate } from 'react-router-dom'
 import GridLayout, { Layout, WidthProvider } from 'react-grid-layout'
 import {
   ChartBar,
@@ -13,6 +14,7 @@ import {
   LayoutGrid,
   Link2,
   ListTodo,
+  MessageSquareText,
   Maximize,
   Minimize,
   MoreHorizontal,
@@ -27,10 +29,11 @@ import {
   X,
   type LucideIcon
 } from 'lucide-react'
-import { BoardDataset, BoardWidget, KanbanBoard, WidgetType } from '@shared/types'
+import { BoardDataset, BoardStyle, BoardWidget, BoardWidgetStyle, KanbanBoard, WidgetType } from '@shared/types'
 import {
   BOARD_LIMITS,
   GRID_COLS,
+  GRID_MAX_H,
   WIDGET_DEFAULT_SIZES,
   compactWidgets,
   composeBoard,
@@ -40,8 +43,10 @@ import {
   reflowWidgets,
   type BoardPresetId
 } from '@shared/boards'
+import { buildBoardChatPrompt } from '@shared/boardChat'
 import { DatasetImportError } from '@shared/datasets'
 import { useT, I18nKey } from '../i18n'
+import { useAppStore } from '../store'
 import { WidgetBody } from './boards/WidgetBody'
 import { WidgetConfigPanel } from './boards/WidgetConfigPanel'
 import 'react-grid-layout/css/styles.css'
@@ -84,11 +89,53 @@ const DATASET_ERROR_KEYS: Record<DatasetImportError, I18nKey> = {
   'parse-failed': 'boards.datasets.error.parseFailed',
   empty: 'boards.datasets.error.empty',
   'dataset-limit': 'boards.datasets.error.limit',
+  'dataset-store-unreadable': 'boards.datasets.error.storeUnreadable',
   'write-failed': 'boards.datasets.error.writeFailed'
 }
 
 function hasFileDrag(e: DragEvent): boolean {
   return e.dataTransfer?.types.includes('Files') ?? false
+}
+
+type BoardCssProperties = CSSProperties & Record<`--${string}`, string | number>
+
+function widgetCardStyle(style?: BoardWidgetStyle): BoardCssProperties {
+  const shadow =
+    style?.shadow === 'none'
+      ? 'none'
+      : style?.shadow === 'strong'
+        ? '0 16px 36px rgba(0, 0, 0, 0.30)'
+        : 'var(--shadow-card)'
+  return {
+    borderRadius: `${style?.radius ?? 16}px`,
+    boxShadow: shadow,
+    ...(style?.surface ? { backgroundColor: style.surface } : {}),
+    ...(style?.border ? { borderColor: style.border } : {}),
+    '--board-widget-accent': style?.accent ?? 'rgb(var(--accent))',
+    '--board-widget-text': style?.text ?? 'rgb(var(--text))',
+    '--board-widget-border': style?.border ?? 'var(--line)'
+  }
+}
+
+function boardCanvasStyle(style?: BoardStyle): CSSProperties {
+  if (!style) return {}
+  const base: CSSProperties = style.background ? { backgroundColor: style.background } : {}
+  if (style.grid === 'dots') {
+    return {
+      ...base,
+      backgroundImage: 'radial-gradient(var(--line-strong) 1px, transparent 1px)',
+      backgroundSize: '16px 16px'
+    }
+  }
+  if (style.grid === 'lines') {
+    return {
+      ...base,
+      backgroundImage:
+        'linear-gradient(var(--line-strong) 1px, transparent 1px), linear-gradient(90deg, var(--line-strong) 1px, transparent 1px)',
+      backgroundSize: '24px 24px'
+    }
+  }
+  return base
 }
 
 function ToolButton({
@@ -117,7 +164,11 @@ function ToolButton({
 
 export default function BoardsPage() {
   const t = useT()
+  const navigate = useNavigate()
+  const language = useAppStore((state) => state.language)
   const [boards, setBoards] = useState<KanbanBoard[] | null>(null)
+  const [boardsLoadFailed, setBoardsLoadFailed] = useState(false)
+  const [boardsLoadGeneration, setBoardsLoadGeneration] = useState(0)
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [newBoardName, setNewBoardName] = useState('')
@@ -129,43 +180,66 @@ export default function BoardsPage() {
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailName, setDetailName] = useState('')
   const [detailDesc, setDetailDesc] = useState('')
+  const [detailStyle, setDetailStyle] = useState<BoardStyle>({})
   const [configWidgetId, setConfigWidgetId] = useState<string | null>(null)
   const [confirmDeleteBoard, setConfirmDeleteBoard] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null)
-  const [refreshTick, setRefreshTick] = useState(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [saveFailed, setSaveFailed] = useState(false)
   const [datasets, setDatasets] = useState<BoardDataset[]>([])
+  const [datasetsLoadFailed, setDatasetsLoadFailed] = useState(false)
   const [datasetsOpen, setDatasetsOpen] = useState(false)
   const [fileDrag, setFileDrag] = useState(false)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [confirmDeleteDatasetId, setConfirmDeleteDatasetId] = useState<string | null>(null)
+  const [confirmDeleteWidgetId, setConfirmDeleteWidgetId] = useState<string | null>(null)
   const boardAreaRef = useRef<HTMLDivElement>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const confirmDeleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const confirmClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const confirmDatasetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const confirmWidgetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveFailedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fileDragDepth = useRef(0)
+  const datasetRefreshGeneration = useRef(0)
+  const boardSaveGeneration = useRef(new Map<string, number>())
 
   const current = boards?.find((b) => b.id === currentId) ?? null
 
   useEffect(() => {
     let alive = true
-    window.electronAPI.listBoards().then((list) => {
+    const datasetGeneration = ++datasetRefreshGeneration.current
+    void (async () => {
+      const [boardResult, datasetResult] = await Promise.allSettled([
+        window.electronAPI.listBoards(),
+        window.electronAPI.listBoardDatasets()
+      ])
       if (!alive) return
-      setBoards(list)
-      setCurrentId((id) => (id && list.some((b) => b.id === id) ? id : (list[0]?.id ?? null)))
-    })
-    window.electronAPI.listBoardDatasets().then((list) => {
-      if (alive) setDatasets(list)
-    })
+      if (boardResult.status === 'fulfilled') {
+        const list = boardResult.value
+        setBoards(list)
+        setBoardsLoadFailed(false)
+        setCurrentId((id) => (id && list.some((b) => b.id === id) ? id : (list[0]?.id ?? null)))
+      } else {
+        setBoards([])
+        setCurrentId(null)
+        setBoardsLoadFailed(true)
+      }
+      if (!alive || datasetGeneration !== datasetRefreshGeneration.current) return
+      if (datasetResult.status === 'fulfilled') {
+        setDatasets(datasetResult.value)
+        setDatasetsLoadFailed(false)
+      } else {
+        setDatasets([])
+        setDatasetsLoadFailed(true)
+      }
+    })()
     return () => {
       alive = false
     }
-  }, [])
+  }, [boardsLoadGeneration])
 
   useEffect(() => {
     const onChange = () => setIsFullscreen(document.fullscreenElement !== null)
@@ -179,6 +253,7 @@ export default function BoardsPage() {
       if (confirmDeleteTimer.current) clearTimeout(confirmDeleteTimer.current)
       if (confirmClearTimer.current) clearTimeout(confirmClearTimer.current)
       if (confirmDatasetTimer.current) clearTimeout(confirmDatasetTimer.current)
+      if (confirmWidgetTimer.current) clearTimeout(confirmWidgetTimer.current)
       if (saveFailedTimer.current) clearTimeout(saveFailedTimer.current)
     }
   }, [])
@@ -195,10 +270,29 @@ export default function BoardsPage() {
     toastTimer.current = setTimeout(() => setToast(null), 2500)
   }
 
+  const reloadBoards = () => {
+    setBoards(null)
+    setBoardsLoadFailed(false)
+    setBoardsLoadGeneration((generation) => generation + 1)
+  }
+
   const persist = (board: KanbanBoard) => {
-    void window.electronAPI.saveBoard(board).then((result) => {
-      if (!result.ok) flashSaveFailed()
-    })
+    const generation = (boardSaveGeneration.current.get(board.id) ?? 0) + 1
+    boardSaveGeneration.current.set(board.id, generation)
+    void window.electronAPI
+      .saveBoard(board)
+      .then((result) => {
+        if (!result.ok && boardSaveGeneration.current.get(board.id) === generation) {
+          flashSaveFailed()
+          reloadBoards()
+        }
+      })
+      .catch(() => {
+        if (boardSaveGeneration.current.get(board.id) === generation) {
+          flashSaveFailed()
+          reloadBoards()
+        }
+      })
   }
 
   /** Apply a pure mutation to one board, update state and persist the whole board. */
@@ -239,8 +333,22 @@ export default function BoardsPage() {
 
   const switchBoard = (id: string) => {
     closeMenus()
+    setConfirmDeleteWidgetId(null)
     setConfigWidgetId(null)
     setCurrentId(id)
+  }
+
+  const retryBoardLoad = () => {
+    reloadBoards()
+  }
+
+  const openCreate = () => {
+    if (boardsLoadFailed || boards === null) return
+    if (boards.length >= BOARD_LIMITS.maxBoards) {
+      flashToast(t('boards.boardLimit'), false)
+      return
+    }
+    setCreating(true)
   }
 
   // ------------------------------------------------------------------ boards
@@ -249,7 +357,11 @@ export default function BoardsPage() {
     const name = newBoardName.trim()
     setCreating(false)
     setNewBoardName('')
-    if (!name) return
+    if (!name || boardsLoadFailed || boards === null) return
+    if (boards.length >= BOARD_LIMITS.maxBoards) {
+      flashToast(t('boards.boardLimit'), false)
+      return
+    }
     const board = createBoard(name)
     setBoards((prev) => [...(prev ?? []), board])
     setCurrentId(board.id)
@@ -258,8 +370,17 @@ export default function BoardsPage() {
 
   /** Describe-a-board submit: deterministic local preset, added as a new board. */
   const handleCompose = (preset?: BoardPresetId) => {
-    const composed = composeBoard(composeText.trim(), (key) => t(key as I18nKey), preset)
-    const board = { ...createBoard(composed.name), widgets: composed.widgets }
+    if (boardsLoadFailed || boards === null || boards.length >= BOARD_LIMITS.maxBoards) {
+      flashToast(t('boards.boardLimit'), false)
+      return
+    }
+    const description = composeText.trim()
+    const composed = composeBoard(description, (key) => t(key as I18nKey), preset)
+    const board = {
+      ...createBoard(composed.name),
+      ...(description ? { description } : {}),
+      widgets: composed.widgets
+    }
     setComposeOpen(false)
     setComposeText('')
     setBoards((prev) => [...(prev ?? []), board])
@@ -271,6 +392,7 @@ export default function BoardsPage() {
     if (!current) return
     setDetailName(current.name)
     setDetailDesc(current.description ?? '')
+    setDetailStyle(current.style ?? {})
     setBoardMenuOpen(false)
     setDetailOpen(true)
   }
@@ -279,7 +401,15 @@ export default function BoardsPage() {
     const name = detailName.trim()
     if (!name || !current) return
     const description = detailDesc.trim()
-    mutateBoard(current.id, (b) => ({ ...b, name, description: description || undefined }))
+    mutateBoard(current.id, (b) => {
+      const { style: _previousStyle, ...rest } = b
+      return {
+        ...rest,
+        name,
+        description: description || undefined,
+        ...(Object.keys(detailStyle).length > 0 ? { style: detailStyle } : {})
+      }
+    })
     setDetailOpen(false)
   }
 
@@ -296,8 +426,13 @@ export default function BoardsPage() {
     if (confirmDeleteTimer.current) clearTimeout(confirmDeleteTimer.current)
     setBoardMenuOpen(false)
     const id = current.id
-    const result = await window.electronAPI.deleteBoard(id)
-    if (!result.ok) {
+    try {
+      const result = await window.electronAPI.deleteBoard(id)
+      if (!result.ok) {
+        flashSaveFailed()
+        return
+      }
+    } catch {
       flashSaveFailed()
       return
     }
@@ -310,6 +445,11 @@ export default function BoardsPage() {
 
   const addWidget = (type: WidgetType) => {
     if (!current) return
+    if (current.widgets.length >= BOARD_LIMITS.maxWidgets) {
+      setGalleryOpen(false)
+      flashToast(t('boards.widgetLimit'), false)
+      return
+    }
     const size = WIDGET_DEFAULT_SIZES[type]
     const widget = createWidget(type, t(widgetNameKey(type)), findFreeSlot(current.widgets, size.w, size.h))
     setGalleryOpen(false)
@@ -319,6 +459,14 @@ export default function BoardsPage() {
 
   const removeWidget = (widgetId: string) => {
     if (!currentId) return
+    if (confirmDeleteWidgetId !== widgetId) {
+      setConfirmDeleteWidgetId(widgetId)
+      if (confirmWidgetTimer.current) clearTimeout(confirmWidgetTimer.current)
+      confirmWidgetTimer.current = setTimeout(() => setConfirmDeleteWidgetId(null), 3000)
+      return
+    }
+    setConfirmDeleteWidgetId(null)
+    if (confirmWidgetTimer.current) clearTimeout(confirmWidgetTimer.current)
     setConfigWidgetId((id) => (id === widgetId ? null : id))
     mutateBoard(currentId, (b) => ({ ...b, widgets: b.widgets.filter((w) => w.id !== widgetId) }))
   }
@@ -333,15 +481,17 @@ export default function BoardsPage() {
 
   const saveWidgetConfig = (
     widgetId: string,
-    patch: { title: string; config: Record<string, unknown> }
+    patch: { title: string; config: Record<string, unknown>; style?: BoardWidgetStyle }
   ) => {
     if (!currentId) return
     setConfigWidgetId(null)
     mutateBoard(currentId, (b) => ({
       ...b,
-      widgets: b.widgets.map((w) =>
-        w.id === widgetId ? { ...w, title: patch.title, config: patch.config } : w
-      )
+      widgets: b.widgets.map((w) => {
+        if (w.id !== widgetId) return w
+        const { style: _previousStyle, ...rest } = w
+        return { ...rest, title: patch.title, config: patch.config, ...(patch.style ? { style: patch.style } : {}) }
+      })
     }))
   }
 
@@ -353,11 +503,15 @@ export default function BoardsPage() {
     const widgets = current.widgets.map((w) => {
       const l = byId.get(w.id)
       if (!l) return w
-      if (l.x === w.layout.x && l.y === w.layout.y && l.w === w.layout.w && l.h === w.layout.h) {
+      const x = Math.max(0, Math.min(GRID_COLS - 1, Math.floor(l.x)))
+      const y = Math.max(0, Math.floor(l.y))
+      const width = Math.max(1, Math.min(GRID_COLS - x, Math.floor(l.w)))
+      const height = Math.max(1, Math.min(GRID_MAX_H, Math.floor(l.h)))
+      if (x === w.layout.x && y === w.layout.y && width === w.layout.w && height === w.layout.h) {
         return w
       }
       changed = true
-      return { ...w, layout: { x: l.x, y: l.y, w: l.w, h: l.h } }
+      return { ...w, layout: { x, y, w: width, h: height } }
     })
     if (!changed) return
     const next = { ...current, widgets, updatedAt: Date.now() }
@@ -374,8 +528,9 @@ export default function BoardsPage() {
   }
 
   const handleRefresh = () => {
-    setRefreshTick((n) => n + 1)
-    flashToast(t('boards.refreshed'))
+    void refreshDatasets().then((ok) => {
+      flashToast(t(ok ? 'boards.refreshed' : 'boards.datasets.loadFailed'), ok)
+    })
   }
 
   const handleResetLayout = () => {
@@ -404,32 +559,64 @@ export default function BoardsPage() {
     else void boardAreaRef.current?.requestFullscreen()
   }
 
+  /** Send a bounded, reviewable board/schema summary into the composer. */
+  const askAgentAboutBoard = () => {
+    if (!current) return
+    closeMenus()
+    const store = useAppStore.getState()
+    const existing = store.currentSessionId ? store.composerDrafts[store.currentSessionId]?.text.trim() : ''
+    const prompt = buildBoardChatPrompt(current, datasets, language)
+    // Preserve an unsent draft instead of replacing it. The board snapshot is
+    // clearly separated so the person can edit either part before sending.
+    store.setComposerPrefill(existing ? `${existing}\n\n${prompt}` : prompt)
+    navigate('/')
+  }
+
   // ---------------------------------------------------------------- datasets
 
-  const refreshDatasets = async () => {
-    setDatasets(await window.electronAPI.listBoardDatasets())
+  const refreshDatasets = async (): Promise<boolean> => {
+    const generation = ++datasetRefreshGeneration.current
+    try {
+      const next = await window.electronAPI.listBoardDatasets()
+      if (generation !== datasetRefreshGeneration.current) return false
+      setDatasets(next)
+      setDatasetsLoadFailed(false)
+      return true
+    } catch {
+      if (generation !== datasetRefreshGeneration.current) return false
+      setDatasetsLoadFailed(true)
+      return false
+    }
   }
 
   /** Import one picked/dropped file through Main's one-use FileGrant. */
   const importDatasetGrant = async (fileGrantId: string) => {
-    const result = await window.electronAPI.importBoardDataset(fileGrantId)
-    if (result.ok) {
-      await refreshDatasets()
-      const rows = result.dataset.rows.length
-      const cols = result.dataset.columns.length
-      flashToast(
-        t('boards.datasets.imported', { name: result.dataset.name, rows, cols }) +
-          (result.truncated ? t('boards.datasets.truncatedNote') : '')
-      )
-    } else {
-      flashToast(t(DATASET_ERROR_KEYS[result.error] ?? 'boards.datasets.error.parseFailed'), false)
+    try {
+      const result = await window.electronAPI.importBoardDataset(fileGrantId)
+      if (result.ok) {
+        await refreshDatasets()
+        const rows = result.dataset.rows.length
+        const cols = result.dataset.columns.length
+        flashToast(
+          t('boards.datasets.imported', { name: result.dataset.name, rows, cols }) +
+            (result.truncated ? t('boards.datasets.truncatedNote') : '')
+        )
+      } else {
+        flashToast(t(DATASET_ERROR_KEYS[result.error] ?? 'boards.datasets.error.parseFailed'), false)
+      }
+    } catch {
+      flashToast(t('boards.datasets.importFailed'), false)
     }
   }
 
   const handleImportPick = async () => {
     setToolsMenuOpen(false)
-    const grant = await window.electronAPI.selectBoardDatasetFile()
-    if (grant) await importDatasetGrant(grant.id)
+    try {
+      const grant = await window.electronAPI.selectBoardDatasetFile()
+      if (grant) await importDatasetGrant(grant.id)
+    } catch {
+      flashToast(t('boards.datasets.importFailed'), false)
+    }
   }
 
   // Finder file drags get a full-page overlay (same pattern as PackagesPage).
@@ -457,10 +644,14 @@ export default function BoardsPage() {
       if (!files?.length) return
       void (async () => {
         for (const file of Array.from(files)) {
-          // eslint-disable-next-line no-await-in-loop
-          const grant = await window.electronAPI.grantDroppedBoardDatasetFile(file)
-          // eslint-disable-next-line no-await-in-loop
-          if (grant) await importDatasetGrant(grant.id)
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const grant = await window.electronAPI.grantDroppedBoardDatasetFile(file)
+            // eslint-disable-next-line no-await-in-loop
+            if (grant) await importDatasetGrant(grant.id)
+          } catch {
+            flashToast(t('boards.datasets.importFailed'), false)
+          }
         }
       })()
     }
@@ -489,12 +680,16 @@ export default function BoardsPage() {
     const name = renameDraft.trim()
     setRenamingId(null)
     if (!id || !name) return
-    const result = await window.electronAPI.renameBoardDataset(id, name)
-    if (!result.ok) {
+    try {
+      const result = await window.electronAPI.renameBoardDataset(id, name)
+      if (!result.ok) {
+        flashToast(t('boards.datasets.renameFailed'), false)
+        return
+      }
+      await refreshDatasets()
+    } catch {
       flashToast(t('boards.datasets.renameFailed'), false)
-      return
     }
-    await refreshDatasets()
   }
 
   // Two-stage confirm, same as board/widget deletes.
@@ -507,12 +702,16 @@ export default function BoardsPage() {
     }
     setConfirmDeleteDatasetId(null)
     if (confirmDatasetTimer.current) clearTimeout(confirmDatasetTimer.current)
-    const result = await window.electronAPI.deleteBoardDataset(id)
-    if (!result.ok) {
+    try {
+      const result = await window.electronAPI.deleteBoardDataset(id)
+      if (!result.ok) {
+        flashToast(t('boards.datasets.deleteFailed'), false)
+        return
+      }
+      await refreshDatasets()
+    } catch {
       flashToast(t('boards.datasets.deleteFailed'), false)
-      return
     }
-    await refreshDatasets()
   }
 
   // ------------------------------------------------------------------ render
@@ -526,21 +725,42 @@ export default function BoardsPage() {
         w: w.layout.w,
         h: w.layout.h,
         minW: 2,
-        minH: 2
+        minH: 2,
+        maxW: GRID_COLS,
+        maxH: GRID_MAX_H
       })),
     [current]
   )
 
-  const renderWidget = (widget: BoardWidget) => (
+  const renderWidget = (widget: BoardWidget) => {
+    const padding = widget.style?.padding ?? 12
+    const confirmingDelete = confirmDeleteWidgetId === widget.id
+    return (
     <div
       key={widget.id}
-      className="group/widget relative flex flex-col overflow-hidden rounded-[16px] border border-line bg-ink-850 shadow-card"
+      style={widgetCardStyle(widget.style)}
+      className="board-widget group/widget relative flex flex-col overflow-hidden border border-line bg-ink-850"
     >
-      <div className="flex shrink-0 items-center gap-1 px-3 pb-0.5 pt-2">
-        <span className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.1em] text-cream-faint">
+      <div
+        style={{
+          paddingLeft: padding,
+          paddingRight: padding,
+          paddingTop: Math.max(6, Math.round(padding * 0.7)),
+          paddingBottom: 2
+        }}
+        className="flex shrink-0 items-center gap-1"
+      >
+        <span
+          style={{ textAlign: widget.style?.titleAlign ?? 'left' }}
+          className="min-w-0 flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.1em] text-cream-faint"
+        >
           {widget.title || t(widgetNameKey(widget.type))}
         </span>
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover/widget:opacity-100">
+        <div
+          className={`flex shrink-0 items-center gap-0.5 transition ${
+            confirmingDelete ? 'opacity-100' : 'opacity-0 group-hover/widget:opacity-100'
+          }`}
+        >
           <button
             onClick={() => setConfigWidgetId(widget.id)}
             title={t('boards.widgetSettings')}
@@ -550,16 +770,23 @@ export default function BoardsPage() {
           </button>
           <button
             onClick={() => removeWidget(widget.id)}
-            title={t('boards.deleteWidget')}
-            className="rounded-md p-1 text-cream-faint transition hover:bg-red-500/15 hover:text-red-500"
+            title={confirmingDelete ? t('boards.deleteWidgetConfirm') : t('boards.deleteWidget')}
+            className={`rounded-md p-1 transition ${
+              confirmingDelete
+                ? 'bg-red-500/15 text-red-500'
+                : 'text-cream-faint hover:bg-red-500/15 hover:text-red-500'
+            }`}
           >
-            <X size={11} />
+            {confirmingDelete ? <Check size={11} /> : <X size={11} />}
           </button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 px-3 pb-2.5 pt-0.5">
+      <div
+        style={{ paddingLeft: padding, paddingRight: padding, paddingBottom: Math.max(8, padding), paddingTop: 2 }}
+        className="min-h-0 flex-1"
+      >
         <WidgetBody
-          key={`${widget.id}:${refreshTick}`}
+          key={widget.id}
           widget={widget}
           datasets={datasets}
           onConfigChange={(config) => updateWidgetConfig(widget.id, config)}
@@ -575,7 +802,8 @@ export default function BoardsPage() {
         />
       )}
     </div>
-  )
+    )
+  }
 
   const menuItemClass =
     'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition'
@@ -618,9 +846,10 @@ export default function BoardsPage() {
             />
           ) : (
             <button
-              onClick={() => setCreating(true)}
+              onClick={openCreate}
+              disabled={boardsLoadFailed}
               title={t('boards.newTab')}
-              className="shrink-0 rounded-full p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream"
+              className="shrink-0 rounded-full p-1.5 text-cream-faint transition hover:bg-overlay hover:text-cream disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Plus size={13} />
             </button>
@@ -628,6 +857,15 @@ export default function BoardsPage() {
         </div>
         {saveFailed && (
           <span className="shrink-0 text-[11px] text-red-500">{t('boards.saveFailed')}</span>
+        )}
+        {datasetsLoadFailed && (
+          <button
+            onClick={() => void refreshDatasets()}
+            title={t('boards.retry')}
+            className="shrink-0 text-[11px] text-red-500 underline-offset-2 transition hover:underline"
+          >
+            {t('boards.datasets.loadFailed')} · {t('boards.retry')}
+          </button>
         )}
         {current && (
           <div className="app-no-drag relative shrink-0">
@@ -651,6 +889,13 @@ export default function BoardsPage() {
                   {t('boards.editDetail')}
                 </button>
                 <button
+                  onClick={askAgentAboutBoard}
+                  className={`${menuItemClass} text-cream-dim hover:bg-overlay hover:text-cream`}
+                >
+                  <MessageSquareText size={12} />
+                  {t('boards.chat.ask')}
+                </button>
+                <button
                   onClick={() => void handleDeleteBoard()}
                   className={`${menuItemClass} ${
                     confirmDeleteBoard
@@ -667,11 +912,27 @@ export default function BoardsPage() {
         )}
       </header>
 
-      <div ref={boardAreaRef} className="relative flex-1 overflow-hidden bg-ink-950">
+      <div
+        ref={boardAreaRef}
+        style={boardCanvasStyle(current?.style)}
+        className="relative flex-1 overflow-hidden bg-ink-950"
+      >
         <div className="h-full overflow-y-auto">
           {boards === null ? (
             <div className="flex h-full items-center justify-center text-sm text-cream-faint">
               {t('app.loading')}
+            </div>
+          ) : boardsLoadFailed ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+              <SquareKanban size={28} className="text-red-500" />
+              <div className="text-sm text-cream-dim">{t('boards.loadFailed')}</div>
+              <button
+                onClick={retryBoardLoad}
+                className="flex items-center gap-1.5 rounded-full border border-line px-4 py-2 text-[12px] text-cream-dim transition hover:border-ink-600 hover:text-cream"
+              >
+                <RefreshCw size={12} />
+                {t('boards.retry')}
+              </button>
             </div>
           ) : !current ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
@@ -679,7 +940,7 @@ export default function BoardsPage() {
               <div className="text-sm text-cream-dim">{t('boards.empty')}</div>
               <div className="text-xs text-cream-faint">{t('boards.emptyHint')}</div>
               <button
-                onClick={() => setCreating(true)}
+                onClick={openCreate}
                 className="mt-1 flex items-center gap-1.5 rounded-full bg-cream px-4 py-2 text-[12px] font-medium text-ink-950 transition hover:opacity-90"
               >
                 <Plus size={12} />
@@ -808,6 +1069,9 @@ export default function BoardsPage() {
                 }}
               >
                 <Sparkles size={14} />
+              </ToolButton>
+              <ToolButton title={t('boards.chat.ask')} onClick={askAgentAboutBoard}>
+                <MessageSquareText size={14} />
               </ToolButton>
               <ToolButton
                 title={t('boards.addWidget')}
@@ -978,6 +1242,47 @@ export default function BoardsPage() {
                   className="w-full rounded-lg border border-line bg-ink-850 px-2.5 py-1.5 text-[12.5px] text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/50"
                 />
               </label>
+              <div className="border-t border-line pt-3">
+                <div className="mb-2 text-[11px] text-cream-faint">{t('boards.appearance.title')}</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] text-cream-faint">{t('boards.appearance.background')}</span>
+                    <div className="flex items-center gap-2 rounded-lg border border-line bg-ink-850 px-2 py-1.5">
+                      <input
+                        type="color"
+                        value={detailStyle.background ?? '#141311'}
+                        onChange={(event) => setDetailStyle((style) => ({ ...style, background: event.target.value }))}
+                        aria-label={t('boards.appearance.background')}
+                        className="h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+                      />
+                      <span className="font-mono text-[11px] text-cream-dim">{detailStyle.background ?? '#141311'}</span>
+                    </div>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] text-cream-faint">{t('boards.appearance.grid')}</span>
+                    <select
+                      value={detailStyle.grid ?? 'none'}
+                      onChange={(event) =>
+                        setDetailStyle((style) => ({
+                          ...style,
+                          grid: event.target.value as BoardStyle['grid']
+                        }))
+                      }
+                      className="w-full rounded-lg border border-line bg-ink-850 px-2.5 py-1.5 text-[12px] text-cream outline-none focus:border-accent/50"
+                    >
+                      <option value="none">{t('boards.appearance.grid.none')}</option>
+                      <option value="dots">{t('boards.appearance.grid.dots')}</option>
+                      <option value="lines">{t('boards.appearance.grid.lines')}</option>
+                    </select>
+                  </label>
+                </div>
+                <button
+                  onClick={() => setDetailStyle({})}
+                  className="mt-2 rounded px-1 py-0.5 text-[10.5px] text-cream-faint transition hover:bg-overlay hover:text-cream"
+                >
+                  {t('boards.appearance.reset')}
+                </button>
+              </div>
               <label className="block">
                 <span className="mb-1 block text-[11px] text-cream-faint">
                   {t('boards.detail.description')}

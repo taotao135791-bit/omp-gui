@@ -36,6 +36,7 @@ export type DatasetImportError =
   | 'parse-failed'
   | 'empty'
   | 'dataset-limit'
+  | 'dataset-store-unreadable'
   | 'write-failed'
 
 export type DatasetImportResult =

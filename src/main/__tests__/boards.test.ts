@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => userDataDir }
 }))
 
-import { deleteBoard, listBoards, saveBoard } from '../boards'
+import { appendBoardNote, deleteBoard, listBoards, saveBoard } from '../boards'
 import { BOARD_LIMITS } from '../../shared/boards'
 import { KanbanBoard } from '../../shared/types'
 
@@ -51,14 +51,14 @@ describe('listBoards', () => {
     expect(listBoards(file)).toEqual([])
   })
 
-  it('falls back to an empty list for corrupt JSON', () => {
+  it('surfaces corrupt JSON instead of silently treating it as an empty store', () => {
     writeFileSync(file, '{not json')
-    expect(listBoards(file)).toEqual([])
+    expect(() => listBoards(file)).toThrow('The local boards file is not valid JSON.')
   })
 
-  it('falls back to an empty list for non-array JSON', () => {
+  it('surfaces non-array JSON instead of silently treating it as an empty store', () => {
     writeFileSync(file, JSON.stringify({ boards: [] }))
-    expect(listBoards(file)).toEqual([])
+    expect(() => listBoards(file)).toThrow('The local boards file has an invalid format.')
   })
 
   it('drops invalid entries but keeps the valid ones', () => {
@@ -114,6 +114,13 @@ describe('listBoards', () => {
 })
 
 describe('saveBoard', () => {
+  it('refuses to overwrite a corrupt store', () => {
+    writeFileSync(file, '{not json')
+    const before = readFileSync(file, 'utf-8')
+    expect(saveBoard(makeBoard('b1'), file)).toEqual({ ok: false, error: 'board-store-unreadable' })
+    expect(readFileSync(file, 'utf-8')).toBe(before)
+  })
+
   it('round-trips a board through listBoards', () => {
     const board = makeBoard('b1')
     expect(saveBoard(board, file)).toEqual({ ok: true })
@@ -145,6 +152,21 @@ describe('saveBoard', () => {
     expect(readFileSync(file, 'utf-8')).toBe(before)
   })
 
+  it('rejects too many or malformed widgets instead of silently dropping them on save', () => {
+    const valid = makeBoard('b1')
+    expect(saveBoard(valid, file)).toEqual({ ok: true })
+    const before = readFileSync(file, 'utf-8')
+    const tooMany = {
+      ...valid,
+      widgets: Array.from({ length: BOARD_LIMITS.maxWidgets + 1 }, (_, index) => ({
+        ...valid.widgets[0],
+        id: `widget-${index}`
+      }))
+    }
+    expect(saveBoard(tooMany, file)).toEqual({ ok: false, error: 'invalid-board' })
+    expect(readFileSync(file, 'utf-8')).toBe(before)
+  })
+
   it('enforces the board limit for new boards but still allows upserts', () => {
     for (let i = 0; i < BOARD_LIMITS.maxBoards; i++) {
       expect(saveBoard(makeBoard(`b-${i}`), file)).toEqual({ ok: true })
@@ -166,6 +188,13 @@ describe('saveBoard', () => {
 })
 
 describe('deleteBoard', () => {
+  it('refuses to overwrite a corrupt store', () => {
+    writeFileSync(file, '{not json')
+    const before = readFileSync(file, 'utf-8')
+    expect(deleteBoard('a', file)).toEqual({ ok: false, error: 'board-store-unreadable' })
+    expect(readFileSync(file, 'utf-8')).toBe(before)
+  })
+
   it('removes the board and keeps the rest', () => {
     saveBoard(makeBoard('a'), file)
     saveBoard(makeBoard('b'), file)
@@ -184,5 +213,37 @@ describe('deleteBoard', () => {
     const result = deleteBoard(42, file)
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toBe('invalid-board')
+  })
+})
+
+describe('appendBoardNote', () => {
+  it('appends to the latest persisted board without replacing concurrent widgets', () => {
+    const board = makeBoard('a')
+    expect(saveBoard(board, file)).toEqual({ ok: true })
+    const externallyUpdated = {
+      ...board,
+      widgets: [...board.widgets, { ...board.widgets[0], id: 'a-w2', title: 'Already here' }]
+    }
+    expect(saveBoard(externallyUpdated, file)).toEqual({ ok: true })
+    const result = appendBoardNote({ boardId: 'a', title: 'Assistant summary', text: 'Latest reply' }, file)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.board.widgets.map((widget) => widget.title)).toEqual(['Todo', 'Already here', 'Assistant summary'])
+    expect(listBoards(file)[0].widgets).toHaveLength(3)
+  })
+
+  it('rejects append when the current board is full without changing the file', () => {
+    const board = makeBoard('a')
+    board.widgets = Array.from({ length: BOARD_LIMITS.maxWidgets }, (_, index) => ({
+      ...board.widgets[0],
+      id: `widget-${index}`
+    }))
+    expect(saveBoard(board, file)).toEqual({ ok: true })
+    const before = readFileSync(file, 'utf-8')
+    expect(appendBoardNote({ boardId: 'a', title: 'Title', text: 'Reply' }, file)).toEqual({
+      ok: false,
+      error: 'board-full'
+    })
+    expect(readFileSync(file, 'utf-8')).toBe(before)
   })
 })

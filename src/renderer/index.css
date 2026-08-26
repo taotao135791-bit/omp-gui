@@ -227,3 +227,35 @@
   height: 8px;
   border-color: rgb(var(--text-faint));
 }
+
+/* Board appearance is persisted as bounded tokens (not arbitrary CSS). These
+   scoped overrides let every existing widget body inherit its chosen palette
+   while keeping the rest of the app's design system untouched. */
+.board-widget .text-cream,
+.board-widget .text-cream\/90 {
+  color: var(--board-widget-text) !important;
+}
+.board-widget .text-cream-dim {
+  color: color-mix(in srgb, var(--board-widget-text) 72%, transparent) !important;
+}
+.board-widget .text-cream-faint {
+  color: color-mix(in srgb, var(--board-widget-text) 48%, transparent) !important;
+}
+.board-widget .text-accent {
+  color: var(--board-widget-accent) !important;
+}
+.board-widget .fill-cream {
+  fill: var(--board-widget-text) !important;
+}
+.board-widget .fill-cream-dim {
+  fill: color-mix(in srgb, var(--board-widget-text) 72%, transparent) !important;
+}
+.board-widget .fill-cream-faint {
+  fill: color-mix(in srgb, var(--board-widget-text) 48%, transparent) !important;
+}
+.board-widget .bg-accent-soft {
+  background-color: color-mix(in srgb, var(--board-widget-accent) 14%, transparent) !important;
+}
+.board-widget .border-line {
+  border-color: var(--board-widget-border) !important;
+}

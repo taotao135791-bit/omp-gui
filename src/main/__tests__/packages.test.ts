@@ -29,7 +29,8 @@ import {
   parseOmpPluginList,
   listPackages,
   setPackageEnabled,
-  resourceEntries
+  resourceEntries,
+  normalizeOmpPluginSource
 } from '../packages'
 
 let dir: string
@@ -76,6 +77,7 @@ describe('classifySource', () => {
 
   it('classifies git sources', () => {
     expect(classifySource('git:github.com/user/repo@v1')).toBe('git')
+    expect(classifySource('github:user/repo#v1')).toBe('git')
     expect(classifySource('https://github.com/user/repo')).toBe('git')
     expect(classifySource('ssh://git@github.com/user/repo')).toBe('git')
     expect(classifySource('git@github.com:user/repo')).toBe('git')
@@ -86,6 +88,29 @@ describe('classifySource', () => {
     expect(classifySource('./rel/pkg')).toBe('local')
     expect(classifySource('../../../../tmp/pi-demo-ext')).toBe('local')
     expect(classifySource('~/packages/foo')).toBe('local')
+  })
+})
+
+describe('normalizeOmpPluginSource', () => {
+  it('normalizes documented GitHub shorthand, links and legacy Pi spelling', () => {
+    expect(normalizeOmpPluginSource('owner/repo')).toBe('github:owner/repo')
+    expect(normalizeOmpPluginSource('owner/repo#v1.2.0')).toBe('github:owner/repo#v1.2.0')
+    expect(normalizeOmpPluginSource('https://github.com/owner/repo.git')).toBe('github:owner/repo')
+    expect(normalizeOmpPluginSource('git:github.com/owner/repo@main')).toBe('github:owner/repo#main')
+  })
+
+  it('keeps local paths and arbitrary supported Git URLs intact', () => {
+    expect(normalizeOmpPluginSource('./my-plugin')).toBe('./my-plugin')
+    expect(normalizeOmpPluginSource('git@github.com:owner/repo')).toBe('git@github.com:owner/repo')
+    expect(normalizeOmpPluginSource('https://github.com/owner/repo/tree/main')).toBe('github:owner/repo#main')
+    expect(normalizeOmpPluginSource('https://github.com/owner/repo/tree/main/')).toBe('github:owner/repo#main')
+    expect(normalizeOmpPluginSource('https://github.com/owner/repo/blob/main/index.ts')).toBe(
+      'https://github.com/owner/repo/blob/main/index.ts'
+    )
+  })
+
+  it('removes only the legacy npm prefix for current OMP', () => {
+    expect(normalizeOmpPluginSource('npm:@scope/plugin@1.2.3')).toBe('@scope/plugin@1.2.3')
   })
 })
 

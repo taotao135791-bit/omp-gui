@@ -25,7 +25,12 @@ import {
   PluginScaffoldRequest,
   CustomProvidersListResult,
   CustomProviderSaveResult,
-  CustomProviderDeleteResult
+  CustomProviderDeleteResult,
+  KimiComputerUseMutationResult,
+  ManagedPluginDescriptor,
+  ManagedPluginDetail,
+  ManagedPluginSaveResult,
+  ManagedPluginActionResult
 } from '../shared/types'
 import {
   detectCli,
@@ -68,6 +73,14 @@ import { getStore, rememberRecentProject, setStore } from './store'
 import { installOmp } from './installer'
 import { searchCommunityPackages } from './community'
 import { scaffoldPlugin } from './pluginScaffold'
+import { getKimiComputerUseStatus, setKimiComputerUseEnabled } from './kimiComputerUse'
+import {
+  deleteManagedPlugin,
+  getManagedPlugin,
+  listManagedPlugins,
+  saveManagedPlugin,
+  syncManagedPlugin
+} from './managedPlugins'
 import { OperationGrantManager } from './operationGrant'
 import { FsGuard } from './fsGuard'
 import {
@@ -82,7 +95,7 @@ import { listSessionHistory, deleteSessionFile } from './sessionHistory'
 import { HistorySessionGrantManager } from './historySessionGrant'
 import { PackageActionGrantManager, matchesPackageActionTarget } from './packageActionGrant'
 import { PackageLocalSourceGrantManager } from './packageLocalSourceGrant'
-import { deleteBoard, listBoards, saveBoard } from './boards'
+import { appendBoardNote, deleteBoard, listBoards, saveBoard } from './boards'
 import { deleteDataset, importDataset, listDatasets, renameDataset } from './boardDatasets'
 import { defaultExportFileName } from './exportPath'
 import { listProjectFiles } from './projectFiles'
@@ -309,6 +322,32 @@ async function confirmPackageAction(
     title: `${verb} plugin`,
     message: `${verb} “${safePackageDialogLabel(label)}”?`,
     detail: detail ? `${codeWarning}\n\n${detail}` : codeWarning
+  }
+  const owner = BrowserWindow.fromWebContents(event.sender)
+  const result = owner
+    ? await dialog.showMessageBox(owner, options)
+    : await dialog.showMessageBox(options)
+  return result.response === 1
+}
+
+/**
+ * Enabling the bridge makes a separately installed Kimi CU MCP server
+ * available to future OMP sessions. Keep this consent in a Main-owned native
+ * dialog: a compromised renderer must not silently gain desktop input tools.
+ */
+async function confirmKimiComputerUseBridge(event: IpcMainInvokeEvent, enabled: boolean): Promise<boolean> {
+  const verb = enabled ? 'Enable' : 'Disable'
+  const options = {
+    type: enabled ? 'warning' as const : 'question' as const,
+    buttons: ['Cancel', verb],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    title: `${verb} Kimi Computer Use`,
+    message: `${verb} the Kimi Computer Use bridge?`,
+    detail: enabled
+      ? 'Future OMP sessions can use Kimi CU to inspect desktop windows and send keyboard or pointer input. Keep the session permission mode on Ask unless you explicitly want unattended desktop actions.'
+      : 'This removes only OMP GUI\'s Kimi CU MCP registration. Kimi CU itself and other MCP servers are left unchanged.'
   }
   const owner = BrowserWindow.fromWebContents(event.sender)
   const result = owner
@@ -1256,6 +1295,69 @@ export function registerIpc() {
     return performPackageRowAction(event, packageId, 'toggle', enabled)
   })
 
+  // Kimi CU is an optional user-installed desktop runtime. Status is
+  // read-only; adding/removing the OMP MCP registration always needs native
+  // confirmation because it exposes desktop inspection/input to future agent
+  // sessions.
+  ipcMain.handle(IPC_CHANNELS.KIMI_CU_STATUS, async () => getKimiComputerUseStatus())
+  ipcMain.handle(
+    IPC_CHANNELS.KIMI_CU_SET_ENABLED,
+    async (event: IpcMainInvokeEvent, enabled: unknown): Promise<KimiComputerUseMutationResult> => {
+      const current = await getKimiComputerUseStatus()
+      if (typeof enabled !== 'boolean') {
+        return { ok: false, status: current, error: 'Invalid Kimi CU bridge state.' }
+      }
+      if (current.configured === enabled) return { ok: true, status: current }
+      if (!await confirmKimiComputerUseBridge(event, enabled)) {
+        return { ok: false, status: current, error: 'Cancelled.' }
+      }
+      return setKimiComputerUseEnabled(enabled)
+    }
+  )
+
+  // Handwritten plugins live under app-owned userData. The renderer submits
+  // metadata/code only; it never selects a write location or calls OMP. Sync
+  // and delete are still native-confirmed runtime mutations.
+  ipcMain.handle(
+    IPC_CHANNELS.MANAGED_PLUGINS_LIST,
+    async (): Promise<ManagedPluginDescriptor[]> => listManagedPlugins()
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.MANAGED_PLUGINS_GET,
+    async (_event, id: unknown): Promise<ManagedPluginDetail | null> => getManagedPlugin(id)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.MANAGED_PLUGINS_SAVE,
+    async (_event, draft: unknown): Promise<ManagedPluginSaveResult> => saveManagedPlugin(draft)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.MANAGED_PLUGINS_SYNC,
+    async (event: IpcMainInvokeEvent, id: unknown): Promise<ManagedPluginActionResult> => {
+      const plugin = getManagedPlugin(id)
+      if (!plugin) return { ok: false, error: 'The handwritten plugin source is unavailable.', log: '' }
+      if (!await confirmPackageAction(event, 'install', plugin.name, 'Source: OMP GUI handwritten plugin')) {
+        return { ok: false, error: 'Cancelled.', log: '' }
+      }
+      return syncManagedPlugin(id)
+    }
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.MANAGED_PLUGINS_DELETE,
+    async (event: IpcMainInvokeEvent, id: unknown): Promise<ManagedPluginActionResult> => {
+      const plugin = getManagedPlugin(id)
+      if (!plugin) return { ok: false, error: 'The handwritten plugin source is unavailable.', log: '' }
+      if (!await confirmPackageAction(
+        event,
+        'remove',
+        plugin.name,
+        'This removes the runtime link and deletes the OMP GUI managed source.'
+      )) {
+        return { ok: false, error: 'Cancelled.', log: '' }
+      }
+      return deleteManagedPlugin(id)
+    }
+  )
+
   /**
    * The renderer cannot supply a parent path. It may only send the opaque
    * DirectoryGrant id produced by Main's native directory picker; Main then
@@ -1410,6 +1512,13 @@ export function registerIpc() {
 
   ipcMain.handle(IPC_CHANNELS.BOARDS_DELETE, async (_event, id: unknown) => {
     return deleteBoard(id)
+  })
+
+  // Chat → board is intentionally a narrow Main-side append, never a
+  // renderer-owned whole-board overwrite. Main re-reads the latest board and
+  // validates the bounded note before writing it.
+  ipcMain.handle(IPC_CHANNELS.BOARDS_APPEND_NOTE, async (_event, request: unknown) => {
+    return appendBoardNote(request)
   })
 
   // Board datasets — file paths never cross from the renderer. Main mints a

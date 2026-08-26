@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Check, ExternalLink, X } from 'lucide-react'
 import { BoardDataset, BoardWidget } from '@shared/types'
-import { TodoItem, isValidLinkUrl } from '@shared/boards'
+import { BOARD_LIMITS, TodoItem, isValidLinkUrl } from '@shared/boards'
 import {
   DATASET_OPS,
   DatasetOp,
@@ -160,7 +160,7 @@ function GaugeBody({ widget }: { widget: BoardWidget }) {
         <path
           d="M 20 100 A 80 80 0 0 1 180 100"
           fill="none"
-          stroke="var(--overlay-strong)"
+          stroke="var(--board-widget-border)"
           strokeWidth={10}
           strokeLinecap="round"
         />
@@ -168,7 +168,7 @@ function GaugeBody({ widget }: { widget: BoardWidget }) {
           <path
             d={`M 20 100 A 80 80 0 ${largeArc} 1 ${x.toFixed(2)} ${y.toFixed(2)}`}
             fill="none"
-            stroke="rgb(var(--accent))"
+            stroke="var(--board-widget-accent)"
             strokeWidth={10}
             strokeLinecap="round"
           />
@@ -178,10 +178,10 @@ function GaugeBody({ widget }: { widget: BoardWidget }) {
           y1={100}
           x2={nx.toFixed(2)}
           y2={ny.toFixed(2)}
-          stroke="rgb(var(--text))"
+          stroke="var(--board-widget-text)"
           strokeWidth={1.5}
         />
-        <circle cx={100} cy={100} r={3} fill="rgb(var(--text))" />
+        <circle cx={100} cy={100} r={3} fill="var(--board-widget-text)" />
         <text
           x={100}
           y={90}
@@ -278,7 +278,7 @@ function ChartBody({
               y1={py(v)}
               x2={W - padR}
               y2={py(v)}
-              stroke="var(--line)"
+              stroke="var(--board-widget-border)"
               strokeWidth={1}
             />
             <text x={padL - 4} y={py(v) + 2.5} textAnchor="end" fontSize={7.5} className="fill-cream-faint">
@@ -287,7 +287,7 @@ function ChartBody({
           </g>
         ))}
         {bar && lo < 0 && (
-          <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} stroke="var(--line-strong)" strokeWidth={1} />
+          <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} stroke="var(--board-widget-border)" strokeWidth={1} />
         )}
         {bar ? (
           points.map((v, i) => {
@@ -304,7 +304,8 @@ function ChartBody({
                 width={bw}
                 height={height}
                 rx={1.5}
-                className="fill-accent/80"
+                fill="var(--board-widget-accent)"
+                fillOpacity={0.8}
               />
             )
           })
@@ -312,19 +313,20 @@ function ChartBody({
           <>
             <path
               d={`${points.map((v, i) => `${i === 0 ? 'M' : 'L'} ${px(i).toFixed(2)} ${py(v).toFixed(2)}`).join(' ')} L ${px(points.length - 1).toFixed(2)} ${py(lo).toFixed(2)} L ${px(0).toFixed(2)} ${py(lo).toFixed(2)} Z`}
-              className="fill-accent/10"
+              fill="var(--board-widget-accent)"
+              fillOpacity={0.1}
             />
             <polyline
               points={points.map((v, i) => `${px(i).toFixed(2)},${py(v).toFixed(2)}`).join(' ')}
               fill="none"
-              stroke="rgb(var(--accent))"
+              stroke="var(--board-widget-accent)"
               strokeWidth={1.5}
               strokeLinejoin="round"
               strokeLinecap="round"
             />
             {points.length <= 40 &&
               points.map((v, i) => (
-                <circle key={i} cx={px(i)} cy={py(v)} r={1.6} fill="rgb(var(--accent))" />
+                <circle key={i} cx={px(i)} cy={py(v)} r={1.6} fill="var(--board-widget-accent)" />
               ))}
           </>
         )}
@@ -355,12 +357,13 @@ function TodoBody({
     ? (widget.config.items as TodoItem[])
     : []
   const [draft, setDraft] = useState('')
+  const atLimit = items.length >= BOARD_LIMITS.maxTodoItems
   const save = (next: TodoItem[]) => onConfigChange({ items: next })
   const add = () => {
     const text = draft.trim()
+    if (!text || atLimit) return
     setDraft('')
-    if (!text) return
-    save([...items, { id: crypto.randomUUID(), text: text.slice(0, 500), done: false }])
+    save([...items, { id: crypto.randomUUID(), text: text.slice(0, BOARD_LIMITS.maxTodoTextLength), done: false }])
   }
   return (
     <div className="flex h-full flex-col">
@@ -405,8 +408,9 @@ function TodoBody({
         onKeyDown={(e) => {
           if (e.key === 'Enter') add()
         }}
-        placeholder={t('boards.todoPlaceholder')}
-        className="mt-1.5 w-full shrink-0 rounded-lg border border-line bg-ink-900 px-2 py-1 text-[12px] text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/50"
+        disabled={atLimit}
+        placeholder={atLimit ? t('boards.todoLimit') : t('boards.todoPlaceholder')}
+        className="mt-1.5 w-full shrink-0 rounded-lg border border-line bg-ink-900 px-2 py-1 text-[12px] text-cream outline-none transition placeholder:text-cream-faint focus:border-accent/50 disabled:cursor-not-allowed disabled:opacity-60"
       />
     </div>
   )
@@ -415,29 +419,47 @@ function TodoBody({
 function LinkBody({ widget }: { widget: BoardWidget }) {
   const t = useT()
   const url = typeof widget.config.url === 'string' ? widget.config.url : ''
+  const [openError, setOpenError] = useState(false)
   let host = url
   try {
     host = new URL(url).host
   } catch {
     // Invalid URL — show it raw; the click guard below blocks opening it.
   }
-  const open = () => {
+  const open = async () => {
+    setOpenError(false)
     // Re-check at click time; the main process enforces the same policy.
-    if (isValidLinkUrl(url)) void window.electronAPI.authOpenLoginUrl(url)
+    if (!isValidLinkUrl(url)) {
+      setOpenError(true)
+      return
+    }
+    try {
+      const result = await window.electronAPI.authOpenLoginUrl(url)
+      if (!result.ok) setOpenError(true)
+    } catch {
+      setOpenError(true)
+    }
   }
   return (
-    <button
-      onClick={open}
-      title={t('boards.linkOpen')}
-      className="group/link flex h-full w-full flex-col items-center justify-center gap-1.5 rounded-lg transition hover:bg-overlay"
-    >
-      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-soft text-accent transition group-hover/link:bg-accent group-hover/link:text-ink-950">
-        <ExternalLink size={14} />
-      </span>
-      <span className="max-w-full truncate px-2 font-mono text-[11px] text-cream-dim transition group-hover/link:text-accent">
-        {host}
-      </span>
-    </button>
+    <div className="relative h-full">
+      <button
+        onClick={() => void open()}
+        title={t('boards.linkOpen')}
+        className="group/link flex h-full w-full flex-col items-center justify-center gap-1.5 rounded-lg transition hover:bg-overlay"
+      >
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-soft text-accent transition group-hover/link:bg-accent group-hover/link:text-ink-950">
+          <ExternalLink size={14} />
+        </span>
+        <span className="max-w-full truncate px-2 font-mono text-[11px] text-cream-dim transition group-hover/link:text-accent">
+          {host}
+        </span>
+      </button>
+      {openError && (
+        <p role="alert" className="absolute inset-x-1 bottom-1 rounded bg-red-500/10 px-1.5 py-1 text-center text-[10px] leading-3 text-red-500">
+          {t('boards.linkOpenFailed')}
+        </p>
+      )}
+    </div>
   )
 }
 

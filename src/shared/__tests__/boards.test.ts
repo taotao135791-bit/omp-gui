@@ -88,6 +88,47 @@ describe('validateBoard', () => {
     expect(board).toEqual({ ...validBoard(), widgets: [] })
   })
 
+  it('persists bounded board and widget appearance tokens, dropping malformed cosmetic input only', () => {
+    const board = validateBoard({
+      ...validBoard(),
+      style: { background: '#101112', grid: 'dots' },
+      widgets: [
+        {
+          ...validBoard().widgets[0],
+          style: {
+            accent: '#D97757',
+            surface: '#1d1c1a',
+            text: '#ebe7e4',
+            border: '#625d57',
+            radius: 20,
+            padding: 14,
+            titleAlign: 'center',
+            shadow: 'strong'
+          }
+        }
+      ]
+    })
+    expect(board?.style).toEqual({ background: '#101112', grid: 'dots' })
+    expect(board?.widgets[0].style).toEqual({
+      accent: '#d97757',
+      surface: '#1d1c1a',
+      text: '#ebe7e4',
+      border: '#625d57',
+      radius: 20,
+      padding: 14,
+      titleAlign: 'center',
+      shadow: 'strong'
+    })
+
+    const malformed = validateBoard({
+      ...validBoard(),
+      style: { background: 'url(javascript:alert(1))', grid: 'everything' },
+      widgets: [{ ...validBoard().widgets[0], style: { accent: 'red', radius: 99 } }]
+    })
+    expect(malformed?.style).toBeUndefined()
+    expect(malformed?.widgets[0].style).toBeUndefined()
+  })
+
   it('drops invalid widgets but keeps the board', () => {
     const board = validateBoard({
       ...validBoard(),

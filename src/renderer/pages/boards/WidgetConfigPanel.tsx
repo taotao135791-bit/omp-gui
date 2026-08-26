@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Check, X } from 'lucide-react'
-import { BoardDataset, BoardWidget } from '@shared/types'
+import { BoardDataset, BoardWidget, BoardWidgetStyle } from '@shared/types'
 import { BOARD_LIMITS, isValidLinkUrl } from '@shared/boards'
 import { DATASET_OPS, DatasetOp } from '@shared/datasets'
 import { useT, I18nKey } from '../../i18n'
@@ -22,7 +22,7 @@ interface WidgetConfigPanelProps {
   widget: BoardWidget
   datasets: BoardDataset[]
   onClose: () => void
-  onSave: (patch: { title: string; config: Record<string, unknown> }) => void
+  onSave: (patch: { title: string; config: Record<string, unknown>; style?: BoardWidgetStyle }) => void
 }
 
 const inputClass =
@@ -60,6 +60,8 @@ export function WidgetConfigPanel({ widget, datasets, onClose, onSave }: WidgetC
   )
   const [url, setUrl] = useState(configString(widget, 'url'))
   const [urlInvalid, setUrlInvalid] = useState(false)
+  const [labelsInvalid, setLabelsInvalid] = useState(false)
+  const [style, setStyle] = useState<BoardWidgetStyle>(widget.style ?? {})
 
   // Dataset binding (counter / chart-line / chart-bar only).
   const supportsDataset =
@@ -76,6 +78,10 @@ export function WidgetConfigPanel({ widget, datasets, onClose, onSave }: WidgetC
       : 'sum'
   )
   const [dimension, setDimension] = useState(configString(widget, 'dimension'))
+
+  const setStyleColor = (key: 'accent' | 'surface' | 'text' | 'border', value: string) => {
+    setStyle((current) => ({ ...current, [key]: value }))
+  }
 
   const selectedDataset = datasets.find((d) => d.id === datasetId)
   const metricColumns = (selectedDataset?.columns ?? []).filter((c) => c.type === 'number')
@@ -131,6 +137,10 @@ export function WidgetConfigPanel({ widget, datasets, onClose, onSave }: WidgetC
           .map((s) => s.trim())
           .filter(Boolean)
           .slice(0, BOARD_LIMITS.maxChartPoints)
+        if (labels.some((entry) => entry.length > BOARD_LIMITS.maxChartLabelLength)) {
+          setLabelsInvalid(true)
+          return
+        }
         config = { points, labels, ...bindingConfig() }
         break
       }
@@ -148,7 +158,11 @@ export function WidgetConfigPanel({ widget, datasets, onClose, onSave }: WidgetC
         break
       }
     }
-    onSave({ title: title.trim() || widget.title, config })
+    onSave({
+      title: title.trim() || widget.title,
+      config,
+      ...(Object.keys(style).length > 0 ? { style } : {})
+    })
   }
 
   return (
@@ -271,9 +285,15 @@ export function WidgetConfigPanel({ widget, datasets, onClose, onSave }: WidgetC
             <Field label={t('boards.config.labels')}>
               <input
                 value={labelsText}
-                onChange={(e) => setLabelsText(e.target.value)}
+                onChange={(e) => {
+                  setLabelsText(e.target.value)
+                  setLabelsInvalid(false)
+                }}
                 className={inputClass}
               />
+              {labelsInvalid && (
+                <p className="mt-1 text-[10.5px] leading-4 text-red-500">{t('boards.config.labelsTooLong')}</p>
+              )}
             </Field>
           </>
         )}
@@ -369,6 +389,100 @@ export function WidgetConfigPanel({ widget, datasets, onClose, onSave }: WidgetC
           </Field>
         )}
         {urlInvalid && <p className="text-[10.5px] leading-4 text-red-500">{t('boards.config.invalidUrl')}</p>}
+        <div className="border-t border-line pt-2.5">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="text-[10.5px] text-cream-faint">{t('boards.appearance.title')}</span>
+            <button
+              onClick={() => setStyle({})}
+              className="rounded px-1 py-0.5 text-[10px] text-cream-faint transition hover:bg-overlay hover:text-cream"
+            >
+              {t('boards.appearance.reset')}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                ['accent', 'boards.appearance.accent', '#d97757'],
+                ['surface', 'boards.appearance.surface', '#1d1c1a'],
+                ['text', 'boards.appearance.text', '#ebe7e4'],
+                ['border', 'boards.appearance.border', '#625d57']
+              ] as const
+            ).map(([key, labelKey, fallback]) => (
+              <label key={key} className="flex min-w-0 items-center gap-1.5 rounded-lg border border-line bg-ink-850 px-1.5 py-1">
+                <input
+                  type="color"
+                  value={style[key] ?? fallback}
+                  onChange={(event) => setStyleColor(key, event.target.value)}
+                  aria-label={t(labelKey)}
+                  className="h-5 w-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+                />
+                <span className="truncate text-[10.5px] text-cream-dim">{t(labelKey)}</span>
+              </label>
+            ))}
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <Field label={t('boards.appearance.radius')}>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="range"
+                  min="0"
+                  max="32"
+                  value={style.radius ?? 16}
+                  onChange={(event) => setStyle((current) => ({ ...current, radius: Number(event.target.value) }))}
+                  className="min-w-0 flex-1 accent-[rgb(var(--accent))]"
+                />
+                <span className="w-5 text-right font-mono text-[10px] text-cream-faint">{style.radius ?? 16}</span>
+              </div>
+            </Field>
+            <Field label={t('boards.appearance.padding')}>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="range"
+                  min="6"
+                  max="32"
+                  value={style.padding ?? 12}
+                  onChange={(event) => setStyle((current) => ({ ...current, padding: Number(event.target.value) }))}
+                  className="min-w-0 flex-1 accent-[rgb(var(--accent))]"
+                />
+                <span className="w-5 text-right font-mono text-[10px] text-cream-faint">{style.padding ?? 12}</span>
+              </div>
+            </Field>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <Field label={t('boards.appearance.titleAlign')}>
+              <select
+                value={style.titleAlign ?? 'left'}
+                onChange={(event) =>
+                  setStyle((current) => ({
+                    ...current,
+                    titleAlign: event.target.value as BoardWidgetStyle['titleAlign']
+                  }))
+                }
+                className={inputClass}
+              >
+                <option value="left">{t('boards.appearance.align.left')}</option>
+                <option value="center">{t('boards.appearance.align.center')}</option>
+                <option value="right">{t('boards.appearance.align.right')}</option>
+              </select>
+            </Field>
+            <Field label={t('boards.appearance.shadow')}>
+              <select
+                value={style.shadow ?? 'soft'}
+                onChange={(event) =>
+                  setStyle((current) => ({
+                    ...current,
+                    shadow: event.target.value as BoardWidgetStyle['shadow']
+                  }))
+                }
+                className={inputClass}
+              >
+                <option value="none">{t('boards.appearance.shadow.none')}</option>
+                <option value="soft">{t('boards.appearance.shadow.soft')}</option>
+                <option value="strong">{t('boards.appearance.shadow.strong')}</option>
+              </select>
+            </Field>
+          </div>
+        </div>
       </div>
       <div className="mt-2 flex shrink-0 justify-end gap-1.5">
         <button

@@ -6,7 +6,14 @@
  * IPC or coming back from disk — including migrating v1 kanban files
  * (columns of cards) into v2 widget boards.
  */
-import { BoardWidget, BoardWidgetLayout, KanbanBoard, WidgetType } from './types'
+import {
+  BoardStyle,
+  BoardWidget,
+  BoardWidgetLayout,
+  BoardWidgetStyle,
+  KanbanBoard,
+  WidgetType
+} from './types'
 import { DATASET_LIMITS, DATASET_OPS, DatasetOp } from './datasets'
 
 export const BOARD_LIMITS = {
@@ -22,7 +29,11 @@ export const BOARD_LIMITS = {
   maxTodoItems: 200,
   maxTodoTextLength: 500,
   maxUrlLength: 2000,
-  maxIdLength: 100
+  maxIdLength: 100,
+  minWidgetRadius: 0,
+  maxWidgetRadius: 32,
+  minWidgetPadding: 6,
+  maxWidgetPadding: 32
 } as const
 
 /** Widget grid geometry, shared by validation, layout helpers and the renderer. */
@@ -343,15 +354,94 @@ function cleanString(value: unknown, max: number): string | null {
   return typeof value === 'string' && value.length <= max ? value : null
 }
 
+/** Color inputs are rendered as style attributes, never as raw CSS strings. */
+const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i
+
+function cleanHexColor(value: unknown): string | null {
+  return typeof value === 'string' && HEX_COLOR_RE.test(value) ? value.toLowerCase() : null
+}
+
+function cleanBoundedInt(value: unknown, min: number, max: number): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) return null
+  return value >= min && value <= max ? value : null
+}
+
+/**
+ * Cosmetic fields are intentionally lenient: a malformed saved style is
+ * dropped while the user's underlying widget remains usable.
+ */
+export function validateBoardWidgetStyle(raw: unknown): BoardWidgetStyle | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  const style: BoardWidgetStyle = {}
+  for (const key of ['accent', 'surface', 'text', 'border'] as const) {
+    if (value[key] === undefined) continue
+    const color = cleanHexColor(value[key])
+    if (color === null) return undefined
+    style[key] = color
+  }
+  if (value.radius !== undefined) {
+    const radius = cleanBoundedInt(value.radius, BOARD_LIMITS.minWidgetRadius, BOARD_LIMITS.maxWidgetRadius)
+    if (radius === null) return undefined
+    style.radius = radius
+  }
+  if (value.padding !== undefined) {
+    const padding = cleanBoundedInt(value.padding, BOARD_LIMITS.minWidgetPadding, BOARD_LIMITS.maxWidgetPadding)
+    if (padding === null) return undefined
+    style.padding = padding
+  }
+  if (value.titleAlign !== undefined) {
+    if (value.titleAlign !== 'left' && value.titleAlign !== 'center' && value.titleAlign !== 'right') return undefined
+    style.titleAlign = value.titleAlign
+  }
+  if (value.shadow !== undefined) {
+    if (value.shadow !== 'none' && value.shadow !== 'soft' && value.shadow !== 'strong') return undefined
+    style.shadow = value.shadow
+  }
+  return Object.keys(style).length > 0 ? style : undefined
+}
+
+/** Canvas style follows the same no-arbitrary-CSS policy as widget styles. */
+export function validateBoardStyle(raw: unknown): BoardStyle | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const value = raw as Record<string, unknown>
+  const style: BoardStyle = {}
+  if (value.background !== undefined) {
+    const background = cleanHexColor(value.background)
+    if (background === null) return undefined
+    style.background = background
+  }
+  if (value.grid !== undefined) {
+    if (value.grid !== 'none' && value.grid !== 'dots' && value.grid !== 'lines') return undefined
+    style.grid = value.grid
+  }
+  return Object.keys(style).length > 0 ? style : undefined
+}
+
 /**
  * Link widgets may only point at https URLs or http on the loopback host
  * (the same policy the main process enforces when opening external URLs).
  */
 export function isValidLinkUrl(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > BOARD_LIMITS.maxUrlLength) return false
-  if (CONTROL_RE.test(value)) return false
-  if (/^https:\/\/\S+$/i.test(value)) return true
-  return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/\S*)?$/i.test(value)
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > BOARD_LIMITS.maxUrlLength ||
+    value !== value.trim() ||
+    CONTROL_RE.test(value)
+  ) {
+    return false
+  }
+  try {
+    const url = new URL(value)
+    // Match Main's safeLoginExternalUrl policy exactly: credentials must not
+    // be stored in a board URL or handed to the system browser.
+    if (!url.hostname || url.username || url.password) return false
+    if (url.protocol === 'https:') return true
+    return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+  } catch {
+    return false
+  }
 }
 
 function validateLayout(raw: unknown): BoardWidgetLayout | null {
@@ -559,10 +649,18 @@ function validateWidget(raw: unknown): BoardWidget | null {
   }
   const config = validateWidgetConfig(w.type as WidgetType, (w.config ?? {}) as Record<string, unknown>)
   if (!config) return null
-  return { id: w.id, type: w.type as WidgetType, title: w.title, layout, config }
+  const style = validateBoardWidgetStyle(w.style)
+  return { id: w.id, type: w.type as WidgetType, title: w.title, layout, config, ...(style ? { style } : {}) }
 }
 
-export function validateBoard(raw: unknown): KanbanBoard | null {
+/**
+ * Validate a board coming from disk or across IPC. Recovery reads retain the
+ * historic behavior of dropping malformed widgets so one bad legacy entry
+ * does not hide the rest of a board. Writes use `strict` so renderer input
+ * can never silently truncate widgets or discard a widget after the UI has
+ * reported a successful save.
+ */
+export function validateBoard(raw: unknown, strict = false): KanbanBoard | null {
   if (!raw || typeof raw !== 'object') return null
   const b = raw as Record<string, unknown>
   if (!isValidId(b.id)) return null
@@ -580,12 +678,17 @@ export function validateBoard(raw: unknown): KanbanBoard | null {
     return null
   }
   if (!Array.isArray(b.widgets)) return null
+  if (strict && b.widgets.length > BOARD_LIMITS.maxWidgets) return null
   if (!isValidTimestamp(b.createdAt) || !isValidTimestamp(b.updatedAt)) return null
   const widgets: BoardWidget[] = []
   const seen = new Set<string>()
-  for (const rawWidget of b.widgets.slice(0, BOARD_LIMITS.maxWidgets)) {
+  const rawWidgets = strict ? b.widgets : b.widgets.slice(0, BOARD_LIMITS.maxWidgets)
+  for (const rawWidget of rawWidgets) {
     const widget = validateWidget(rawWidget)
-    if (!widget || seen.has(widget.id)) continue
+    if (!widget || seen.has(widget.id)) {
+      if (strict) return null
+      continue
+    }
     seen.add(widget.id)
     widgets.push(widget)
   }
@@ -599,6 +702,8 @@ export function validateBoard(raw: unknown): KanbanBoard | null {
   if (typeof b.description === 'string' && b.description.length > 0) {
     board.description = b.description
   }
+  const style = validateBoardStyle(b.style)
+  if (style) board.style = style
   return board
 }
 
