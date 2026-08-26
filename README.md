@@ -35,8 +35,11 @@ The app auto-detects an installed `omp`/`pi` CLI, or offers to install Oh My Pi 
 - **Runtime-faithful models & thinking** — the composer model picker lists only models the runtime can actually run (credential-filtered by Oh My Pi itself) and switches **exactly the current session**; without a session it sets a one-shot override for the next session's spawn args. The Settings default (for future sessions) is a separate control persisted to `modelRoles.default` (never `enabledModels`) — changing one never moves the other, and every write is verified by re-reading the runtime. The session thinking picker covers the full session enum (off → **max**) filtered by the current model's own capability list; the Settings default-thinking picker uses the separate config enum (`auto` … `max`, no `off`), and both display the runtime-resolved level.
 - **Zero legacy writes on current OMP** — with a current Oh My Pi runtime, no Settings/auth/models/skills flow ever touches legacy `auth.json`/`settings.json` (guarded by static-boundary tests and a real-filesystem integration check). Legacy Pi installs keep their file-based compatibility path, clearly labeled legacy in the UI.
 - **Permissions** — tool access modes (full access / no Bash / read-only) applied to new sessions, plus project-trust control for project-local plugins.
-- **Assemble your Pi** — the plugin page works like a mecha bay: drag parts onto the core to mount them, drag back to the rack to detach, drop to the red zone to uninstall. Install npm/git/local packages or drop a folder straight from Finder. Only mounted parts load into new chats, keeping pi lean.
+- **Assemble your Pi** — the plugin page works like a mecha bay: drag parts onto the core to mount them, drag back to the rack to detach, drop to the red zone to uninstall. The install field accepts whatever you paste — a GitHub `owner/repo` shorthand or repository URL (including `/tree/<ref>` branch links), an npm name or versioned spec, or a local folder dropped straight from Finder — and Main normalizes it into the runtime's native form before installing. Only mounted parts load into new chats, keeping pi lean.
 - **Discover & build plugins** — curated picks and a live search of the npm `pi-package` ecosystem sit right on the plugin page, one click to install. Nothing fits? The "build your own" entry starts a chat that scaffolds a pi extension or skill for you.
+- **Write your own plugin** — the built-in plugin studio lets you author a TypeScript extension right in a dialog: **Save** keeps the source in the app-owned store, **Save & sync** links it into the runtime for the next session, and **Delete** unlinks first, then removes the source (with confirmation). Handwritten sources live under opaque app-managed ids, never renderer-supplied paths.
+- **Kimi Computer Use bridge** — with the separate [Kimi CU](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/plugins.html) desktop app installed, the Plugins page can wire it in as a computer-use MCP server: OMP GUI detects the app, checks its background service plus Accessibility/Screen Recording permissions, probes its stdio MCP endpoint, and — only after a native confirmation — writes its own `omp-gui-kimi-cu` entry into `~/.omp/agent/mcp.json` (every other entry is preserved, and an externally modified entry is never overwritten). Without Kimi CU installed, the page simply points you to the official download; nothing is bundled or auto-installed.
+- **Boards that talk to chat** — a free-form widget canvas (notes, todos, counters, gauges, line/bar charts, clocks, links) with always-on drag/resize, CSV/XLSX dataset binding, and a describe-to-compose flow. Every widget's look is tunable — accent/surface/text/border colors, corner radius, padding, title alignment, shadow — through a validated token model, so a board file can never smuggle in CSS, URLs, or scripts. The chat handoff is explicit in both directions: **Ask agent** drops a privacy-bounded board summary into the composer (widget summaries and dataset schemas, never raw rows or note bodies — review, then send), and any assistant reply can be saved back onto a board as a note widget after you pick the board and confirm.
 - **Clean skill scope** — chats load only pi's own abilities plus your mounted packages. Skills other agents installed on this machine (`~/.agents/skills`) are excluded by default via pi's `!<name>` override list, with an opt-in toggle in Settings.
 - **Usage monitor** — a corner chip tracks the live session: total tokens, prompt-cache hit rate, context-window fill (amber/red as it fills) and cost. Compaction shows a live indicator in the header and the chip; `/compact` squeezes the context on demand.
 - **Slash commands** — type `/` in the composer for a searchable menu of everything the session offers (extension commands, prompt templates, skills from your installed packages), with keyboard navigation.
@@ -111,7 +114,10 @@ pnpm dev
 Use a focused branch and pull request for every change. `CONTRIBUTING.md`
 defines the review, compatibility, and release process; `AGENTS.md` records
 the working agreement for human contributors and coding agents. Security,
-runtime, IPC, persistence, and release changes need code-owner review.
+runtime, IPC, persistence, and release changes need code-owner review. The
+maintenance contract for the plugin and board surfaces (intake forms,
+handwritten sources, the Kimi CU bridge, board styling and chat handoff)
+lives in `docs/plugin-board-foundation.md`.
 
 The repository does not yet declare an open-source license. The project owner
 must make that legal decision before inviting external redistribution or
@@ -212,13 +218,17 @@ omp-gui/
 │   │   ├── ipc.ts             # IPC handlers
 │   │   ├── omp/               # host layer: process, transport, handshake,
 │   │   │                      # protocol normalization, session, capabilities
-│   │   ├── packages.ts        # pi package management
+│   │   ├── packages.ts        # package install/link/remove + source normalization
+│   │   ├── managedPlugins.ts  # handwritten plugin sources (save/sync/delete)
+│   │   ├── kimiComputerUse.ts # optional Kimi CU MCP bridge
+│   │   ├── boards.ts          # board persistence + validation
+│   │   ├── boardDatasets.ts   # CSV/XLSX dataset import for boards
 │   │   ├── piSettings.ts      # pi settings.json / auth.json
 │   │   ├── preload.ts         # contextBridge API
 │   │   └── store.ts           # electron-store persistence
 │   ├── renderer/              # React frontend
 │   │   ├── components/        # Layout, Sidebar, ChatPanel, ExtensionUiDialog, …
-│   │   ├── pages/             # ChatPage, PackagesPage, SettingsPage, SetupWizard
+│   │   ├── pages/             # ChatPage, BoardsPage, PackagesPage, PluginAuthorPage, SettingsPage, SetupWizard
 │   │   ├── store/             # Zustand store
 │   │   └── i18n.ts            # Chinese/English dictionaries
 │   └── shared/                # constants + types shared across processes
@@ -230,5 +240,6 @@ omp-gui/
 - The GUI detects `omp` first and falls back to `pi` if omp is not installed.
 - If no CLI is found, the "New Chat" button is disabled and a setup wizard offers auto-install.
 - pi itself has no built-in tool approval prompts; coarse permission modes work by passing `--exclude-tools` to new sessions, and the "Ask" mode's per-call prompts come from the bundled `resources/omp-approval` extension, which hooks pi's `tool_call` event and asks through the GUI's dialog bridge.
+- Plugin installs (npm/GitHub/local, plus handwritten-plugin sync) ride on the runtime's own `omp plugin` commands, which need [bun](https://bun.sh) on `PATH`. The GUI searches the default installer location `~/.bun/bin` even when the app was launched from Finder.
 - Auto-update runs through electron-updater against GitHub Releases. Unsigned (ad-hoc) builds are quarantined by macOS Gatekeeper, so Settings → About offers the download page as a one-click fallback; signed/notarized releases (when the signing env vars are configured) install without the quarantine workaround.
 - Completion and approval-waiting notifications are standard macOS notifications; the first one triggers the system's permission prompt, which decides whether later ones arrive. Completion notifications default to a generic body — response previews are opt-in (`notificationPreviews`) and may appear on the lock screen.
