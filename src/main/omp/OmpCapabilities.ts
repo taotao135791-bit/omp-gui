@@ -59,6 +59,10 @@ export function executableSearchDirs(): string[] {
   dirs.push(
     '/opt/homebrew/bin',
     '/usr/local/bin',
+    // Default location of the official bun installer; omp shells out to bun
+    // for plugin install/uninstall, so a standard bun setup must be visible
+    // even though it is absent from a Finder-launched app's PATH.
+    path.join(home, '.bun', 'bin'),
     path.join(home, '.local', 'bin'),
     path.join(home, '.npm-global', 'bin'),
     path.join(home, 'bin')
